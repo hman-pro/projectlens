@@ -1,0 +1,20 @@
+repo_path: "/repo"
+database_url: "postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable"
+index:
+  include_patterns:
+    - "**/*.go"
+  exclude_patterns:
+    - "**/vendor/**"
+    - "**/third_party/**"
+    - "**/testdata/**"
+    - "**/*_test.go"
+    - "**/node_modules/**"
+  generated_markers:
+    - "Code generated"
+    - "DO NOT EDIT"
+    - "_generated.go"
+    - "_gen.go"
+    - ".pb.go"
+    - "_grpc.go"
+    - "_string.go"
+    - "zz_generated"
