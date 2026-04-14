@@ -16,6 +16,8 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/mod v0.35.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/tools v0.44.0 // indirect
 )
