@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    volumes:
+      - projectlens-data:/var/lib/postgresql/data
+    ports:
+      - "${PROJECTLENS_DB_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: projectlens
+      POSTGRES_USER: projectlens
+      POSTGRES_PASSWORD: ${PROJECTLENS_DB_PASSWORD:-projectlens}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U projectlens -d projectlens"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  projectlens-mcp:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+    command: ["/bin/projectlens-mcp"]
+    ports:
+      - "${PROJECTLENS_MCP_PORT:-8484}:8484"
+    volumes:
+      - ${PROJECTLENS_REPO_PATH}:/repo:ro
+    environment:
+      DATABASE_URL: "postgres://projectlens:${PROJECTLENS_DB_PASSWORD:-projectlens}@postgres:5432/projectlens?sslmode=disable"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      REPO_PATH: /repo
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  projectlens-indexer:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+    command: ["reindex"]
+    profiles:
+      - index
+    volumes:
+      - ${PROJECTLENS_REPO_PATH}:/repo:ro
+    environment:
+      DATABASE_URL: "postgres://projectlens:${PROJECTLENS_DB_PASSWORD:-projectlens}@postgres:5432/projectlens?sslmode=disable"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      REPO_PATH: /repo
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  projectlens-data:
