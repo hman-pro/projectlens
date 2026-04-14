@@ -1,0 +1,22 @@
+## ProjectLens — Repository Intelligence Layer
+
+This repo has a local intelligence layer called ProjectLens running at localhost:8484.
+
+### When to use ProjectLens
+Use ProjectLens BEFORE opening files to answer implementation questions:
+- "Where is X implemented?" → use `find_symbol`
+- "How does X work?" → use `search_go_context`
+- "What calls X? What does X depend on?" → use `get_symbol_context`
+- "What does package Y do?" → use `get_package_summary`
+
+### Preferred workflow
+1. Call ProjectLens first to locate relevant code
+2. Review the returned symbols, summaries, and relationships
+3. Only open files to verify specific details — do not explore broadly
+4. If results seem stale, check `index_status`
+
+### What NOT to use ProjectLens for
+- Reading file contents (use Read tool)
+- Editing code (use Edit tool)
+- Running commands (use Bash tool)
+- ProjectLens is for discovery and context, not for code manipulation
