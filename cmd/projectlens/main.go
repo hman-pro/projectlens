@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hman-pro/projectlens/internal/census"
+	"github.com/hman-pro/projectlens/internal/classifier"
+	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -37,8 +40,36 @@ func newCensusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "census",
 		Short: "Run a census of the repository",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("not yet implemented")
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoPath, _ := cmd.Flags().GetString("repo")
+
+			// Fall back to config's RepoPath if --repo not provided.
+			if repoPath == "" {
+				cfgPath, _ := cmd.Flags().GetString("config")
+				cfg, err := config.Load(cfgPath)
+				if err != nil {
+					return fmt.Errorf("loading config: %w", err)
+				}
+				repoPath = cfg.RepoPath
+			}
+
+			if repoPath == "" {
+				return fmt.Errorf("repository path required: use --repo flag or set repo_path in config")
+			}
+
+			result, err := census.Walk(repoPath, classifier.DefaultConfig())
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Repository Census: %s\n", repoPath)
+			fmt.Println("─────────────────────────────────")
+			fmt.Printf("Total .go files:  %6d\n", result.Total)
+			fmt.Printf("Handwritten:      %6d\n", result.Handwritten)
+			fmt.Printf("Test:             %6d\n", result.Test)
+			fmt.Printf("Generated:        %6d\n", result.Generated)
+			fmt.Printf("Excluded:         %6d\n", result.Excluded)
+			return nil
 		},
 	}
 }
