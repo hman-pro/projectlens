@@ -6,12 +6,16 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/hman-pro/projectlens/internal/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -36,7 +40,9 @@ func New(db *storage.DB, router *retrieval.Router, oai *openai.Client, port int)
 // Start creates the MCP server, registers all tools, and starts serving over
 // Streamable HTTP. It blocks until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Start(ctx context.Context) error {
-	mcpServer := server.NewMCPServer("projectlens", "1.0.0")
+	mcpServer := server.NewMCPServer("projectlens", "1.0.0",
+		server.WithHooks(s.loggingHooks()),
+	)
 
 	// Register all tools.
 	mcpServer.AddTool(findSymbolTool(), s.handleFindSymbol)
@@ -63,6 +69,44 @@ func (s *Server) Start(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// loggingHooks returns MCP hooks that log tool calls with their arguments,
+// duration, and any errors for debugging.
+func (s *Server) loggingHooks() *server.Hooks {
+	// Track call start times keyed by request ID.
+	starts := &sync.Map{}
+
+	hooks := &server.Hooks{}
+
+	hooks.AddBeforeCallTool(func(_ context.Context, id any, msg *mcp.CallToolRequest) {
+		starts.Store(id, time.Now())
+		args, _ := json.Marshal(msg.Params.Arguments)
+		log.Printf("tool call  %-25s args=%s", msg.Params.Name, args)
+	})
+
+	hooks.AddAfterCallTool(func(_ context.Context, id any, msg *mcp.CallToolRequest, _ any) {
+		dur := "?"
+		if t, ok := starts.LoadAndDelete(id); ok {
+			dur = time.Since(t.(time.Time)).Round(time.Millisecond).String()
+		}
+		log.Printf("tool done  %-25s duration=%s", msg.Params.Name, dur)
+	})
+
+	hooks.AddOnError(func(_ context.Context, id any, method mcp.MCPMethod, _ any, err error) {
+		starts.Delete(id)
+		log.Printf("tool error method=%-25s err=%v", method, err)
+	})
+
+	hooks.AddOnRegisterSession(func(_ context.Context, _ server.ClientSession) {
+		log.Println("session connected")
+	})
+
+	hooks.AddOnUnregisterSession(func(_ context.Context, _ server.ClientSession) {
+		log.Println("session disconnected")
+	})
+
+	return hooks
 }
 
 // MCPServer returns the internal mcp-go MCPServer for testing purposes.
