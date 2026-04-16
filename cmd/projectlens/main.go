@@ -208,6 +208,7 @@ func newStatusCmd() *cobra.Command {
 			fmt.Println("─────────────────")
 			fmt.Printf("Last indexed:     %s\n", ts)
 			fmt.Printf("Commit:           %s\n", commit)
+			fmt.Printf("Stage:            %s\n", run.Stage)
 			fmt.Printf("Files processed:  %d\n", run.FilesProcessed)
 			fmt.Printf("Symbols:          %d\n", run.SymbolsExtracted)
 			fmt.Printf("Edges:            %d\n", run.EdgesCreated)
@@ -257,6 +258,17 @@ func newInspectSymbolCmd() *cobra.Command {
 			fmt.Printf("Signature: %s\n", top.Signature)
 			if top.DocComment != "" {
 				fmt.Printf("Doc: %s\n", top.DocComment)
+			}
+
+			// Look up SCIP symbol.
+			symRecords, _ := db.GetSymbolByName(ctx, top.SymbolName)
+			for _, sr := range symRecords {
+				if sr.ID == top.SymbolID {
+					if sr.ScipSymbol != nil {
+						fmt.Printf("SCIP:     %s\n", *sr.ScipSymbol)
+					}
+					break
+				}
 			}
 
 			// Get callers.

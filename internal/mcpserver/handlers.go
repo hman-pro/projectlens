@@ -46,6 +46,7 @@ func (s *Server) handleFindSymbol(ctx context.Context, req mcp.CallToolRequest) 
 		fmt.Fprintf(&b, "%d. %s %s\n", i+1, r.Kind, formatSignature(r))
 		fmt.Fprintf(&b, "   Package: %s\n", r.PackageName)
 		fmt.Fprintf(&b, "   File: %s:%d-%d\n", r.FilePath, r.LineStart, r.LineEnd)
+		fmt.Fprintf(&b, "   Score: %.2f\n", r.Score)
 		if r.DocComment != "" {
 			fmt.Fprintf(&b, "   Doc: %s\n", truncateDoc(r.DocComment))
 		}
@@ -90,7 +91,7 @@ func (s *Server) handleSearchGoContext(ctx context.Context, req mcp.CallToolRequ
 	fmt.Fprintf(&b, "Found %d result(s) for %q (query type: %s):\n", len(results), query, qr.QueryType)
 	for i, r := range results {
 		b.WriteString("\n")
-		fmt.Fprintf(&b, "%d. %s %s (score: %.2f, source: %s)\n", i+1, r.Kind, formatSignature(r), r.Score, r.Source)
+		fmt.Fprintf(&b, "%d. [%s] %s %s (score: %.2f, source: %s)\n", i+1, r.SourceType, r.Kind, formatSignature(r), r.Score, r.Source)
 		fmt.Fprintf(&b, "   Package: %s\n", r.PackageName)
 		fmt.Fprintf(&b, "   File: %s:%d-%d\n", r.FilePath, r.LineStart, r.LineEnd)
 		if r.DocComment != "" {
@@ -135,6 +136,17 @@ func (s *Server) handleGetSymbolContext(ctx context.Context, req mcp.CallToolReq
 	fmt.Fprintf(&b, "File: %s:%d-%d\n", target.FilePath, target.LineStart, target.LineEnd)
 	if target.DocComment != "" {
 		fmt.Fprintf(&b, "Doc: %s\n", truncateDoc(target.DocComment))
+	}
+
+	// Look up full symbol record for SCIP ID.
+	symRecords, _ := s.db.GetSymbolByName(ctx, target.SymbolName)
+	for _, sr := range symRecords {
+		if sr.ID == target.SymbolID {
+			if sr.ScipSymbol != nil {
+				fmt.Fprintf(&b, "SCIP: %s\n", *sr.ScipSymbol)
+			}
+			break
+		}
 	}
 
 	// Get callers.
@@ -230,6 +242,7 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 	b.WriteString("ProjectLens Index Status\n")
 	b.WriteString("=======================\n")
 	fmt.Fprintf(&b, "Status:            %s\n", run.Status)
+	fmt.Fprintf(&b, "Stage:             %s\n", run.Stage)
 	fmt.Fprintf(&b, "Commit SHA:        %s\n", run.CommitSHA)
 	fmt.Fprintf(&b, "Started at:        %s\n", run.StartedAt.Format(time.RFC3339))
 	if run.CompletedAt != nil {

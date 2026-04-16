@@ -16,6 +16,7 @@ type IndexRunRecord struct {
 	SymbolsExtracted int        `json:"symbols_extracted"`
 	EdgesCreated     int        `json:"edges_created"`
 	Status           string     `json:"status"`
+	Stage            string     `json:"stage"`
 }
 
 // GitRefRecord maps to a row in the git_refs table.
@@ -84,13 +85,13 @@ func (db *DB) FailRun(ctx context.Context, runID int64) error {
 func (db *DB) GetLatestRun(ctx context.Context) (*IndexRunRecord, error) {
 	const query = `
 		SELECT id, started_at, completed_at, commit_sha,
-		       files_processed, symbols_extracted, edges_created, status
+		       files_processed, symbols_extracted, edges_created, status, stage
 		FROM index_runs ORDER BY id DESC LIMIT 1
 	`
 	r := &IndexRunRecord{}
 	err := db.Pool.QueryRow(ctx, query).Scan(
 		&r.ID, &r.StartedAt, &r.CompletedAt, &r.CommitSHA,
-		&r.FilesProcessed, &r.SymbolsExtracted, &r.EdgesCreated, &r.Status,
+		&r.FilesProcessed, &r.SymbolsExtracted, &r.EdgesCreated, &r.Status, &r.Stage,
 	)
 	if err != nil {
 		if err.Error() == "no rows in result set" {
