@@ -25,6 +25,8 @@ type SemanticSearchResult struct {
 	LineStart   int     `json:"line_start"`
 	LineEnd     int     `json:"line_end"`
 	Distance    float64 `json:"distance"`
+	SourceType  string  `json:"source_type"`
+	SourceURI   *string `json:"source_uri,omitempty"`
 }
 
 // UpsertEmbedding inserts or updates an embedding keyed by (chunk_id, model_version).
@@ -47,12 +49,20 @@ func (db *DB) UpsertEmbedding(ctx context.Context, e *EmbeddingRecord) error {
 // and file metadata.
 func (db *DB) SemanticSearch(ctx context.Context, queryVector []float32, topK int) ([]SemanticSearchResult, error) {
 	const query = `
-		SELECT e.chunk_id, s.name, s.kind, s.package_name, f.path,
-		       s.line_start, s.line_end, e.embedding <=> $1 AS distance
+		SELECT e.chunk_id,
+		       COALESCE(s.name, '') AS symbol_name,
+		       COALESCE(s.kind, '') AS symbol_kind,
+		       COALESCE(s.package_name, '') AS package_name,
+		       COALESCE(f.path, '') AS file_path,
+		       COALESCE(s.line_start, 0) AS line_start,
+		       COALESCE(s.line_end, 0) AS line_end,
+		       e.embedding <=> $1 AS distance,
+		       c.source_type,
+		       c.source_uri
 		FROM embeddings e
 		JOIN chunks c ON c.id = e.chunk_id
-		JOIN symbols s ON s.id = c.symbol_id
-		JOIN files f ON f.id = s.file_id
+		LEFT JOIN symbols s ON s.id = c.symbol_id
+		LEFT JOIN files f ON f.id = s.file_id
 		ORDER BY distance
 		LIMIT $2
 	`
@@ -70,6 +80,7 @@ func (db *DB) SemanticSearch(ctx context.Context, queryVector []float32, topK in
 		if err := rows.Scan(
 			&r.ChunkID, &r.SymbolName, &r.SymbolKind, &r.PackageName,
 			&r.FilePath, &r.LineStart, &r.LineEnd, &r.Distance,
+			&r.SourceType, &r.SourceURI,
 		); err != nil {
 			return nil, fmt.Errorf("storage: semantic search scan: %w", err)
 		}

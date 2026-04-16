@@ -298,10 +298,12 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	// Store chunks.
 	chunkIDMap := make(map[int]int64) // allChunks index → chunk DB ID
 	for i, ci := range allChunks {
+		sid := ci.symbolID
 		rec := &storage.ChunkRecord{
-			SymbolID:   ci.symbolID,
+			SymbolID:   &sid,
 			Content:    ci.chunk.Content,
 			TokenCount: ci.chunk.TokenCount,
+			SourceType: "code",
 		}
 		cid, err := idx.db.UpsertChunk(ctx, rec)
 		if err != nil {

@@ -29,8 +29,10 @@ func TestRecordStructs(t *testing.T) {
 		ScipSymbol: &scip, Roles: 1,
 	}
 
+	symbolID := int64(1)
 	_ = ChunkRecord{
-		ID: 1, SymbolID: 1, Content: "func Foo() {}", TokenCount: 5,
+		ID: 1, SymbolID: &symbolID, Content: "func Foo() {}", TokenCount: 5,
+		SourceType: "code",
 	}
 
 	vec := pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3})
@@ -43,6 +45,7 @@ func TestRecordStructs(t *testing.T) {
 		ChunkID: 1, SymbolName: "Foo", SymbolKind: "function",
 		PackageName: "main", FilePath: "/test.go",
 		LineStart: 1, LineEnd: 10, Distance: 0.5,
+		SourceType: "code",
 	}
 
 	_ = SummaryRecord{
