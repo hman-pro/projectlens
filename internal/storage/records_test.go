@@ -49,7 +49,8 @@ func TestRecordStructs(t *testing.T) {
 	}
 
 	_ = EdgeRecord{
-		ID: 1, SourceSymbolID: 1, TargetSymbolID: 2, EdgeType: "calls",
+		ID: 1, SourceType: "symbol", SourceID: 1,
+		TargetType: "symbol", TargetID: 2, EdgeType: "calls",
 	}
 
 	_ = EdgeResult{

@@ -335,9 +335,11 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			continue
 		}
 		edgeRecords = append(edgeRecords, storage.EdgeRecord{
-			SourceSymbolID: sourceID,
-			TargetSymbolID: targetID,
-			EdgeType:       e.EdgeType,
+			SourceType: "symbol",
+			SourceID:   sourceID,
+			TargetType: "symbol",
+			TargetID:   targetID,
+			EdgeType:   e.EdgeType,
 		})
 	}
 

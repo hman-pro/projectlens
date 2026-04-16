@@ -8,10 +8,14 @@ import (
 
 // EdgeRecord maps to a row in the edges table.
 type EdgeRecord struct {
-	ID             int64  `json:"id"`
-	SourceSymbolID int64  `json:"source_symbol_id"`
-	TargetSymbolID int64  `json:"target_symbol_id"`
-	EdgeType       string `json:"edge_type"`
+	ID         int64    `json:"id"`
+	SourceType string   `json:"source_type"`
+	SourceID   int64    `json:"source_id"`
+	TargetType string   `json:"target_type"`
+	TargetID   int64    `json:"target_id"`
+	EdgeType   string   `json:"edge_type"`
+	Properties *[]byte  `json:"properties,omitempty"`
+	Confidence *float32 `json:"confidence,omitempty"`
 }
 
 // EdgeResult is returned by graph traversal queries and includes the related
@@ -35,8 +39,8 @@ func (db *DB) InsertEdges(ctx context.Context, edges []EdgeRecord) error {
 		return nil
 	}
 
-	const cols = 3
-	const maxBatch = 65535 / cols // 21845 edges per batch
+	const cols = 5
+	const maxBatch = 65535 / cols // 13107 edges per batch
 
 	for start := 0; start < len(edges); start += maxBatch {
 		end := start + maxBatch
@@ -51,15 +55,15 @@ func (db *DB) InsertEdges(ctx context.Context, edges []EdgeRecord) error {
 		for i, e := range batch {
 			base := i * cols
 			valueStrings = append(valueStrings, fmt.Sprintf(
-				"($%d, $%d, $%d)", base+1, base+2, base+3,
+				"($%d, $%d, $%d, $%d, $%d)", base+1, base+2, base+3, base+4, base+5,
 			))
-			args = append(args, e.SourceSymbolID, e.TargetSymbolID, e.EdgeType)
+			args = append(args, e.SourceType, e.SourceID, e.TargetType, e.TargetID, e.EdgeType)
 		}
 
 		query := fmt.Sprintf(`
-			INSERT INTO edges (source_symbol_id, target_symbol_id, edge_type)
+			INSERT INTO edges (source_type, source_id, target_type, target_id, edge_type)
 			VALUES %s
-			ON CONFLICT (source_symbol_id, target_symbol_id, edge_type) DO NOTHING
+			ON CONFLICT (source_type, source_id, target_type, target_id, edge_type) DO NOTHING
 		`, strings.Join(valueStrings, ", "))
 
 		_, err := db.Pool.Exec(ctx, query, args...)
@@ -77,9 +81,10 @@ func (db *DB) GetCallers(ctx context.Context, symbolID int64) ([]EdgeResult, err
 		SELECT e.id, e.edge_type, s.id, s.name, s.kind, s.package_name,
 		       f.path, s.line_start, s.line_end
 		FROM edges e
-		JOIN symbols s ON s.id = e.source_symbol_id
+		JOIN symbols s ON s.id = e.source_id
 		JOIN files f ON f.id = s.file_id
-		WHERE e.target_symbol_id = $1
+		WHERE e.target_type = 'symbol' AND e.target_id = $1
+		  AND e.source_type = 'symbol'
 		ORDER BY s.name
 	`
 	return db.scanEdgeResults(ctx, query, symbolID)
@@ -92,9 +97,10 @@ func (db *DB) GetCallees(ctx context.Context, symbolID int64) ([]EdgeResult, err
 		SELECT e.id, e.edge_type, s.id, s.name, s.kind, s.package_name,
 		       f.path, s.line_start, s.line_end
 		FROM edges e
-		JOIN symbols s ON s.id = e.target_symbol_id
+		JOIN symbols s ON s.id = e.target_id
 		JOIN files f ON f.id = s.file_id
-		WHERE e.source_symbol_id = $1
+		WHERE e.source_type = 'symbol' AND e.source_id = $1
+		  AND e.target_type = 'symbol'
 		ORDER BY s.name
 	`
 	return db.scanEdgeResults(ctx, query, symbolID)
@@ -108,9 +114,11 @@ func (db *DB) GetImplementors(ctx context.Context, symbolID int64) ([]EdgeResult
 		SELECT e.id, e.edge_type, s.id, s.name, s.kind, s.package_name,
 		       f.path, s.line_start, s.line_end
 		FROM edges e
-		JOIN symbols s ON s.id = e.source_symbol_id
+		JOIN symbols s ON s.id = e.source_id
 		JOIN files f ON f.id = s.file_id
-		WHERE e.target_symbol_id = $1 AND e.edge_type = 'implements'
+		WHERE e.target_type = 'symbol' AND e.target_id = $1
+		  AND e.source_type = 'symbol'
+		  AND e.edge_type = 'implements'
 		ORDER BY s.name
 	`
 	return db.scanEdgeResults(ctx, query, symbolID)
@@ -119,7 +127,11 @@ func (db *DB) GetImplementors(ctx context.Context, symbolID int64) ([]EdgeResult
 // DeleteEdgesBySymbolID removes all edges where the given symbol is either
 // source or target.
 func (db *DB) DeleteEdgesBySymbolID(ctx context.Context, symbolID int64) error {
-	const query = `DELETE FROM edges WHERE source_symbol_id = $1 OR target_symbol_id = $1`
+	const query = `
+		DELETE FROM edges
+		WHERE (source_type = 'symbol' AND source_id = $1)
+		   OR (target_type = 'symbol' AND target_id = $1)
+	`
 	_, err := db.Pool.Exec(ctx, query, symbolID)
 	if err != nil {
 		return fmt.Errorf("storage: delete edges by symbol id: %w", err)
