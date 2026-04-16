@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/hman-pro/projectlens/internal/census"
@@ -231,6 +232,18 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 				d := s.DocComment
 				doc = &d
 			}
+
+			// Build SCIP symbol ID
+			dir := filepath.Dir(rp) // e.g., "internal/indexer"
+			var scipSymbol string
+			switch s.Kind {
+			case "method":
+				scipSymbol = fmt.Sprintf("go . %s . %s.%s()", dir, s.Receiver, s.Name)
+			default:
+				scipSymbol = fmt.Sprintf("go . %s . %s", dir, s.Name)
+			}
+			scipStr := scipSymbol
+
 			records[i] = storage.SymbolRecord{
 				FileID:      fid,
 				Name:        s.Name,
@@ -242,6 +255,8 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 				LineStart:   s.LineStart,
 				LineEnd:     s.LineEnd,
 				Checksum:    sha256Hex(s.Body),
+				ScipSymbol:  &scipStr,
+				Roles:       1, // Definition
 			}
 		}
 		if err := idx.db.InsertSymbols(ctx, records); err != nil {
