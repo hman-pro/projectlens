@@ -46,6 +46,10 @@ func SemanticSearch(ctx context.Context, db *storage.DB, embedder QueryEmbedder,
 // semanticResultToSearchResult converts a storage.SemanticSearchResult to a
 // SearchResult with Source = "semantic" and Score = 1 - distance.
 func semanticResultToSearchResult(r storage.SemanticSearchResult) SearchResult {
+	var sourceURI string
+	if r.SourceURI != nil {
+		sourceURI = *r.SourceURI
+	}
 	return SearchResult{
 		SymbolName:  r.SymbolName,
 		Kind:        r.SymbolKind,
@@ -55,5 +59,7 @@ func semanticResultToSearchResult(r storage.SemanticSearchResult) SearchResult {
 		LineEnd:     r.LineEnd,
 		Score:       1.0 - r.Distance,
 		Source:      "semantic",
+		SourceType:  r.SourceType,
+		SourceURI:   sourceURI,
 	}
 }

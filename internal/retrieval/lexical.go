@@ -24,6 +24,8 @@ type SearchResult struct {
 	Score        float64 `json:"score"`
 	Source       string  `json:"source"`       // "lexical", "semantic", "graph"
 	Relationship string  `json:"relationship"` // e.g., "caller", "callee", "implements" — empty for non-graph
+	SourceType   string  `json:"source_type"`  // "code", "confluence", "jira", "migration"
+	SourceURI    string  `json:"source_uri,omitempty"`
 }
 
 // LexicalSearch runs three parallel queries against the symbols table:
@@ -157,6 +159,7 @@ func scanLexicalRows(ctx context.Context, db *storage.DB, query string, score fl
 		}
 		r.Score = score
 		r.Source = "lexical"
+		r.SourceType = "code"
 		results = append(results, r)
 	}
 	return results, rows.Err()
@@ -197,5 +200,6 @@ func symbolRecordToSearchResult(s storage.SymbolRecord, filePath string, score f
 		Score:        score,
 		Source:       source,
 		Relationship: relationship,
+		SourceType:   "code",
 	}
 }
