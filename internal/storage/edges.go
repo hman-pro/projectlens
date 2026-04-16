@@ -29,32 +29,43 @@ type EdgeResult struct {
 }
 
 // InsertEdges batch-inserts edge records with ON CONFLICT DO NOTHING.
+// Inserts are batched to stay within PostgreSQL's 65535 parameter limit.
 func (db *DB) InsertEdges(ctx context.Context, edges []EdgeRecord) error {
 	if len(edges) == 0 {
 		return nil
 	}
 
 	const cols = 3
-	valueStrings := make([]string, 0, len(edges))
-	args := make([]any, 0, len(edges)*cols)
+	const maxBatch = 65535 / cols // 21845 edges per batch
 
-	for i, e := range edges {
-		base := i * cols
-		valueStrings = append(valueStrings, fmt.Sprintf(
-			"($%d, $%d, $%d)", base+1, base+2, base+3,
-		))
-		args = append(args, e.SourceSymbolID, e.TargetSymbolID, e.EdgeType)
-	}
+	for start := 0; start < len(edges); start += maxBatch {
+		end := start + maxBatch
+		if end > len(edges) {
+			end = len(edges)
+		}
+		batch := edges[start:end]
 
-	query := fmt.Sprintf(`
-		INSERT INTO edges (source_symbol_id, target_symbol_id, edge_type)
-		VALUES %s
-		ON CONFLICT (source_symbol_id, target_symbol_id, edge_type) DO NOTHING
-	`, strings.Join(valueStrings, ", "))
+		valueStrings := make([]string, 0, len(batch))
+		args := make([]any, 0, len(batch)*cols)
 
-	_, err := db.Pool.Exec(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("storage: insert edges: %w", err)
+		for i, e := range batch {
+			base := i * cols
+			valueStrings = append(valueStrings, fmt.Sprintf(
+				"($%d, $%d, $%d)", base+1, base+2, base+3,
+			))
+			args = append(args, e.SourceSymbolID, e.TargetSymbolID, e.EdgeType)
+		}
+
+		query := fmt.Sprintf(`
+			INSERT INTO edges (source_symbol_id, target_symbol_id, edge_type)
+			VALUES %s
+			ON CONFLICT (source_symbol_id, target_symbol_id, edge_type) DO NOTHING
+		`, strings.Join(valueStrings, ", "))
+
+		_, err := db.Pool.Exec(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("storage: insert edges: %w", err)
+		}
 	}
 	return nil
 }

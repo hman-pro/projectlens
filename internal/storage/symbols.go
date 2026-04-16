@@ -24,37 +24,47 @@ type SymbolRecord struct {
 }
 
 // InsertSymbols batch-inserts the provided symbol records using a multi-row INSERT.
+// Inserts are batched to stay within PostgreSQL's 65535 parameter limit.
 func (db *DB) InsertSymbols(ctx context.Context, symbols []SymbolRecord) error {
 	if len(symbols) == 0 {
 		return nil
 	}
 
-	// Build a multi-row INSERT statement.
 	const cols = 10 // number of columns per row
-	valueStrings := make([]string, 0, len(symbols))
-	args := make([]any, 0, len(symbols)*cols)
+	const maxBatch = 65535 / cols // 6553 symbols per batch
 
-	for i, s := range symbols {
-		base := i * cols
-		valueStrings = append(valueStrings, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5,
-			base+6, base+7, base+8, base+9, base+10,
-		))
-		args = append(args,
-			s.FileID, s.Name, s.Kind, s.PackageName, s.Receiver,
-			s.Signature, s.DocComment, s.LineStart, s.LineEnd, s.Checksum,
-		)
-	}
+	for start := 0; start < len(symbols); start += maxBatch {
+		end := start + maxBatch
+		if end > len(symbols) {
+			end = len(symbols)
+		}
+		batch := symbols[start:end]
 
-	query := fmt.Sprintf(`
-		INSERT INTO symbols (file_id, name, kind, package_name, receiver, signature, doc_comment, line_start, line_end, checksum)
-		VALUES %s
-	`, strings.Join(valueStrings, ", "))
+		valueStrings := make([]string, 0, len(batch))
+		args := make([]any, 0, len(batch)*cols)
 
-	_, err := db.Pool.Exec(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("storage: insert symbols: %w", err)
+		for i, s := range batch {
+			base := i * cols
+			valueStrings = append(valueStrings, fmt.Sprintf(
+				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+				base+1, base+2, base+3, base+4, base+5,
+				base+6, base+7, base+8, base+9, base+10,
+			))
+			args = append(args,
+				s.FileID, s.Name, s.Kind, s.PackageName, s.Receiver,
+				s.Signature, s.DocComment, s.LineStart, s.LineEnd, s.Checksum,
+			)
+		}
+
+		query := fmt.Sprintf(`
+			INSERT INTO symbols (file_id, name, kind, package_name, receiver, signature, doc_comment, line_start, line_end, checksum)
+			VALUES %s
+		`, strings.Join(valueStrings, ", "))
+
+		_, err := db.Pool.Exec(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("storage: insert symbols: %w", err)
+		}
 	}
 	return nil
 }
