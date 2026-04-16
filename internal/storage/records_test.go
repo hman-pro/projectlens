@@ -21,10 +21,12 @@ func TestRecordStructs(t *testing.T) {
 
 	receiver := "MyType"
 	doc := "// Doc comment"
+	scip := "go . main . Foo()"
 	_ = SymbolRecord{
 		ID: 1, FileID: 1, Name: "Foo", Kind: "function", PackageName: "main",
 		Receiver: &receiver, Signature: "func Foo()", DocComment: &doc,
 		LineStart: 1, LineEnd: 10, Checksum: "abc", IndexedAt: now,
+		ScipSymbol: &scip, Roles: 1,
 	}
 
 	_ = ChunkRecord{

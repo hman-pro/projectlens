@@ -21,6 +21,8 @@ type SymbolRecord struct {
 	LineEnd     int       `json:"line_end"`
 	Checksum    string    `json:"checksum"`
 	IndexedAt   time.Time `json:"indexed_at"`
+	ScipSymbol  *string   `json:"scip_symbol,omitempty"`
+	Roles       int       `json:"roles"`
 }
 
 // InsertSymbols batch-inserts the provided symbol records using a multi-row INSERT.
@@ -30,8 +32,8 @@ func (db *DB) InsertSymbols(ctx context.Context, symbols []SymbolRecord) error {
 		return nil
 	}
 
-	const cols = 10 // number of columns per row
-	const maxBatch = 65535 / cols // 6553 symbols per batch
+	const cols = 12 // number of columns per row
+	const maxBatch = 65535 / cols // 5461 symbols per batch
 
 	for start := 0; start < len(symbols); start += maxBatch {
 		end := start + maxBatch
@@ -46,18 +48,20 @@ func (db *DB) InsertSymbols(ctx context.Context, symbols []SymbolRecord) error {
 		for i, s := range batch {
 			base := i * cols
 			valueStrings = append(valueStrings, fmt.Sprintf(
-				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
 				base+1, base+2, base+3, base+4, base+5,
 				base+6, base+7, base+8, base+9, base+10,
+				base+11, base+12,
 			))
 			args = append(args,
 				s.FileID, s.Name, s.Kind, s.PackageName, s.Receiver,
 				s.Signature, s.DocComment, s.LineStart, s.LineEnd, s.Checksum,
+				s.ScipSymbol, s.Roles,
 			)
 		}
 
 		query := fmt.Sprintf(`
-			INSERT INTO symbols (file_id, name, kind, package_name, receiver, signature, doc_comment, line_start, line_end, checksum)
+			INSERT INTO symbols (file_id, name, kind, package_name, receiver, signature, doc_comment, line_start, line_end, checksum, scip_symbol, roles)
 			VALUES %s
 		`, strings.Join(valueStrings, ", "))
 
@@ -73,7 +77,8 @@ func (db *DB) InsertSymbols(ctx context.Context, symbols []SymbolRecord) error {
 func (db *DB) GetSymbolByName(ctx context.Context, name string) ([]SymbolRecord, error) {
 	const query = `
 		SELECT id, file_id, name, kind, package_name, receiver, signature,
-		       doc_comment, line_start, line_end, checksum, indexed_at
+		       doc_comment, line_start, line_end, checksum, indexed_at,
+		       scip_symbol, roles
 		FROM symbols WHERE name = $1
 	`
 	return db.scanSymbols(ctx, query, name)
@@ -83,7 +88,8 @@ func (db *DB) GetSymbolByName(ctx context.Context, name string) ([]SymbolRecord,
 func (db *DB) GetSymbolsByFileID(ctx context.Context, fileID int64) ([]SymbolRecord, error) {
 	const query = `
 		SELECT id, file_id, name, kind, package_name, receiver, signature,
-		       doc_comment, line_start, line_end, checksum, indexed_at
+		       doc_comment, line_start, line_end, checksum, indexed_at,
+		       scip_symbol, roles
 		FROM symbols WHERE file_id = $1 ORDER BY line_start
 	`
 	return db.scanSymbols(ctx, query, fileID)
@@ -93,7 +99,8 @@ func (db *DB) GetSymbolsByFileID(ctx context.Context, fileID int64) ([]SymbolRec
 func (db *DB) GetSymbolsByPackage(ctx context.Context, packageName string) ([]SymbolRecord, error) {
 	const query = `
 		SELECT id, file_id, name, kind, package_name, receiver, signature,
-		       doc_comment, line_start, line_end, checksum, indexed_at
+		       doc_comment, line_start, line_end, checksum, indexed_at,
+		       scip_symbol, roles
 		FROM symbols WHERE package_name = $1 ORDER BY name
 	`
 	return db.scanSymbols(ctx, query, packageName)
@@ -123,6 +130,7 @@ func (db *DB) scanSymbols(ctx context.Context, query string, args ...any) ([]Sym
 			&s.ID, &s.FileID, &s.Name, &s.Kind, &s.PackageName,
 			&s.Receiver, &s.Signature, &s.DocComment,
 			&s.LineStart, &s.LineEnd, &s.Checksum, &s.IndexedAt,
+			&s.ScipSymbol, &s.Roles,
 		); err != nil {
 			return nil, fmt.Errorf("storage: scan symbol: %w", err)
 		}
