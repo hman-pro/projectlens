@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -73,6 +74,31 @@ func TestRecordStructs(t *testing.T) {
 
 	_ = GitRefRecord{
 		ID: 1, Branch: "main", CommitSHA: "sha1", IndexedAt: now,
+	}
+
+	_ = DatastoreTableRecord{
+		ID: 1, Name: "users", Engine: "postgres",
+		Columns:   json.RawMessage(`[{"name":"id","type":"bigint"}]`),
+		IndexedAt: now,
+	}
+
+	url := "https://example.com"
+	body := "page content"
+	_ = DocumentRecord{
+		ID: 1, SourceType: "confluence", ExternalID: "12345",
+		Title: "Test Page", URL: &url, BodyText: &body,
+		LastSyncedAt: now,
+	}
+
+	diff := "- old\n+ new"
+	_ = SymbolHistoryRecord{
+		ID: 1, SymbolID: 1, CommitHash: "abc123", Author: "dev",
+		CommittedAt: now, ChangeType: "modified", DiffSnippet: &diff,
+	}
+
+	_ = FileHistoryRecord{
+		ID: 1, FileID: 1, CommitHash: "abc123", Author: "dev",
+		CommittedAt: now, ChangeType: "modified", DiffSnippet: &diff,
 	}
 }
 
