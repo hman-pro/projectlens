@@ -9,7 +9,8 @@ import (
 )
 
 // batchSize is the maximum number of texts sent per EmbedBatch call.
-const batchSize = 100
+// Kept small for local models (Ollama) where each text uses significant memory.
+const batchSize = 10
 
 // maxCharsPerChunk is the approximate character limit for embedding input.
 // Most embedding models limit to 8192 tokens; at ~3 chars/token for local

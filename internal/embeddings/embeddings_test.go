@@ -68,8 +68,9 @@ func TestEmbedChunks_MultipleBatches(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if mock.calls != 2 {
-		t.Errorf("expected 2 batch calls, got %d", mock.calls)
+	expectedBatches := (150 + batchSize - 1) / batchSize
+	if mock.calls != expectedBatches {
+		t.Errorf("expected %d batch calls, got %d", expectedBatches, mock.calls)
 	}
 	if len(results) != 150 {
 		t.Fatalf("expected 150 results, got %d", len(results))

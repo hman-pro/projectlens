@@ -32,8 +32,9 @@ func NewClient(endpoint, model string) *Client {
 
 // embedRequest is the JSON body for POST /api/embed.
 type embedRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
+	Model   string            `json:"model"`
+	Input   []string          `json:"input"`
+	Options map[string]any    `json:"options,omitempty"`
 }
 
 // embedResponse is the JSON response from POST /api/embed.
@@ -52,6 +53,9 @@ func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, e
 	body, err := json.Marshal(embedRequest{
 		Model: c.model,
 		Input: texts,
+		Options: map[string]any{
+			"num_ctx": 8192,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ollama: marshal request: %w", err)
