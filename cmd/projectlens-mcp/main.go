@@ -58,7 +58,11 @@ func run() error {
 		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model)
 	case "openai":
 		if cfg.OpenAIKey != "" {
-			embedder = openai.NewClient(cfg.OpenAIKey)
+			if cfg.Embeddings.Dimensions > 0 {
+				embedder = openai.NewClientWithDims(cfg.OpenAIKey, cfg.Embeddings.Dimensions)
+			} else {
+				embedder = openai.NewClient(cfg.OpenAIKey)
+			}
 		}
 	}
 	router := retrieval.NewRouter(db, embedder)
