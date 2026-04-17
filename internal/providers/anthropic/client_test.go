@@ -1,6 +1,8 @@
 package anthropic
 
 import (
+	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -78,4 +80,31 @@ func TestPromptEmptySymbols(t *testing.T) {
 	if !strings.Contains(prompt, "Exported symbols:") {
 		t.Error("expected 'Exported symbols:' header even with no symbols")
 	}
+}
+
+// TestLiveGeneratePackageSummary calls the real Anthropic API.
+// Skipped unless ANTHROPIC_API_KEY is set.
+//
+//	go test ./internal/providers/anthropic/ -v -run TestLive
+func TestLiveGeneratePackageSummary(t *testing.T) {
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		t.Skip("ANTHROPIC_API_KEY not set — skipping live test")
+	}
+
+	client := NewClient("claude-sonnet-4-6")
+	symbols := []string{
+		"func NewClient(endpoint, model string) *Client",
+		"func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)",
+		"func (c *Client) Ping(ctx context.Context) error",
+	}
+
+	summary, err := client.GeneratePackageSummary(context.Background(), "ollama", symbols)
+	if err != nil {
+		t.Fatalf("GeneratePackageSummary failed: %v", err)
+	}
+
+	if len(summary) < 20 {
+		t.Errorf("expected a meaningful summary, got: %q", summary)
+	}
+	t.Logf("Summary:\n%s", summary)
 }
