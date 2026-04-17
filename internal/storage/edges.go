@@ -39,6 +39,19 @@ func (db *DB) InsertEdges(ctx context.Context, edges []EdgeRecord) error {
 		return nil
 	}
 
+	// Deduplicate edges within the input to avoid "ON CONFLICT DO UPDATE
+	// command cannot affect row a second time" errors.
+	seen := make(map[string]int) // key → index in deduped slice
+	deduped := make([]EdgeRecord, 0, len(edges))
+	for _, e := range edges {
+		key := fmt.Sprintf("%s:%d:%s:%d:%s", e.SourceType, e.SourceID, e.TargetType, e.TargetID, e.EdgeType)
+		if _, ok := seen[key]; !ok {
+			seen[key] = len(deduped)
+			deduped = append(deduped, e)
+		}
+	}
+	edges = deduped
+
 	const cols = 7
 	const maxBatch = 65535 / cols // 9362 edges per batch
 
