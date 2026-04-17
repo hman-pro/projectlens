@@ -131,7 +131,7 @@ func TestIndexStatusSchema(t *testing.T) {
 }
 
 func TestServerRegistersAllTools(t *testing.T) {
-	srv := New(nil, nil, nil, 8484)
+	srv := New(nil, nil, 8484)
 	mcpSrv := srv.MCPServer()
 
 	tools := mcpSrv.ListTools()

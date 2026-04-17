@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -23,16 +22,14 @@ import (
 type Server struct {
 	db     *storage.DB
 	router *retrieval.Router
-	oai    *openai.Client
 	port   int
 }
 
 // New creates a new MCP server with the given dependencies.
-func New(db *storage.DB, router *retrieval.Router, oai *openai.Client, port int) *Server {
+func New(db *storage.DB, router *retrieval.Router, port int) *Server {
 	return &Server{
 		db:     db,
 		router: router,
-		oai:    oai,
 		port:   port,
 	}
 }

@@ -17,7 +17,6 @@ import (
 	"github.com/hman-pro/projectlens/internal/classifier"
 	"github.com/hman-pro/projectlens/internal/embeddings"
 	"github.com/hman-pro/projectlens/internal/graph"
-	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/parser"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/hman-pro/projectlens/internal/summaries"
@@ -26,10 +25,11 @@ import (
 
 // Indexer ties together all pipeline stages and stores results in the database.
 type Indexer struct {
-	db   *storage.DB
-	oai  *openai.Client
-	repo string // path to the target repo
-	cfg  classifier.Config
+	db         *storage.DB
+	embedder   embeddings.Embedder
+	summarizer summaries.PackageSummarizer
+	repo       string // path to the target repo
+	cfg        classifier.Config
 }
 
 // Stats records what the pipeline produced.
@@ -42,14 +42,15 @@ type Stats struct {
 	ChunksEmbedded     int
 }
 
-// New creates an Indexer. The openai client may be nil if summarization and
-// embedding should be skipped (e.g. dry-run or tests).
-func New(db *storage.DB, oai *openai.Client, repoPath string, cfg classifier.Config) *Indexer {
+// New creates an Indexer. The embedder and summarizer may be nil if embedding
+// and summarization should be skipped (e.g. dry-run or tests).
+func New(db *storage.DB, embedder embeddings.Embedder, summarizer summaries.PackageSummarizer, repoPath string, cfg classifier.Config) *Indexer {
 	return &Indexer{
-		db:   db,
-		oai:  oai,
-		repo: repoPath,
-		cfg:  cfg,
+		db:         db,
+		embedder:   embedder,
+		summarizer: summarizer,
+		repo:       repoPath,
+		cfg:        cfg,
 	}
 }
 
@@ -391,13 +392,13 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	// ── Step 8: Summarize packages ──────────────────────────────────────
 	log.Println("── Step 8: Summarize packages ──")
 	stepStart = time.Now()
-	if idx.oai != nil {
+	if idx.summarizer != nil {
 		pkgSymMap := make(map[string][]parser.Symbol)
 		for _, fr := range filteredFiles {
 			pkgSymMap[fr.Package] = append(pkgSymMap[fr.Package], fr.Symbols...)
 		}
 
-		pkgSummaries, err := summaries.GeneratePackageSummaries(ctx, idx.oai, pkgSymMap)
+		pkgSummaries, err := summaries.GeneratePackageSummaries(ctx, idx.summarizer, pkgSymMap)
 		if err != nil {
 			return nil, fmt.Errorf("indexer: generate package summaries: %w", err)
 		}
@@ -406,7 +407,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			rec := &storage.SummaryRecord{
 				PackageName:  pkgName,
 				SummaryText:  text,
-				ModelVersion: "gpt-4o-mini",
+				ModelVersion: "llm",
 			}
 			if err := idx.db.UpsertSummary(ctx, rec); err != nil {
 				return nil, fmt.Errorf("indexer: upsert summary for %s: %w", pkgName, err)
@@ -415,20 +416,20 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		stats.PackagesSummarized = len(pkgSummaries)
 		log.Printf("summarized %d packages (%s)", stats.PackagesSummarized, time.Since(stepStart).Round(time.Millisecond))
 	} else {
-		log.Println("skipping package summarization (no LLM client)")
+		log.Println("skipping package summarization (no summarizer configured)")
 	}
 
 	// ── Step 9: Embed ───────────────────────────────────────────────────
 	log.Println("── Step 9: Embed ──")
 	stepStart = time.Now()
-	if idx.oai != nil && len(allChunks) > 0 {
+	if idx.embedder != nil && len(allChunks) > 0 {
 		log.Printf("embedding %d chunks...", len(allChunks))
 		contents := make([]string, len(allChunks))
 		for i, ci := range allChunks {
 			contents[i] = ci.chunk.Content
 		}
 
-		embResults, err := embeddings.EmbedChunks(ctx, idx.oai, contents)
+		embResults, err := embeddings.EmbedChunks(ctx, idx.embedder, contents)
 		if err != nil {
 			return nil, fmt.Errorf("indexer: embed chunks: %w", err)
 		}
@@ -440,7 +441,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			}
 			rec := &storage.EmbeddingRecord{
 				ChunkID:      cid,
-				ModelVersion: "text-embedding-3-large",
+				ModelVersion: "embedding-model",
 				Embedding:    pgvector.NewHalfVector(er.Vector),
 			}
 			if err := idx.db.UpsertEmbedding(ctx, rec); err != nil {
@@ -449,8 +450,8 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		}
 		stats.ChunksEmbedded = len(embResults)
 		log.Printf("embedded %d chunks (%s)", stats.ChunksEmbedded, time.Since(stepStart).Round(time.Millisecond))
-	} else if idx.oai == nil {
-		log.Println("skipping embedding (no LLM client)")
+	} else if idx.embedder == nil {
+		log.Println("skipping embedding (no embedder configured)")
 	}
 
 	// ── Step 10: Complete ───────────────────────────────────────────────

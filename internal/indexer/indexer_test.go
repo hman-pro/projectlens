@@ -134,7 +134,7 @@ func TestGitOutputOnNonGitDir(t *testing.T) {
 }
 
 func TestNewIndexer(t *testing.T) {
-	idx := New(nil, nil, "/tmp/repo", defaultTestConfig())
+	idx := New(nil, nil, nil, "/tmp/repo", defaultTestConfig())
 	if idx.repo != "/tmp/repo" {
 		t.Errorf("repo = %q, want /tmp/repo", idx.repo)
 	}
@@ -157,7 +157,7 @@ func TestEmptyRepoProducesZeroStats(t *testing.T) {
 	// + work-list portion by checking that Run returns an error about the DB
 	// being nil — that's expected. Instead, just verify that creating an
 	// Indexer and running DryRun on an empty repo works.
-	idx := New(nil, nil, tmp, defaultTestConfig())
+	idx := New(nil, nil, nil, tmp, defaultTestConfig())
 
 	// Census should work fine on an empty repo with no .go files.
 	// We can't call Run because it needs a real DB, but we can at least

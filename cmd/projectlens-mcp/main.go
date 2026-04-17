@@ -11,6 +11,7 @@ import (
 
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/mcpserver"
+	"github.com/hman-pro/projectlens/internal/providers/ollama"
 	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
@@ -50,16 +51,15 @@ func run() error {
 	}
 	log.Println("database connection established")
 
-	// Create OpenAI client (optional — some tools work without it).
-	var oaiClient *openai.Client
-	if cfg.OpenAIKey != "" {
-		oaiClient = openai.NewClient(cfg.OpenAIKey)
-	}
-
-	// Create retrieval router. Embedder may be nil if no OpenAI key.
+	// Create embedder for query-time semantic search based on config.
 	var embedder retrieval.QueryEmbedder
-	if oaiClient != nil {
-		embedder = oaiClient
+	switch cfg.Embeddings.Provider {
+	case "ollama":
+		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model)
+	case "openai":
+		if cfg.OpenAIKey != "" {
+			embedder = openai.NewClient(cfg.OpenAIKey)
+		}
 	}
 	router := retrieval.NewRouter(db, embedder)
 
@@ -72,7 +72,7 @@ func run() error {
 	}
 
 	// Create and start MCP server.
-	srv := mcpserver.New(db, router, oaiClient, port)
+	srv := mcpserver.New(db, router, port)
 	return srv.Start(ctx)
 }
 

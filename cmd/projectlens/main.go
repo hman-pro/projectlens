@@ -12,10 +12,14 @@ import (
 	"github.com/hman-pro/projectlens/internal/census"
 	"github.com/hman-pro/projectlens/internal/classifier"
 	"github.com/hman-pro/projectlens/internal/config"
+	"github.com/hman-pro/projectlens/internal/embeddings"
 	"github.com/hman-pro/projectlens/internal/indexer"
+	"github.com/hman-pro/projectlens/internal/providers/anthropic"
+	"github.com/hman-pro/projectlens/internal/providers/ollama"
 	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
+	"github.com/hman-pro/projectlens/internal/summaries"
 	"github.com/spf13/cobra"
 )
 
@@ -108,12 +112,12 @@ func newBootstrapCmd() *cobra.Command {
 			}
 			log.Println("migrations applied successfully")
 
-			var oaiClient *openai.Client
-			if cfg.OpenAIKey != "" {
-				oaiClient = openai.NewClient(cfg.OpenAIKey)
+			embedder, summarizer, err := buildProviders(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing providers: %w", err)
 			}
 
-			idx := indexer.New(db, oaiClient, repoPath, classifier.DefaultConfig())
+			idx := indexer.New(db, embedder, summarizer, repoPath, classifier.DefaultConfig())
 			stats, err := idx.Run(ctx, true)
 			if err != nil {
 				return fmt.Errorf("bootstrap indexing: %w", err)
@@ -143,12 +147,12 @@ func newReindexCmd() *cobra.Command {
 			}
 			defer db.Close()
 
-			var oaiClient *openai.Client
-			if cfg.OpenAIKey != "" {
-				oaiClient = openai.NewClient(cfg.OpenAIKey)
+			embedder, summarizer, err := buildProviders(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing providers: %w", err)
 			}
 
-			idx := indexer.New(db, oaiClient, repoPath, classifier.DefaultConfig())
+			idx := indexer.New(db, embedder, summarizer, repoPath, classifier.DefaultConfig())
 
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			if dryRun {
@@ -401,8 +405,13 @@ func newQueryCmd() *cobra.Command {
 			defer db.Close()
 
 			var embedder retrieval.QueryEmbedder
-			if cfg.OpenAIKey != "" {
-				embedder = openai.NewClient(cfg.OpenAIKey)
+			switch cfg.Embeddings.Provider {
+			case "ollama":
+				embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model)
+			case "openai":
+				if cfg.OpenAIKey != "" {
+					embedder = openai.NewClient(cfg.OpenAIKey)
+				}
 			}
 
 			mode, _ := cmd.Flags().GetString("mode")
@@ -455,6 +464,37 @@ func newQueryCmd() *cobra.Command {
 	}
 	cmd.Flags().String("mode", "", "query mode: lexical, semantic, or auto (default)")
 	return cmd
+}
+
+// buildProviders constructs the Embedder and PackageSummarizer based on config.
+func buildProviders(cfg *config.Config) (embeddings.Embedder, summaries.PackageSummarizer, error) {
+	var embedder embeddings.Embedder
+	switch cfg.Embeddings.Provider {
+	case "ollama":
+		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model)
+	case "openai":
+		if cfg.OpenAIKey == "" {
+			return nil, nil, fmt.Errorf("OPENAI_API_KEY required when embeddings.provider is 'openai'")
+		}
+		embedder = openai.NewClient(cfg.OpenAIKey)
+	default:
+		return nil, nil, fmt.Errorf("unknown embeddings provider: %s", cfg.Embeddings.Provider)
+	}
+
+	var summarizer summaries.PackageSummarizer
+	switch cfg.Summarization.Provider {
+	case "anthropic":
+		summarizer = anthropic.NewClient(cfg.Summarization.Model)
+	case "openai":
+		if cfg.OpenAIKey == "" {
+			return nil, nil, fmt.Errorf("OPENAI_API_KEY required when summarization.provider is 'openai'")
+		}
+		summarizer = openai.NewClient(cfg.OpenAIKey)
+	default:
+		return nil, nil, fmt.Errorf("unknown summarization provider: %s", cfg.Summarization.Provider)
+	}
+
+	return embedder, summarizer, nil
 }
 
 // loadCmdConfig loads configuration and resolves the repo path from flags.

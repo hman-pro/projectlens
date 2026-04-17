@@ -6,7 +6,6 @@ import (
 	"log"
 	"unicode"
 
-	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/parser"
 )
 
@@ -22,8 +21,8 @@ type PackageSummarizer interface {
 //
 // The packages map is keyed by package name (e.g., "parser") with a slice of
 // all symbols extracted from that package.
-func GeneratePackageSummaries(ctx context.Context, client *openai.Client, packages map[string][]parser.Symbol) (map[string]string, error) {
-	return generatePackageSummariesWith(ctx, client, packages)
+func GeneratePackageSummaries(ctx context.Context, summarizer PackageSummarizer, packages map[string][]parser.Symbol) (map[string]string, error) {
+	return generatePackageSummariesWith(ctx, summarizer, packages)
 }
 
 // generatePackageSummariesWith is the internal implementation that accepts the
