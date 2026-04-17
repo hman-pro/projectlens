@@ -28,3 +28,14 @@ embeddings:
 summarization:
   provider: anthropic
   model: claude-sonnet-4-6
+
+datastore:
+  engines:
+    - name: postgres
+      migration_paths:
+        - "db/postgresql/metastore/migrations/*.up.sql"
+  sql_scan_paths:
+    - "core/**/*.go"
+    - "service/**/*.go"
+    - "pkg/**/*.go"
+    - "pipelines/**/*.go"

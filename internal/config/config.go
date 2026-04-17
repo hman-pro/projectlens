@@ -14,6 +14,19 @@ type Config struct {
 	Index         IndexConfig         `yaml:"index"`
 	Embeddings    EmbeddingsConfig    `yaml:"embeddings"`
 	Summarization SummarizationConfig `yaml:"summarization"`
+	Datastore     DatastoreConfig     `yaml:"datastore"`
+}
+
+// DatastoreConfig controls datastore indexing: migration discovery and SQL scanning.
+type DatastoreConfig struct {
+	Engines      []DatastoreEngine `yaml:"engines"`
+	SQLScanPaths []string          `yaml:"sql_scan_paths"`
+}
+
+// DatastoreEngine defines migration paths for a database engine.
+type DatastoreEngine struct {
+	Name           string   `yaml:"name"`
+	MigrationPaths []string `yaml:"migration_paths"`
 }
 
 // EmbeddingsConfig controls which provider and model are used for generating

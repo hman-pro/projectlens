@@ -12,6 +12,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/census"
 	"github.com/hman-pro/projectlens/internal/classifier"
 	"github.com/hman-pro/projectlens/internal/config"
+	"github.com/hman-pro/projectlens/internal/datastore"
 	"github.com/hman-pro/projectlens/internal/embeddings"
 	"github.com/hman-pro/projectlens/internal/indexer"
 	"github.com/hman-pro/projectlens/internal/providers/anthropic"
@@ -41,6 +42,7 @@ func main() {
 		newInspectSymbolCmd(),
 		newInspectPackageCmd(),
 		newQueryCmd(),
+		newIndexDatastoreCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -464,6 +466,37 @@ func newQueryCmd() *cobra.Command {
 	}
 	cmd.Flags().String("mode", "", "query mode: lexical, semantic, or auto (default)")
 	return cmd
+}
+
+func newIndexDatastoreCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "index-datastore",
+		Short: "Index database schemas and SQL queries",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			cfg, repoPath, err := loadCmdConfig(cmd)
+			if err != nil {
+				return err
+			}
+			db, err := storage.Connect(ctx, cfg.DatabaseURL)
+			if err != nil {
+				return fmt.Errorf("connecting to database: %w", err)
+			}
+			defer db.Close()
+
+			dsCfg := datastore.Config{
+				SQLScanPaths: cfg.Datastore.SQLScanPaths,
+			}
+			for _, e := range cfg.Datastore.Engines {
+				dsCfg.Engines = append(dsCfg.Engines, datastore.EngineConfig{
+					Name:           e.Name,
+					MigrationPaths: e.MigrationPaths,
+				})
+			}
+
+			return datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
+		},
+	}
 }
 
 // buildProviders constructs the Embedder and PackageSummarizer based on config.
