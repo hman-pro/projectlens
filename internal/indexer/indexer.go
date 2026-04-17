@@ -161,7 +161,21 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	log.Println("── Step 4: Parse ──")
 	stepStart = time.Now()
 	log.Printf("parsing all packages via go/packages (this may take a while)...")
+	parseDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-parseDone:
+				return
+			case <-ticker.C:
+				log.Printf("  still parsing... (%s elapsed)", time.Since(stepStart).Round(time.Second))
+			}
+		}
+	}()
 	parseResult, err := parser.Parse(ctx, idx.repo, []string{"./..."})
+	close(parseDone)
 	if err != nil {
 		return nil, fmt.Errorf("indexer: parse: %w", err)
 	}
@@ -353,7 +367,22 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	// ── Step 7: Graph ───────────────────────────────────────────────────
 	log.Println("── Step 7: Graph ──")
 	stepStart = time.Now()
+	log.Printf("building call graph via go/packages (this may take a while)...")
+	graphDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-graphDone:
+				return
+			case <-ticker.C:
+				log.Printf("  still building graph... (%s elapsed)", time.Since(stepStart).Round(time.Second))
+			}
+		}
+	}()
 	graphResult, err := graph.Build(ctx, idx.repo, []string{"./..."})
+	close(graphDone)
 	if err != nil {
 		return nil, fmt.Errorf("indexer: graph build: %w", err)
 	}
