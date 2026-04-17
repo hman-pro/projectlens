@@ -49,6 +49,7 @@ func main() {
 		newIndexHistoryCmd(),
 		newIndexEmbedCmd(),
 		newIndexSummarizeCmd(),
+		newIndexAllCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -581,6 +582,90 @@ func newIndexSummarizeCmd() *cobra.Command {
 			return summarize.SummarizeMissing(ctx, db, summarizer)
 		},
 	}
+}
+
+func newIndexAllCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "index-all",
+		Short: "Run all indexing stages: code, datastore, history, summarize, embed",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			startTime := time.Now()
+
+			cfg, repoPath, err := loadCmdConfig(cmd)
+			if err != nil {
+				return err
+			}
+
+			db, err := storage.Connect(ctx, cfg.DatabaseURL)
+			if err != nil {
+				return fmt.Errorf("connecting to database: %w", err)
+			}
+			defer db.Close()
+
+			embedder, summarizer, err := buildProviders(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing providers: %w", err)
+			}
+
+			log.Println("═══ Running all indexing stages ═══")
+
+			// Stage 1: Code
+			log.Println("\n═══ Stage 1: Code ═══")
+			full, _ := cmd.Flags().GetBool("full")
+			idx := indexer.New(db, nil, nil, repoPath, classifier.DefaultConfig())
+			if _, err := idx.Run(ctx, full); err != nil {
+				return fmt.Errorf("code indexing: %w", err)
+			}
+
+			// Stage 2: Datastore
+			log.Println("\n═══ Stage 2: Datastore ═══")
+			dsCfg := datastore.Config{}
+			for _, e := range cfg.Datastore.Engines {
+				dsCfg.Engines = append(dsCfg.Engines, datastore.EngineConfig{
+					Name:           e.Name,
+					MigrationPaths: e.MigrationPaths,
+				})
+			}
+			dsCfg.SQLScanPaths = cfg.Datastore.SQLScanPaths
+			if err := datastore.IndexDatastore(ctx, db, repoPath, dsCfg); err != nil {
+				log.Printf("warning: datastore indexing failed: %v", err)
+			}
+
+			// Stage 3: History
+			log.Println("\n═══ Stage 3: History ═══")
+			hCfg := history.Config{
+				WindowMonths:         cfg.History.WindowMonths,
+				MinCommitsPerFile:    cfg.History.MinCommitsPerFile,
+				CouplingMinCoChanges: cfg.History.CouplingMinCoChanges,
+				CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
+			}
+			if err := history.IndexHistory(ctx, db, repoPath, hCfg); err != nil {
+				log.Printf("warning: history indexing failed: %v", err)
+			}
+
+			// Stage 4: Summarize (only missing)
+			log.Println("\n═══ Stage 4: Summarize ═══")
+			if summarizer != nil {
+				if err := summarize.SummarizeMissing(ctx, db, summarizer); err != nil {
+					log.Printf("warning: summarization failed: %v", err)
+				}
+			} else {
+				log.Println("skipping summarization (no summarizer configured)")
+			}
+
+			// Stage 5: Embed (only missing)
+			log.Println("\n═══ Stage 5: Embed ═══")
+			if err := embed.EmbedMissing(ctx, db, embedder); err != nil {
+				log.Printf("warning: embedding failed: %v", err)
+			}
+
+			log.Printf("\n═══ All stages complete (%s) ═══", time.Since(startTime).Round(time.Millisecond))
+			return nil
+		},
+	}
+	cmd.Flags().Bool("full", false, "perform a full code reindex (other stages are always full)")
+	return cmd
 }
 
 // buildProviders constructs the Embedder and PackageSummarizer based on config.
