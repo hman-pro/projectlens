@@ -32,6 +32,25 @@ func (db *DB) UpsertSummary(ctx context.Context, s *SummaryRecord) error {
 	return nil
 }
 
+// GetAllSummaryPackageNames returns all package names that have summaries.
+func (db *DB) GetAllSummaryPackageNames(ctx context.Context) ([]string, error) {
+	const query = `SELECT package_name FROM summaries ORDER BY package_name`
+	rows, err := db.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get summary package names: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("storage: scan summary package name: %w", err)
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
 // GetSummaryByPackage retrieves the summary for a package.
 // Returns nil, nil if no row is found.
 func (db *DB) GetSummaryByPackage(ctx context.Context, packageName string) (*SummaryRecord, error) {

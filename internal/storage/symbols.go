@@ -115,6 +115,25 @@ func (db *DB) DeleteSymbolsByFileID(ctx context.Context, fileID int64) error {
 	return nil
 }
 
+// GetDistinctPackageNames returns all unique package names from the symbols table.
+func (db *DB) GetDistinctPackageNames(ctx context.Context) ([]string, error) {
+	const query = `SELECT DISTINCT package_name FROM symbols ORDER BY package_name`
+	rows, err := db.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get distinct package names: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("storage: scan package name: %w", err)
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
 // scanSymbols is a helper that executes a query and scans rows into SymbolRecord slices.
 func (db *DB) scanSymbols(ctx context.Context, query string, args ...any) ([]SymbolRecord, error) {
 	rows, err := db.Pool.Query(ctx, query, args...)
