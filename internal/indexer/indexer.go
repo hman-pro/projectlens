@@ -427,6 +427,19 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			pkgSymMap[fr.Package] = append(pkgSymMap[fr.Package], fr.Symbols...)
 		}
 
+		// Skip packages that already have summaries.
+		skipped := 0
+		for pkgName := range pkgSymMap {
+			existing, _ := idx.db.GetSummaryByPackage(ctx, pkgName)
+			if existing != nil {
+				delete(pkgSymMap, pkgName)
+				skipped++
+			}
+		}
+		if skipped > 0 {
+			log.Printf("skipping %d packages with existing summaries", skipped)
+		}
+
 		pkgSummaries, err := summaries.GeneratePackageSummaries(ctx, idx.summarizer, pkgSymMap)
 		if err != nil {
 			return nil, fmt.Errorf("indexer: generate package summaries: %w", err)
