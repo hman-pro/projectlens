@@ -3,9 +3,9 @@ package summaries
 import (
 	"context"
 	"fmt"
-	"log"
 	"unicode"
 
+	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/parser"
 )
 
@@ -34,7 +34,7 @@ func generatePackageSummariesWith(ctx context.Context, summarizer PackageSummari
 
 	for pkgName, symbols := range packages {
 		i++
-		log.Printf("Generating summary for package %q (%d of %d)", pkgName, i, total)
+		logger.Progress("generating package summaries", i, total, "package", pkgName)
 
 		sigs := exportedSignatures(symbols)
 		if len(sigs) == 0 {

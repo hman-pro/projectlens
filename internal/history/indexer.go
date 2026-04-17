@@ -3,9 +3,9 @@ package history
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/storage"
 )
 
@@ -24,16 +24,16 @@ const maxBackfillFiles = 100
 // IndexHistory runs the full history indexing pipeline.
 func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Config) error {
 	startTime := time.Now()
-	log.Println("── History indexing ──")
+	logger.Step("History indexing")
 
 	// Step 1: Parse git log
 	window := fmt.Sprintf("%d months", cfg.WindowMonths)
-	log.Printf("parsing git log (window: %s)...", window)
+	logger.Info("parsing git log...", "window", window)
 	commits, err := ParseGitLog(repoPath, window)
 	if err != nil {
 		return fmt.Errorf("history: parse git log: %w", err)
 	}
-	log.Printf("found %d commits in window", len(commits))
+	logger.Info("found commits in window", "count", len(commits))
 
 	// Step 2: Load indexed file paths from DB
 	files, err := db.ListFiles(ctx)
@@ -44,7 +44,7 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 	for _, f := range files {
 		fileIDMap[f.Path] = f.ID
 	}
-	log.Printf("loaded %d indexed files from DB", len(fileIDMap))
+	logger.Info("loaded indexed files from DB", "count", len(fileIDMap))
 
 	// Step 3: Filter commits to only indexed files
 	var filteredCommits []Commit
@@ -61,7 +61,7 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 			filteredCommits = append(filteredCommits, fc)
 		}
 	}
-	log.Printf("filtered to %d commits with indexed files", len(filteredCommits))
+	logger.Info("filtered commits with indexed files", "count", len(filteredCommits))
 
 	// Step 4: Count commits per file, backfill files with < minCommits
 	fileCommitCount := make(map[string]int)
@@ -79,8 +79,10 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 	}
 
 	if len(lowActivityFiles) > maxBackfillFiles {
-		log.Printf("WARNING: %d files have fewer than %d commits — skipping per-file backfill (threshold: %d)",
-			len(lowActivityFiles), cfg.MinCommitsPerFile, maxBackfillFiles)
+		logger.Warn("skipping per-file backfill",
+			"low_activity_files", len(lowActivityFiles),
+			"min_commits", cfg.MinCommitsPerFile,
+			"threshold", maxBackfillFiles)
 	} else if len(lowActivityFiles) > 0 {
 		backfillCount := 0
 		for _, path := range lowActivityFiles {
@@ -105,7 +107,7 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 			backfillCount++
 		}
 		if backfillCount > 0 {
-			log.Printf("backfilled history for %d low-activity files", backfillCount)
+			logger.Info("backfilled history for low-activity files", "count", backfillCount)
 		}
 	}
 
@@ -132,12 +134,12 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 			historyCount++
 		}
 	}
-	log.Printf("stored %d file_history records", historyCount)
+	logger.Info("stored file_history records", "count", historyCount)
 
 	// Step 6: Compute coupling
-	log.Println("computing co-change coupling...")
+	logger.Info("computing co-change coupling...")
 	pairs := ComputeCoupling(filteredCommits, cfg.CouplingMinCoChanges, cfg.CouplingMaxFiles)
-	log.Printf("found %d coupling pairs (min %d co-changes)", len(pairs), cfg.CouplingMinCoChanges)
+	logger.Info("found coupling pairs", "count", len(pairs), "min_co_changes", cfg.CouplingMinCoChanges)
 
 	// Step 7: Store coupling as edges
 	var edges []storage.EdgeRecord
@@ -161,8 +163,8 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 			return fmt.Errorf("history: insert coupling edges: %w", err)
 		}
 	}
-	log.Printf("stored %d co-change coupling edges", len(edges))
+	logger.Info("stored co-change coupling edges", "count", len(edges))
 
-	log.Printf("history indexing complete (%s)", time.Since(startTime).Round(time.Millisecond))
+	logger.Info("history indexing complete", "elapsed", time.Since(startTime).Round(time.Millisecond))
 	return nil
 }

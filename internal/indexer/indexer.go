@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"log"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/classifier"
 	"github.com/hman-pro/projectlens/internal/embeddings"
 	"github.com/hman-pro/projectlens/internal/graph"
+	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/parser"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/hman-pro/projectlens/internal/summaries"
@@ -67,15 +67,18 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	stats := &Stats{}
 
 	// ── Step 1: Census ──────────────────────────────────────────────────
-	log.Println("── Step 1: Census ──")
+	logger.Step("Step 1: Census")
 	stepStart := time.Now()
 	censusResult, err := census.Walk(idx.repo, idx.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("indexer: census: %w", err)
 	}
-	log.Printf("census complete: %d handwritten, %d test, %d generated, %d excluded (%s)",
-		censusResult.Handwritten, censusResult.Test, censusResult.Generated, censusResult.Excluded,
-		time.Since(stepStart).Round(time.Millisecond))
+	logger.Info("census complete",
+		"handwritten", censusResult.Handwritten,
+		"test", censusResult.Test,
+		"generated", censusResult.Generated,
+		"excluded", censusResult.Excluded,
+		"elapsed", time.Since(stepStart).Round(time.Millisecond))
 
 	// ── Step 2: Determine work list ─────────────────────────────────────
 	// Only handwritten, non-test, non-generated files are candidates.
@@ -107,7 +110,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 				changedCount++
 			}
 		}
-		log.Printf("work list: %d files to process (%d new, %d changed)", len(work), newCount, changedCount)
+		logger.Info("work list", "files", len(work), "new", newCount, "changed", changedCount)
 
 		// Remove files that no longer exist.
 		allPaths := make([]string, len(candidates))
@@ -119,21 +122,21 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			return nil, fmt.Errorf("indexer: deleting stale files: %w", err)
 		}
 		if deleted > 0 {
-			log.Printf("deleted %d stale files", deleted)
+			logger.Info("deleted stale files", "count", deleted)
 		}
 	}
 
 	if full {
-		log.Printf("work list: %d files to process (full reindex)", len(work))
+		logger.Info("work list", "files", len(work), "mode", "full reindex")
 	}
 
 	if len(work) == 0 {
-		log.Println("nothing to do — index is up to date")
+		logger.Info("nothing to do — index is up to date")
 		return stats, nil
 	}
 
 	// ── Step 3: Git state ───────────────────────────────────────────────
-	log.Println("── Step 3: Git state ──")
+	logger.Step("Step 3: Git state")
 	stepStart = time.Now()
 	commitSHA, err := gitOutput(idx.repo, "rev-parse", "HEAD")
 	if err != nil {
@@ -148,7 +151,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("indexer: start run: %w", err)
 	}
-	log.Printf("git: branch=%s commit=%s (%s)", branch, commitSHA, time.Since(stepStart).Round(time.Millisecond))
+	logger.Info("git state", "branch", branch, "commit", commitSHA, "elapsed", time.Since(stepStart).Round(time.Millisecond))
 	// On failure, mark the run as failed.
 	var runCompleted bool
 	defer func() {
@@ -158,9 +161,9 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	}()
 
 	// ── Step 4: Parse ───────────────────────────────────────────────────
-	log.Println("── Step 4: Parse ──")
+	logger.Step("Step 4: Parse")
 	stepStart = time.Now()
-	log.Printf("parsing all packages via go/packages (this may take a while)...")
+	logger.Info("parsing all packages via go/packages (this may take a while)...")
 	parseDone := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -170,7 +173,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			case <-parseDone:
 				return
 			case <-ticker.C:
-				log.Printf("  still parsing... (%s elapsed)", time.Since(stepStart).Round(time.Second))
+				logger.Info("still parsing...", "elapsed", time.Since(stepStart).Round(time.Second))
 			}
 		}
 	}()
@@ -202,12 +205,12 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	for _, fr := range filteredFiles {
 		symbolCount += len(fr.Symbols)
 	}
-	log.Printf("parsed %d symbols from %d files (%s)", symbolCount, len(filteredFiles), time.Since(stepStart).Round(time.Millisecond))
+	logger.Info("parsed symbols", "symbols", symbolCount, "files", len(filteredFiles), "elapsed", time.Since(stepStart).Round(time.Millisecond))
 	stats.SymbolsExtracted = symbolCount
 	stats.FilesProcessed = len(work)
 
 	// ── Step 5: Store files and symbols ─────────────────────────────────
-	log.Println("── Step 5: Store files and symbols ──")
+	logger.Step("Step 5: Store files and symbols")
 	stepStart = time.Now()
 	// fileID tracks the database ID for each work-list file (keyed by relPath).
 	fileIDMap := make(map[string]int64)
@@ -222,7 +225,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	for fileNum, w := range work {
 		rp := w.entry.RelPath
 		if (fileNum+1)%500 == 0 || fileNum == len(work)-1 {
-			log.Printf("  storing files and symbols: %d/%d", fileNum+1, len(work))
+			logger.Progress("storing files and symbols", fileNum+1, len(work))
 		}
 		summary := summaries.HeuristicFileSummary(fileSymbols[rp], "")
 		rec := &storage.FileRecord{
@@ -295,10 +298,10 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		}
 	}
 
-	log.Printf("stored %d files and symbols (%s)", len(work), time.Since(stepStart).Round(time.Millisecond))
+	logger.Info("stored files and symbols", "count", len(work), "elapsed", time.Since(stepStart).Round(time.Millisecond))
 
 	// ── Step 6: Chunk ───────────────────────────────────────────────────
-	log.Println("── Step 6: Chunk ──")
+	logger.Step("Step 6: Chunk")
 	stepStart = time.Now()
 	// We need to read back symbol IDs from the database so we can link chunks.
 	// chunkInfo tracks the mapping between a chunk and its symbol ID.
@@ -362,12 +365,12 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		chunkIDMap[i] = cid
 	}
 	stats.ChunksCreated = len(allChunks)
-	log.Printf("created %d chunks (%s)", stats.ChunksCreated, time.Since(stepStart).Round(time.Millisecond))
+	logger.Info("created chunks", "count", stats.ChunksCreated, "elapsed", time.Since(stepStart).Round(time.Millisecond))
 
 	// ── Step 7: Graph ───────────────────────────────────────────────────
-	log.Println("── Step 7: Graph ──")
+	logger.Step("Step 7: Graph")
 	stepStart = time.Now()
-	log.Printf("building call graph via go/packages (this may take a while)...")
+	logger.Info("building call graph via go/packages (this may take a while)...")
 	graphDone := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -377,7 +380,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			case <-graphDone:
 				return
 			case <-ticker.C:
-				log.Printf("  still building graph... (%s elapsed)", time.Since(stepStart).Round(time.Second))
+				logger.Info("still building graph...", "elapsed", time.Since(stepStart).Round(time.Second))
 			}
 		}
 	}()
@@ -416,10 +419,10 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		return nil, fmt.Errorf("indexer: insert edges: %w", err)
 	}
 	stats.EdgesCreated = len(edgeRecords)
-	log.Printf("created %d edges (%s)", stats.EdgesCreated, time.Since(stepStart).Round(time.Millisecond))
+	logger.Info("created edges", "count", stats.EdgesCreated, "elapsed", time.Since(stepStart).Round(time.Millisecond))
 
 	// ── Step 8: Summarize packages ──────────────────────────────────────
-	log.Println("── Step 8: Summarize packages ──")
+	logger.Step("Step 8: Summarize packages")
 	stepStart = time.Now()
 	if idx.summarizer != nil {
 		pkgSymMap := make(map[string][]parser.Symbol)
@@ -437,7 +440,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			}
 		}
 		if skipped > 0 {
-			log.Printf("skipping %d packages with existing summaries", skipped)
+			logger.Info("skipping packages with existing summaries", "count", skipped)
 		}
 
 		pkgSummaries, err := summaries.GeneratePackageSummaries(ctx, idx.summarizer, pkgSymMap)
@@ -456,16 +459,16 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			}
 		}
 		stats.PackagesSummarized = len(pkgSummaries)
-		log.Printf("summarized %d packages (%s)", stats.PackagesSummarized, time.Since(stepStart).Round(time.Millisecond))
+		logger.Info("summarized packages", "count", stats.PackagesSummarized, "elapsed", time.Since(stepStart).Round(time.Millisecond))
 	} else {
-		log.Println("skipping package summarization (no summarizer configured)")
+		logger.Warn("skipping package summarization (no summarizer configured)")
 	}
 
 	// ── Step 9: Embed ───────────────────────────────────────────────────
-	log.Println("── Step 9: Embed ──")
+	logger.Step("Step 9: Embed")
 	stepStart = time.Now()
 	if idx.embedder != nil && len(allChunks) > 0 {
-		log.Printf("embedding %d chunks...", len(allChunks))
+		logger.Info("embedding chunks...", "count", len(allChunks))
 		contents := make([]string, len(allChunks))
 		for i, ci := range allChunks {
 			contents[i] = ci.chunk.Content
@@ -491,13 +494,13 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 			}
 		}
 		stats.ChunksEmbedded = len(embResults)
-		log.Printf("embedded %d chunks (%s)", stats.ChunksEmbedded, time.Since(stepStart).Round(time.Millisecond))
+		logger.Info("embedded chunks", "count", stats.ChunksEmbedded, "elapsed", time.Since(stepStart).Round(time.Millisecond))
 	} else if idx.embedder == nil {
-		log.Println("skipping embedding (no embedder configured)")
+		logger.Warn("skipping embedding (no embedder configured)")
 	}
 
 	// ── Step 10: Complete ───────────────────────────────────────────────
-	log.Println("── Step 10: Complete ──")
+	logger.Step("Step 10: Complete")
 	if err := idx.db.CompleteRun(ctx, runID, stats.FilesProcessed, stats.SymbolsExtracted, stats.EdgesCreated); err != nil {
 		return nil, fmt.Errorf("indexer: complete run: %w", err)
 	}
@@ -507,7 +510,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		return nil, fmt.Errorf("indexer: upsert git ref: %w", err)
 	}
 
-	log.Printf("indexing complete — total pipeline time: %s", time.Since(pipelineStart).Round(time.Millisecond))
+	logger.Info("indexing complete", "total_time", time.Since(pipelineStart).Round(time.Millisecond))
 	return stats, nil
 }
 

@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
 
+	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/storage"
 )
 
@@ -28,7 +28,7 @@ type EngineConfig struct {
 // IndexDatastore runs the full datastore indexing pipeline.
 func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Config) error {
 	startTime := time.Now()
-	log.Println("── Datastore indexing ──")
+	logger.Step("Datastore indexing")
 
 	// Step 1: Find and parse migration files.
 	var allMigrations []MigrationFile
@@ -55,7 +55,7 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 	}
 
 	tables := ParseMigrations(allMigrations)
-	log.Printf("parsed %d migration files → %d tables", len(allMigrations), len(tables))
+	logger.Info("parsed migrations", "migration_files", len(allMigrations), "tables", len(tables))
 
 	// Step 2: Store datastore_tables records.
 	tableIDMap := make(map[string]int64) // "schema.name" → DB ID
@@ -76,12 +76,12 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 		// Get the ID back by looking it up.
 		stored, err := db.GetDatastoreTableByName(ctx, fullName, "postgres")
 		if err != nil || stored == nil {
-			log.Printf("warning: could not retrieve stored table %s", fullName)
+			logger.Warn("could not retrieve stored table", "table", fullName)
 			continue
 		}
 		tableIDMap[fullName] = stored.ID
 	}
-	log.Printf("stored %d datastore_table records", len(tableIDMap))
+	logger.Info("stored datastore_table records", "count", len(tableIDMap))
 
 	// Step 3: Scan Go source files for SQL references.
 	var allRefs []SQLRef
@@ -105,7 +105,7 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 			allRefs = append(allRefs, refs...)
 		}
 	}
-	log.Printf("scanned Go files → %d SQL references", len(allRefs))
+	logger.Info("scanned Go files", "sql_references", len(allRefs))
 
 	// Step 4: Build reads_table/writes_table edges.
 	//   Match SQLRef.Table to datastore_tables IDs.
@@ -142,7 +142,7 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 			return fmt.Errorf("datastore: insert edges: %w", err)
 		}
 	}
-	log.Printf("created %d reads_table/writes_table edges", len(edges))
+	logger.Info("created reads_table/writes_table edges", "count", len(edges))
 
 	// Step 5: Build and store table chunks for embedding.
 	// Group refs by table.
@@ -172,14 +172,14 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 		}
 		_, err := db.InsertDocChunk(ctx, rec)
 		if err != nil {
-			log.Printf("warning: could not store chunk for table %s: %v", fullName, err)
+			logger.Warn("could not store chunk for table", "table", fullName, "err", err)
 			continue
 		}
 		chunksCreated++
 	}
-	log.Printf("created %d table chunks", chunksCreated)
+	logger.Info("created table chunks", "count", chunksCreated)
 
-	log.Printf("datastore indexing complete (%s)", time.Since(startTime).Round(time.Millisecond))
+	logger.Info("datastore indexing complete", "elapsed", time.Since(startTime).Round(time.Millisecond))
 	return nil
 }
 

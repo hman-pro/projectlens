@@ -3,9 +3,9 @@ package summarize
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/hman-pro/projectlens/internal/summaries"
 )
@@ -13,7 +13,7 @@ import (
 // SummarizeMissing finds packages without summaries and generates them.
 func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.PackageSummarizer) error {
 	startTime := time.Now()
-	log.Println("── Summarize missing packages ──")
+	logger.Step("Summarize missing packages")
 
 	allPackages, err := db.GetDistinctPackageNames(ctx)
 	if err != nil {
@@ -38,18 +38,18 @@ func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.
 	}
 
 	if len(missing) == 0 {
-		log.Println("all packages already have summaries — nothing to do")
+		logger.Info("all packages already have summaries — nothing to do")
 		return nil
 	}
 
-	log.Printf("found %d packages missing summaries", len(missing))
+	logger.Info("found packages missing summaries", "count", len(missing))
 
 	for i, pkgName := range missing {
-		log.Printf("summarizing package %q (%d of %d)", pkgName, i+1, len(missing))
+		logger.Progress("summarizing packages", i+1, len(missing), "package", pkgName)
 
 		syms, err := db.GetSymbolsByPackage(ctx, pkgName)
 		if err != nil {
-			log.Printf("warning: could not get symbols for %s: %v", pkgName, err)
+			logger.Warn("could not get symbols", "package", pkgName, "err", err)
 			continue
 		}
 
@@ -76,7 +76,7 @@ func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.
 
 		summary, err := summarizer.GeneratePackageSummary(ctx, pkgName, sigs)
 		if err != nil {
-			log.Printf("warning: could not summarize %s: %v", pkgName, err)
+			logger.Warn("could not summarize package", "package", pkgName, "err", err)
 			continue
 		}
 
@@ -86,10 +86,10 @@ func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.
 			ModelVersion: "llm",
 		}
 		if err := db.UpsertSummary(ctx, rec); err != nil {
-			log.Printf("warning: could not store summary for %s: %v", pkgName, err)
+			logger.Warn("could not store summary", "package", pkgName, "err", err)
 		}
 	}
 
-	log.Printf("summarized %d packages (%s)", len(missing), time.Since(startTime).Round(time.Millisecond))
+	logger.Info("summarized packages", "count", len(missing), "elapsed", time.Since(startTime).Round(time.Millisecond))
 	return nil
 }

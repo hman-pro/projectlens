@@ -5,7 +5,8 @@ package embeddings
 import (
 	"context"
 	"fmt"
-	"log"
+
+	"github.com/hman-pro/projectlens/internal/logger"
 )
 
 // batchSize is the maximum number of texts sent per EmbedBatch call.
@@ -57,7 +58,7 @@ func EmbedChunks(ctx context.Context, embedder Embedder, chunkContents []string)
 			}
 		}
 
-		log.Printf("embedding batch %d of %d (%d chunks)", batchNum, totalBatches, len(batch))
+		logger.Progress("embedding batches", batchNum, totalBatches, "chunks", len(batch))
 
 		vectors, err := embedder.EmbedBatch(ctx, batch)
 		if err != nil {

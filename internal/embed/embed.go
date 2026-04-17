@@ -3,10 +3,10 @@ package embed
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/hman-pro/projectlens/internal/embeddings"
+	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/pgvector/pgvector-go"
 )
@@ -14,7 +14,7 @@ import (
 // EmbedMissing finds all chunks without embeddings and embeds them.
 func EmbedMissing(ctx context.Context, db *storage.DB, embedder embeddings.Embedder) error {
 	startTime := time.Now()
-	log.Println("── Embed missing chunks ──")
+	logger.Step("Embed missing chunks")
 
 	unembedded, err := db.GetUnembeddedChunks(ctx)
 	if err != nil {
@@ -22,11 +22,11 @@ func EmbedMissing(ctx context.Context, db *storage.DB, embedder embeddings.Embed
 	}
 
 	if len(unembedded) == 0 {
-		log.Println("all chunks already have embeddings — nothing to do")
+		logger.Info("all chunks already have embeddings — nothing to do")
 		return nil
 	}
 
-	log.Printf("found %d chunks missing embeddings", len(unembedded))
+	logger.Info("found chunks missing embeddings", "count", len(unembedded))
 
 	contents := make([]string, len(unembedded))
 	for i, c := range unembedded {
@@ -50,6 +50,6 @@ func EmbedMissing(ctx context.Context, db *storage.DB, embedder embeddings.Embed
 		}
 	}
 
-	log.Printf("embedded %d chunks (%s)", len(results), time.Since(startTime).Round(time.Millisecond))
+	logger.Info("embedded chunks", "count", len(results), "elapsed", time.Since(startTime).Round(time.Millisecond))
 	return nil
 }

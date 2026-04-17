@@ -3,20 +3,20 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
 	"unicode"
 
 	"github.com/hman-pro/projectlens/internal/census"
-	"github.com/hman-pro/projectlens/internal/embed"
 	"github.com/hman-pro/projectlens/internal/classifier"
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/datastore"
+	"github.com/hman-pro/projectlens/internal/embed"
 	"github.com/hman-pro/projectlens/internal/embeddings"
 	"github.com/hman-pro/projectlens/internal/history"
 	"github.com/hman-pro/projectlens/internal/indexer"
+	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/providers/anthropic"
 	"github.com/hman-pro/projectlens/internal/providers/ollama"
 	"github.com/hman-pro/projectlens/internal/providers/openai"
@@ -119,7 +119,7 @@ func newBootstrapCmd() *cobra.Command {
 			if err := db.Migrate(ctx, migrationsDir); err != nil {
 				return fmt.Errorf("running migrations: %w", err)
 			}
-			log.Println("migrations applied successfully")
+			logger.Info("migrations applied successfully")
 
 			embedder, summarizer, err := buildProviders(cfg)
 			if err != nil {
@@ -612,10 +612,10 @@ func newIndexAllCmd() *cobra.Command {
 				return fmt.Errorf("initializing providers: %w", err)
 			}
 
-			log.Println("═══ Running all indexing stages ═══")
+			logger.Stage("Running all indexing stages")
 
 			// Stage 1: Code
-			log.Println("\n═══ Stage 1: Code ═══")
+			logger.Stage("Stage 1: Code")
 			full, _ := cmd.Flags().GetBool("full")
 			idx := indexer.New(db, nil, nil, repoPath, classifier.DefaultConfig())
 			if _, err := idx.Run(ctx, full); err != nil {
@@ -623,7 +623,7 @@ func newIndexAllCmd() *cobra.Command {
 			}
 
 			// Stage 2: Datastore
-			log.Println("\n═══ Stage 2: Datastore ═══")
+			logger.Stage("Stage 2: Datastore")
 			dsCfg := datastore.Config{}
 			for _, e := range cfg.Datastore.Engines {
 				dsCfg.Engines = append(dsCfg.Engines, datastore.EngineConfig{
@@ -633,11 +633,11 @@ func newIndexAllCmd() *cobra.Command {
 			}
 			dsCfg.SQLScanPaths = cfg.Datastore.SQLScanPaths
 			if err := datastore.IndexDatastore(ctx, db, repoPath, dsCfg); err != nil {
-				log.Printf("warning: datastore indexing failed: %v", err)
+				logger.Warn("datastore indexing failed", "err", err)
 			}
 
 			// Stage 3: History
-			log.Println("\n═══ Stage 3: History ═══")
+			logger.Stage("Stage 3: History")
 			hCfg := history.Config{
 				WindowMonths:         cfg.History.WindowMonths,
 				MinCommitsPerFile:    cfg.History.MinCommitsPerFile,
@@ -645,26 +645,26 @@ func newIndexAllCmd() *cobra.Command {
 				CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
 			}
 			if err := history.IndexHistory(ctx, db, repoPath, hCfg); err != nil {
-				log.Printf("warning: history indexing failed: %v", err)
+				logger.Warn("history indexing failed", "err", err)
 			}
 
 			// Stage 4: Summarize (only missing)
-			log.Println("\n═══ Stage 4: Summarize ═══")
+			logger.Stage("Stage 4: Summarize")
 			if summarizer != nil {
 				if err := summarize.SummarizeMissing(ctx, db, summarizer); err != nil {
-					log.Printf("warning: summarization failed: %v", err)
+					logger.Warn("summarization failed", "err", err)
 				}
 			} else {
-				log.Println("skipping summarization (no summarizer configured)")
+				logger.Warn("skipping summarization (no summarizer configured)")
 			}
 
 			// Stage 5: Embed (only missing)
-			log.Println("\n═══ Stage 5: Embed ═══")
+			logger.Stage("Stage 5: Embed")
 			if err := embed.EmbedMissing(ctx, db, embedder); err != nil {
-				log.Printf("warning: embedding failed: %v", err)
+				logger.Warn("embedding failed", "err", err)
 			}
 
-			log.Printf("\n═══ All stages complete (%s) ═══", time.Since(startTime).Round(time.Millisecond))
+			logger.Info("all stages complete", "total_time", time.Since(startTime).Round(time.Millisecond))
 			return nil
 		},
 	}
