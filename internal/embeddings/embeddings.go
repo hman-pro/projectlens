@@ -12,9 +12,9 @@ import (
 const batchSize = 100
 
 // maxCharsPerChunk is the approximate character limit for embedding input.
-// Most embedding models limit to 8192 tokens; at ~4 chars/token, 30000 chars
-// provides a safe margin. Chunks exceeding this are truncated.
-const maxCharsPerChunk = 30000
+// Most embedding models limit to 8192 tokens; at ~3 chars/token for local
+// models, 20000 chars provides a safe margin. Chunks exceeding this are truncated.
+const maxCharsPerChunk = 20000
 
 // EmbeddingResult pairs a chunk index with its embedding vector.
 type EmbeddingResult struct {
