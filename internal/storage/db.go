@@ -36,16 +36,43 @@ func (db *DB) Ping(ctx context.Context) error {
 }
 
 // Migrate reads .up.sql files from migrationsDir in sorted order and executes
-// each one inside the database. It is meant for simple forward-only migration.
+// each one inside the database. Already-applied migrations are skipped by
+// checking whether the migration name exists in the schema_migrations table.
 func (db *DB) Migrate(ctx context.Context, migrationsDir string) error {
+	// Ensure the tracking table exists.
+	const createTracker = `CREATE TABLE IF NOT EXISTS schema_migrations (
+		name TEXT PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`
+	if _, err := db.Pool.Exec(ctx, createTracker); err != nil {
+		return fmt.Errorf("storage: create migration tracker: %w", err)
+	}
+
 	files, err := ReadMigrationFiles(migrationsDir)
 	if err != nil {
 		return fmt.Errorf("storage: migrate: %w", err)
 	}
 
 	for _, mf := range files {
+		// Check if already applied.
+		var exists bool
+		err := db.Pool.QueryRow(ctx,
+			"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name = $1)", mf.Name,
+		).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("storage: check migration %s: %w", mf.Name, err)
+		}
+		if exists {
+			continue
+		}
+
 		if _, err := db.Pool.Exec(ctx, mf.SQL); err != nil {
 			return fmt.Errorf("storage: migrate %s: %w", mf.Name, err)
+		}
+		if _, err := db.Pool.Exec(ctx,
+			"INSERT INTO schema_migrations (name) VALUES ($1)", mf.Name,
+		); err != nil {
+			return fmt.Errorf("storage: record migration %s: %w", mf.Name, err)
 		}
 	}
 	return nil
