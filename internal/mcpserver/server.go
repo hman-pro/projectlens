@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hman-pro/projectlens/internal/openai"
+	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"

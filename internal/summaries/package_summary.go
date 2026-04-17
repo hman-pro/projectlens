@@ -6,7 +6,7 @@ import (
 	"log"
 	"unicode"
 
-	"github.com/hman-pro/projectlens/internal/openai"
+	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/parser"
 )
 

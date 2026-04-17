@@ -17,7 +17,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/classifier"
 	"github.com/hman-pro/projectlens/internal/embeddings"
 	"github.com/hman-pro/projectlens/internal/graph"
-	"github.com/hman-pro/projectlens/internal/openai"
+	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/parser"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/hman-pro/projectlens/internal/summaries"

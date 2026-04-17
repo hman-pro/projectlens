@@ -18,3 +18,13 @@ index:
     - "_grpc.go"
     - "_string.go"
     - "zz_generated"
+
+embeddings:
+  provider: ollama
+  model: mxbai-embed-large
+  dimensions: 1024
+  endpoint: http://localhost:11434
+
+summarization:
+  provider: anthropic
+  model: claude-sonnet-4-6

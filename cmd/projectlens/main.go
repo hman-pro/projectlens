@@ -13,7 +13,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/classifier"
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/indexer"
-	"github.com/hman-pro/projectlens/internal/openai"
+	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/spf13/cobra"
