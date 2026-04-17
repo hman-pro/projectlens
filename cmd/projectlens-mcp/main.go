@@ -72,7 +72,7 @@ func run() error {
 	}
 
 	// Create and start MCP server.
-	srv := mcpserver.New(db, router, port)
+	srv := mcpserver.New(db, router, port, cfg.RepoPath)
 	return srv.Start(ctx)
 }
 

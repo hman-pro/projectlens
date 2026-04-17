@@ -157,6 +157,43 @@ func (db *DB) DeleteEdgesBySymbolID(ctx context.Context, symbolID int64) error {
 	return nil
 }
 
+// CouplingResult represents a co-change coupling edge with the coupled file path.
+type CouplingResult struct {
+	FilePath string  `json:"file_path"`
+	Strength float32 `json:"strength"`
+}
+
+// GetCouplingEdges returns files that co-change with the given file.
+func (db *DB) GetCouplingEdges(ctx context.Context, fileID int64, minStrength float32) ([]CouplingResult, error) {
+	const query = `
+		SELECT f.path, COALESCE(e.confidence, 0) as strength
+		FROM edges e
+		JOIN files f ON f.id = CASE
+			WHEN e.source_id = $1 AND e.source_type = 'file' THEN e.target_id
+			WHEN e.target_id = $1 AND e.target_type = 'file' THEN e.source_id
+		END
+		WHERE e.edge_type = 'co_changes'
+		  AND ((e.source_type = 'file' AND e.source_id = $1) OR (e.target_type = 'file' AND e.target_id = $1))
+		  AND COALESCE(e.confidence, 0) >= $2
+		ORDER BY strength DESC
+	`
+	rows, err := db.Pool.Query(ctx, query, fileID, minStrength)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get coupling edges: %w", err)
+	}
+	defer rows.Close()
+
+	var results []CouplingResult
+	for rows.Next() {
+		var r CouplingResult
+		if err := rows.Scan(&r.FilePath, &r.Strength); err != nil {
+			return nil, fmt.Errorf("storage: scan coupling result: %w", err)
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
 // scanEdgeResults is a helper that scans rows into EdgeResult slices.
 func (db *DB) scanEdgeResults(ctx context.Context, query string, args ...any) ([]EdgeResult, error) {
 	rows, err := db.Pool.Query(ctx, query, args...)

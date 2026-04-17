@@ -7,14 +7,16 @@ import (
 
 func TestToolDefsCount(t *testing.T) {
 	defs := toolDefs()
-	if got := len(defs); got != 6 {
-		t.Fatalf("expected 6 tool definitions, got %d", got)
+	if got := len(defs); got != 8 {
+		t.Fatalf("expected 8 tool definitions, got %d", got)
 	}
 }
 
 func TestToolDefsNames(t *testing.T) {
 	expected := []string{
 		"find_symbol",
+		"get_change_history",
+		"get_coupling",
 		"get_package_summary",
 		"get_symbol_context",
 		"get_table_context",
@@ -148,12 +150,12 @@ func TestIndexStatusSchema(t *testing.T) {
 }
 
 func TestServerRegistersAllTools(t *testing.T) {
-	srv := New(nil, nil, 8484)
+	srv := New(nil, nil, 8484, "")
 	mcpSrv := srv.MCPServer()
 
 	tools := mcpSrv.ListTools()
-	if len(tools) != 6 {
-		t.Fatalf("expected 6 registered tools, got %d", len(tools))
+	if len(tools) != 8 {
+		t.Fatalf("expected 8 registered tools, got %d", len(tools))
 	}
 
 	expected := map[string]bool{
@@ -163,6 +165,8 @@ func TestServerRegistersAllTools(t *testing.T) {
 		"get_package_summary": true,
 		"get_table_context":   true,
 		"index_status":        true,
+		"get_change_history":  true,
+		"get_coupling":        true,
 	}
 
 	for name := range tools {
@@ -188,6 +192,59 @@ func TestAllToolsReadOnly(t *testing.T) {
 			t.Errorf("tool %q should not be marked destructive", d.Name)
 		}
 	}
+}
+
+func TestGetChangeHistorySchema(t *testing.T) {
+	tool := getChangeHistoryTool()
+
+	if tool.Name != "get_change_history" {
+		t.Fatalf("expected name get_change_history, got %s", tool.Name)
+	}
+
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "name" {
+		t.Errorf("expected required=[name], got %v", tool.InputSchema.Required)
+	}
+
+	for _, prop := range []string{"name", "limit"} {
+		if _, ok := tool.InputSchema.Properties[prop]; !ok {
+			t.Errorf("missing %q property", prop)
+		}
+	}
+}
+
+func TestGetCouplingSchema(t *testing.T) {
+	tool := getCouplingTool()
+
+	if tool.Name != "get_coupling" {
+		t.Fatalf("expected name get_coupling, got %s", tool.Name)
+	}
+
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "name" {
+		t.Errorf("expected required=[name], got %v", tool.InputSchema.Required)
+	}
+
+	for _, prop := range []string{"name", "min_strength"} {
+		if _, ok := tool.InputSchema.Properties[prop]; !ok {
+			t.Errorf("missing %q property", prop)
+		}
+	}
+}
+
+func TestTruncateDiff(t *testing.T) {
+	t.Run("short diff unchanged", func(t *testing.T) {
+		got := truncateDiff("short diff", 100)
+		if got != "short diff" {
+			t.Errorf("unexpected result: %q", got)
+		}
+	})
+
+	t.Run("long diff truncated at newline", func(t *testing.T) {
+		diff := "line1\nline2\nline3\nline4"
+		got := truncateDiff(diff, 12)
+		if got != "line1\nline2\n   ..." {
+			t.Errorf("unexpected result: %q", got)
+		}
+	})
 }
 
 func TestFormatHelpers(t *testing.T) {

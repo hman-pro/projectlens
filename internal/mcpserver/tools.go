@@ -4,7 +4,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// toolDefs returns the 6 MCP tool definitions for ProjectLens.
+// toolDefs returns the 8 MCP tool definitions for ProjectLens.
 func toolDefs() []mcp.Tool {
 	return []mcp.Tool{
 		findSymbolTool(),
@@ -13,6 +13,8 @@ func toolDefs() []mcp.Tool {
 		getPackageSummaryTool(),
 		getTableContextTool(),
 		indexStatusTool(),
+		getChangeHistoryTool(),
+		getCouplingTool(),
 	}
 }
 
@@ -100,5 +102,37 @@ func indexStatusTool() mcp.Tool {
 		mcp.WithDescription("Check the freshness and status of the ProjectLens index."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
+	)
+}
+
+// getChangeHistoryTool defines the get_change_history tool.
+func getChangeHistoryTool() mcp.Tool {
+	return mcp.NewTool("get_change_history",
+		mcp.WithDescription("Show recent git commits that changed a file or symbol. For symbols, shows only commits that modified the symbol's code."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("File path (e.g., 'core/funding/store.go') or symbol name (e.g., 'CalculateFunding')"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of commits to return (default: 10)"),
+		),
+	)
+}
+
+// getCouplingTool defines the get_coupling tool.
+func getCouplingTool() mcp.Tool {
+	return mcp.NewTool("get_coupling",
+		mcp.WithDescription("Show files that frequently change together with the given file (co-change coupling analysis). Higher strength means stronger coupling."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("File path (e.g., 'core/funding/store.go')"),
+		),
+		mcp.WithNumber("min_strength",
+			mcp.Description("Minimum coupling strength 0.0-1.0 (default: 0.3)"),
+		),
 	)
 }

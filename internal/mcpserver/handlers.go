@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/hman-pro/projectlens/internal/history"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -349,6 +350,194 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 	}
 
 	return mcp.NewToolResultText(b.String()), nil
+}
+
+// handleGetChangeHistory handles the get_change_history tool call.
+func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, err := req.RequireString("name")
+	if err != nil {
+		return mcp.NewToolResultError("get_change_history: missing required argument 'name'"), nil
+	}
+	limit := req.GetInt("limit", 10)
+	if limit <= 0 {
+		limit = 10
+	}
+
+	// Try to find as a file path first.
+	file, err := s.db.GetFileByPath(ctx, name)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("get_change_history: file lookup failed", err), nil
+	}
+
+	if file != nil {
+		// Found as file — get file history from DB.
+		records, err := s.db.GetFileHistory(ctx, file.ID, limit)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("get_change_history: failed to get file history", err), nil
+		}
+		if len(records) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("No change history found for %s. Run 'projectlens index-history' to index git history.", name)), nil
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Change history for %s:\n\n", name)
+		for i, r := range records {
+			date := r.CommittedAt.Format("2006-01-02")
+			shortHash := r.CommitHash
+			if len(shortHash) > 7 {
+				shortHash = shortHash[:7]
+			}
+			fmt.Fprintf(&b, "%d. %s (%s) by %s — %s\n", i+1, shortHash, date, r.Author, r.ChangeType)
+		}
+		return mcp.NewToolResultText(b.String()), nil
+	}
+
+	// Not found as file — try as symbol.
+	results, err := retrieval.LexicalSearch(ctx, s.db, name, 1)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("get_change_history: symbol lookup failed", err), nil
+	}
+	if len(results) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No file or symbol found matching %q.", name)), nil
+	}
+
+	target := results[0]
+
+	// If repoPath is configured, use git-based symbol evolution.
+	if s.repoPath != "" {
+		changes, err := history.GetSymbolEvolution(s.repoPath, target.FilePath, target.SymbolName, target.LineStart, target.LineEnd, limit)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("get_change_history: git history failed", err), nil
+		}
+		if len(changes) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("No change history found for symbol %q in %s.", target.SymbolName, target.FilePath)), nil
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Change history for symbol %s (%s:%d-%d):\n\n", target.SymbolName, target.FilePath, target.LineStart, target.LineEnd)
+		for i, c := range changes {
+			shortHash := c.Hash
+			if len(shortHash) > 7 {
+				shortHash = shortHash[:7]
+			}
+			date := time.Unix(c.Timestamp, 0).Format("2006-01-02")
+			fmt.Fprintf(&b, "%d. %s (%s) by %s — %s\n", i+1, shortHash, date, c.Author, c.Message)
+			if c.DiffSnippet != "" {
+				// Indent and truncate diff snippet.
+				snippet := truncateDiff(c.DiffSnippet, 500)
+				for _, line := range strings.Split(snippet, "\n") {
+					fmt.Fprintf(&b, "   %s\n", line)
+				}
+				b.WriteString("\n")
+			}
+		}
+		return mcp.NewToolResultText(b.String()), nil
+	}
+
+	// Fallback: use DB-based symbol history.
+	records, err := s.db.GetSymbolHistory(ctx, target.SymbolID, limit)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("get_change_history: failed to get symbol history", err), nil
+	}
+	if len(records) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No change history found for symbol %q. Run 'projectlens index-history' to index git history.", name)), nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Change history for symbol %s (%s:%d-%d):\n\n", target.SymbolName, target.FilePath, target.LineStart, target.LineEnd)
+	for i, r := range records {
+		date := r.CommittedAt.Format("2006-01-02")
+		shortHash := r.CommitHash
+		if len(shortHash) > 7 {
+			shortHash = shortHash[:7]
+		}
+		fmt.Fprintf(&b, "%d. %s (%s) by %s — %s\n", i+1, shortHash, date, r.Author, r.ChangeType)
+		if r.DiffSnippet != nil && *r.DiffSnippet != "" {
+			snippet := truncateDiff(*r.DiffSnippet, 500)
+			for _, line := range strings.Split(snippet, "\n") {
+				fmt.Fprintf(&b, "   %s\n", line)
+			}
+			b.WriteString("\n")
+		}
+	}
+	return mcp.NewToolResultText(b.String()), nil
+}
+
+// handleGetCoupling handles the get_coupling tool call.
+func (s *Server) handleGetCoupling(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, err := req.RequireString("name")
+	if err != nil {
+		return mcp.NewToolResultError("get_coupling: missing required argument 'name'"), nil
+	}
+	minStrength := float32(req.GetFloat("min_strength", 0.3))
+	if minStrength < 0 {
+		minStrength = 0
+	}
+	if minStrength > 1 {
+		minStrength = 1
+	}
+
+	// Find the file.
+	file, err := s.db.GetFileByPath(ctx, name)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("get_coupling: file lookup failed", err), nil
+	}
+	if file == nil {
+		return mcp.NewToolResultText(fmt.Sprintf("No file found matching %q. Provide the exact indexed file path.", name)), nil
+	}
+
+	// Query coupling edges.
+	couplings, err := s.db.GetCouplingEdges(ctx, file.ID, minStrength)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("get_coupling: failed to get coupling edges", err), nil
+	}
+	if len(couplings) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No co-change coupling found for %s (min strength: %.1f). Run 'projectlens index-history' to build coupling data.", name, minStrength)), nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Co-change coupling for %s:\n", name)
+
+	// Group by strength tier.
+	var strong, notable []string
+	for _, c := range couplings {
+		line := fmt.Sprintf("  - %s (strength: %.2f)", c.FilePath, c.Strength)
+		if c.Strength >= 0.5 {
+			strong = append(strong, line)
+		} else {
+			notable = append(notable, line)
+		}
+	}
+
+	if len(strong) > 0 {
+		b.WriteString("\nStrong coupling (>= 0.5):\n")
+		for _, line := range strong {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+	if len(notable) > 0 {
+		fmt.Fprintf(&b, "\nNotable coupling (>= %.1f):\n", minStrength)
+		for _, line := range notable {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+
+	return mcp.NewToolResultText(b.String()), nil
+}
+
+// truncateDiff truncates a diff snippet to maxLen bytes, cutting at the last
+// newline before the limit.
+func truncateDiff(diff string, maxLen int) string {
+	if len(diff) <= maxLen {
+		return diff
+	}
+	truncated := diff[:maxLen]
+	if idx := strings.LastIndex(truncated, "\n"); idx > 0 {
+		truncated = truncated[:idx]
+	}
+	return truncated + "\n   ..."
 }
 
 // formatSignature formats a SearchResult's display name. If a signature exists

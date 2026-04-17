@@ -1,8 +1,8 @@
 // Package mcpserver exposes ProjectLens's retrieval capabilities via the
-// Model Context Protocol (MCP) over Streamable HTTP. It registers 6 tools
+// Model Context Protocol (MCP) over Streamable HTTP. It registers 8 tools
 // that Claude Code can call to search symbols, query code semantically,
 // inspect symbol context, summarize packages, look up database table schemas,
-// and check index freshness.
+// check index freshness, show change history, and analyse co-change coupling.
 package mcpserver
 
 import (
@@ -21,17 +21,19 @@ import (
 
 // Server wraps the dependencies needed by the MCP tool handlers.
 type Server struct {
-	db     *storage.DB
-	router *retrieval.Router
-	port   int
+	db       *storage.DB
+	router   *retrieval.Router
+	port     int
+	repoPath string
 }
 
 // New creates a new MCP server with the given dependencies.
-func New(db *storage.DB, router *retrieval.Router, port int) *Server {
+func New(db *storage.DB, router *retrieval.Router, port int, repoPath string) *Server {
 	return &Server{
-		db:     db,
-		router: router,
-		port:   port,
+		db:       db,
+		router:   router,
+		port:     port,
+		repoPath: repoPath,
 	}
 }
 
@@ -49,6 +51,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mcpServer.AddTool(getPackageSummaryTool(), s.handleGetPackageSummary)
 	mcpServer.AddTool(getTableContextTool(), s.handleGetTableContext)
 	mcpServer.AddTool(indexStatusTool(), s.handleIndexStatus)
+	mcpServer.AddTool(getChangeHistoryTool(), s.handleGetChangeHistory)
+	mcpServer.AddTool(getCouplingTool(), s.handleGetCoupling)
 
 	httpServer := server.NewStreamableHTTPServer(mcpServer)
 
@@ -118,5 +122,7 @@ func (s *Server) MCPServer() *server.MCPServer {
 	mcpServer.AddTool(getPackageSummaryTool(), s.handleGetPackageSummary)
 	mcpServer.AddTool(getTableContextTool(), s.handleGetTableContext)
 	mcpServer.AddTool(indexStatusTool(), s.handleIndexStatus)
+	mcpServer.AddTool(getChangeHistoryTool(), s.handleGetChangeHistory)
+	mcpServer.AddTool(getCouplingTool(), s.handleGetCoupling)
 	return mcpServer
 }
