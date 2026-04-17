@@ -39,8 +39,8 @@ func (db *DB) InsertEdges(ctx context.Context, edges []EdgeRecord) error {
 		return nil
 	}
 
-	const cols = 5
-	const maxBatch = 65535 / cols // 13107 edges per batch
+	const cols = 7
+	const maxBatch = 65535 / cols // 9362 edges per batch
 
 	for start := 0; start < len(edges); start += maxBatch {
 		end := start + maxBatch
@@ -55,15 +55,17 @@ func (db *DB) InsertEdges(ctx context.Context, edges []EdgeRecord) error {
 		for i, e := range batch {
 			base := i * cols
 			valueStrings = append(valueStrings, fmt.Sprintf(
-				"($%d, $%d, $%d, $%d, $%d)", base+1, base+2, base+3, base+4, base+5,
+				"($%d, $%d, $%d, $%d, $%d, $%d, $%d)", base+1, base+2, base+3, base+4, base+5, base+6, base+7,
 			))
-			args = append(args, e.SourceType, e.SourceID, e.TargetType, e.TargetID, e.EdgeType)
+			args = append(args, e.SourceType, e.SourceID, e.TargetType, e.TargetID, e.EdgeType, e.Properties, e.Confidence)
 		}
 
 		query := fmt.Sprintf(`
-			INSERT INTO edges (source_type, source_id, target_type, target_id, edge_type)
+			INSERT INTO edges (source_type, source_id, target_type, target_id, edge_type, properties, confidence)
 			VALUES %s
-			ON CONFLICT (source_type, source_id, target_type, target_id, edge_type) DO NOTHING
+			ON CONFLICT (source_type, source_id, target_type, target_id, edge_type) DO UPDATE SET
+				properties = EXCLUDED.properties,
+				confidence = EXCLUDED.confidence
 		`, strings.Join(valueStrings, ", "))
 
 		_, err := db.Pool.Exec(ctx, query, args...)
