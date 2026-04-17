@@ -13,9 +13,9 @@ import (
 const batchSize = 10
 
 // maxCharsPerChunk is the approximate character limit for embedding input.
-// Most embedding models limit to 8192 tokens; at ~3 chars/token for local
-// models, 20000 chars provides a safe margin. Chunks exceeding this are truncated.
-const maxCharsPerChunk = 20000
+// Ollama mxbai-embed-large has 8192 token context. With variable tokenization
+// (~2-4 chars/token for code), 8000 chars stays safely under the limit.
+const maxCharsPerChunk = 8000
 
 // EmbeddingResult pairs a chunk index with its embedding vector.
 type EmbeddingResult struct {
