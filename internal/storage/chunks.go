@@ -53,6 +53,37 @@ func (db *DB) InsertDocChunk(ctx context.Context, c *ChunkRecord) (int64, error)
 	return id, nil
 }
 
+// UnembeddedChunk is a chunk that has no embedding yet.
+type UnembeddedChunk struct {
+	ID      int64
+	Content string
+}
+
+// GetUnembeddedChunks returns all chunks that don't have an embedding.
+func (db *DB) GetUnembeddedChunks(ctx context.Context) ([]UnembeddedChunk, error) {
+	const query = `
+		SELECT c.id, c.content FROM chunks c
+		LEFT JOIN embeddings e ON e.chunk_id = c.id
+		WHERE e.id IS NULL
+		ORDER BY c.id
+	`
+	rows, err := db.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get unembedded chunks: %w", err)
+	}
+	defer rows.Close()
+
+	var results []UnembeddedChunk
+	for rows.Next() {
+		var c UnembeddedChunk
+		if err := rows.Scan(&c.ID, &c.Content); err != nil {
+			return nil, fmt.Errorf("storage: scan unembedded chunk: %w", err)
+		}
+		results = append(results, c)
+	}
+	return results, rows.Err()
+}
+
 // GetChunkBySymbolID retrieves a chunk by its associated symbol ID.
 // Returns nil, nil if no row is found.
 func (db *DB) GetChunkBySymbolID(ctx context.Context, symbolID int64) (*ChunkRecord, error) {

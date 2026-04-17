@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/hman-pro/projectlens/internal/census"
+	"github.com/hman-pro/projectlens/internal/embed"
 	"github.com/hman-pro/projectlens/internal/classifier"
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/datastore"
@@ -21,6 +22,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
+	"github.com/hman-pro/projectlens/internal/summarize"
 	"github.com/hman-pro/projectlens/internal/summaries"
 	"github.com/spf13/cobra"
 )
@@ -45,6 +47,8 @@ func main() {
 		newQueryCmd(),
 		newIndexDatastoreCmd(),
 		newIndexHistoryCmd(),
+		newIndexEmbedCmd(),
+		newIndexSummarizeCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -523,6 +527,58 @@ func newIndexHistoryCmd() *cobra.Command {
 				CouplingMinCoChanges: cfg.History.CouplingMinCoChanges,
 				CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
 			})
+		},
+	}
+}
+
+func newIndexEmbedCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "index-embed",
+		Short: "Embed all chunks that are missing embeddings",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			cfg, _, err := loadCmdConfig(cmd)
+			if err != nil {
+				return err
+			}
+			db, err := storage.Connect(ctx, cfg.DatabaseURL)
+			if err != nil {
+				return fmt.Errorf("connecting to database: %w", err)
+			}
+			defer db.Close()
+
+			embedder, _, err := buildProviders(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing providers: %w", err)
+			}
+
+			return embed.EmbedMissing(ctx, db, embedder)
+		},
+	}
+}
+
+func newIndexSummarizeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "index-summarize",
+		Short: "Generate summaries for packages that don't have one",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			cfg, _, err := loadCmdConfig(cmd)
+			if err != nil {
+				return err
+			}
+			db, err := storage.Connect(ctx, cfg.DatabaseURL)
+			if err != nil {
+				return fmt.Errorf("connecting to database: %w", err)
+			}
+			defer db.Close()
+
+			_, summarizer, err := buildProviders(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing providers: %w", err)
+			}
+
+			return summarize.SummarizeMissing(ctx, db, summarizer)
 		},
 	}
 }
