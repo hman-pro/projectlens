@@ -39,3 +39,9 @@ datastore:
     - "service/**/*.go"
     - "pkg/**/*.go"
     - "pipelines/**/*.go"
+
+history:
+  window_months: 12
+  min_commits_per_file: 5
+  coupling_min_cochanges: 5
+  coupling_exclude_max_files: 20

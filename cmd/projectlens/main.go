@@ -14,6 +14,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/datastore"
 	"github.com/hman-pro/projectlens/internal/embeddings"
+	"github.com/hman-pro/projectlens/internal/history"
 	"github.com/hman-pro/projectlens/internal/indexer"
 	"github.com/hman-pro/projectlens/internal/providers/anthropic"
 	"github.com/hman-pro/projectlens/internal/providers/ollama"
@@ -43,6 +44,7 @@ func main() {
 		newInspectPackageCmd(),
 		newQueryCmd(),
 		newIndexDatastoreCmd(),
+		newIndexHistoryCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -495,6 +497,32 @@ func newIndexDatastoreCmd() *cobra.Command {
 			}
 
 			return datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
+		},
+	}
+}
+
+func newIndexHistoryCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "index-history",
+		Short: "Index git change history and compute co-change coupling",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			cfg, repoPath, err := loadCmdConfig(cmd)
+			if err != nil {
+				return err
+			}
+			db, err := storage.Connect(ctx, cfg.DatabaseURL)
+			if err != nil {
+				return fmt.Errorf("connecting to database: %w", err)
+			}
+			defer db.Close()
+
+			return history.IndexHistory(ctx, db, repoPath, history.Config{
+				WindowMonths:         cfg.History.WindowMonths,
+				MinCommitsPerFile:    cfg.History.MinCommitsPerFile,
+				CouplingMinCoChanges: cfg.History.CouplingMinCoChanges,
+				CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
+			})
 		},
 	}
 }

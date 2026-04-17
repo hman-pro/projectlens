@@ -15,6 +15,7 @@ type Config struct {
 	Embeddings    EmbeddingsConfig    `yaml:"embeddings"`
 	Summarization SummarizationConfig `yaml:"summarization"`
 	Datastore     DatastoreConfig     `yaml:"datastore"`
+	History       HistoryConfig       `yaml:"history"`
 }
 
 // DatastoreConfig controls datastore indexing: migration discovery and SQL scanning.
@@ -27,6 +28,14 @@ type DatastoreConfig struct {
 type DatastoreEngine struct {
 	Name           string   `yaml:"name"`
 	MigrationPaths []string `yaml:"migration_paths"`
+}
+
+// HistoryConfig controls git history indexing parameters.
+type HistoryConfig struct {
+	WindowMonths         int `yaml:"window_months"`
+	MinCommitsPerFile    int `yaml:"min_commits_per_file"`
+	CouplingMinCoChanges int `yaml:"coupling_min_cochanges"`
+	CouplingMaxFiles     int `yaml:"coupling_exclude_max_files"`
 }
 
 // EmbeddingsConfig controls which provider and model are used for generating
@@ -90,6 +99,20 @@ func Load(path string) (*Config, error) {
 	if cfg.Summarization.Provider == "" {
 		cfg.Summarization.Provider = "anthropic"
 		cfg.Summarization.Model = "claude-sonnet-4-6"
+	}
+
+	// History defaults.
+	if cfg.History.WindowMonths == 0 {
+		cfg.History.WindowMonths = 12
+	}
+	if cfg.History.MinCommitsPerFile == 0 {
+		cfg.History.MinCommitsPerFile = 5
+	}
+	if cfg.History.CouplingMinCoChanges == 0 {
+		cfg.History.CouplingMinCoChanges = 5
+	}
+	if cfg.History.CouplingMaxFiles == 0 {
+		cfg.History.CouplingMaxFiles = 20
 	}
 
 	return &cfg, nil
