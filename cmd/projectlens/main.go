@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -105,6 +106,7 @@ func newBootstrapCmd() *cobra.Command {
 			if err := db.Migrate(ctx, migrationsDir); err != nil {
 				return fmt.Errorf("running migrations: %w", err)
 			}
+			log.Println("migrations applied successfully")
 
 			var oaiClient *openai.Client
 			if cfg.OpenAIKey != "" {
