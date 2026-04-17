@@ -11,10 +11,15 @@ import (
 // batchSize is the maximum number of texts sent per EmbedBatch call.
 const batchSize = 100
 
+// maxCharsPerChunk is the approximate character limit for embedding input.
+// Most embedding models limit to 8192 tokens; at ~4 chars/token, 30000 chars
+// provides a safe margin. Chunks exceeding this are truncated.
+const maxCharsPerChunk = 30000
+
 // EmbeddingResult pairs a chunk index with its embedding vector.
 type EmbeddingResult struct {
 	ChunkIndex int       // index into the input chunks slice
-	Vector     []float32 // 3072-dim vector from OpenAI
+	Vector     []float32 // embedding vector (dimensions depend on model)
 }
 
 // Embedder is the interface for generating text embeddings. The openai.Client
@@ -40,8 +45,16 @@ func EmbedChunks(ctx context.Context, embedder Embedder, chunkContents []string)
 		if end > len(chunkContents) {
 			end = len(chunkContents)
 		}
-		batch := chunkContents[start:end]
+		batch := make([]string, end-start)
+		copy(batch, chunkContents[start:end])
 		batchNum := start/batchSize + 1
+
+		// Truncate oversized chunks to stay within model token limits.
+		for i, text := range batch {
+			if len(text) > maxCharsPerChunk {
+				batch[i] = text[:maxCharsPerChunk]
+			}
+		}
 
 		log.Printf("embedding batch %d of %d (%d chunks)", batchNum, totalBatches, len(batch))
 
