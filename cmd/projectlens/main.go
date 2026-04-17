@@ -678,7 +678,11 @@ func buildProviders(cfg *config.Config) (embeddings.Embedder, summaries.PackageS
 		if cfg.OpenAIKey == "" {
 			return nil, nil, fmt.Errorf("OPENAI_API_KEY required when embeddings.provider is 'openai'")
 		}
-		embedder = openai.NewClient(cfg.OpenAIKey)
+		if cfg.Embeddings.Dimensions > 0 {
+			embedder = openai.NewClientWithDims(cfg.OpenAIKey, cfg.Embeddings.Dimensions)
+		} else {
+			embedder = openai.NewClient(cfg.OpenAIKey)
+		}
 	default:
 		return nil, nil, fmt.Errorf("unknown embeddings provider: %s", cfg.Embeddings.Provider)
 	}

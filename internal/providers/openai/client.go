@@ -16,13 +16,23 @@ const embeddingBatchSize = 100
 
 // Client wraps the OpenAI API client.
 type Client struct {
-	client oai.Client
+	client        oai.Client
+	embeddingDims int // if > 0, request this many dimensions from the embedding model
 }
 
 // NewClient creates a new OpenAI client using the provided API key.
 func NewClient(apiKey string) *Client {
 	return &Client{
 		client: oai.NewClient(option.WithAPIKey(apiKey)),
+	}
+}
+
+// NewClientWithDims creates a new OpenAI client that requests a specific
+// embedding dimension (e.g., 1024 instead of the default 3072).
+func NewClientWithDims(apiKey string, dims int) *Client {
+	return &Client{
+		client:        oai.NewClient(option.WithAPIKey(apiKey)),
+		embeddingDims: dims,
 	}
 }
 
@@ -81,12 +91,16 @@ func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, e
 		}
 		batch := texts[start:end]
 
-		resp, err := c.client.Embeddings.New(ctx, oai.EmbeddingNewParams{
+		params := oai.EmbeddingNewParams{
 			Model: oai.EmbeddingModelTextEmbedding3Large,
 			Input: oai.EmbeddingNewParamsInputUnion{
 				OfArrayOfStrings: batch,
 			},
-		})
+		}
+		if c.embeddingDims > 0 {
+			params.Dimensions = oai.Int(int64(c.embeddingDims))
+		}
+		resp, err := c.client.Embeddings.New(ctx, params)
 		if err != nil {
 			return nil, fmt.Errorf("openai: embedding batch [%d:%d]: %w", start, end, err)
 		}

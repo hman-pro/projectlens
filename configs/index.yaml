@@ -20,10 +20,10 @@ index:
     - "zz_generated"
 
 embeddings:
-  provider: ollama
-  model: mxbai-embed-large
+  provider: openai
+  model: text-embedding-3-large
   dimensions: 1024
-  endpoint: http://localhost:11434
+  # To use Ollama instead: provider: ollama, model: mxbai-embed-large, endpoint: http://localhost:11434
 
 summarization:
   provider: anthropic
