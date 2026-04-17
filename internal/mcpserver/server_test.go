@@ -7,8 +7,8 @@ import (
 
 func TestToolDefsCount(t *testing.T) {
 	defs := toolDefs()
-	if got := len(defs); got != 5 {
-		t.Fatalf("expected 5 tool definitions, got %d", got)
+	if got := len(defs); got != 6 {
+		t.Fatalf("expected 6 tool definitions, got %d", got)
 	}
 }
 
@@ -17,6 +17,7 @@ func TestToolDefsNames(t *testing.T) {
 		"find_symbol",
 		"get_package_summary",
 		"get_symbol_context",
+		"get_table_context",
 		"index_status",
 		"search_go_context",
 	}
@@ -117,6 +118,22 @@ func TestGetPackageSummarySchema(t *testing.T) {
 	}
 }
 
+func TestGetTableContextSchema(t *testing.T) {
+	tool := getTableContextTool()
+
+	if tool.Name != "get_table_context" {
+		t.Fatalf("expected name get_table_context, got %s", tool.Name)
+	}
+
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "table_name" {
+		t.Errorf("expected required=[table_name], got %v", tool.InputSchema.Required)
+	}
+
+	if _, ok := tool.InputSchema.Properties["table_name"]; !ok {
+		t.Error("missing 'table_name' property")
+	}
+}
+
 func TestIndexStatusSchema(t *testing.T) {
 	tool := indexStatusTool()
 
@@ -135,8 +152,8 @@ func TestServerRegistersAllTools(t *testing.T) {
 	mcpSrv := srv.MCPServer()
 
 	tools := mcpSrv.ListTools()
-	if len(tools) != 5 {
-		t.Fatalf("expected 5 registered tools, got %d", len(tools))
+	if len(tools) != 6 {
+		t.Fatalf("expected 6 registered tools, got %d", len(tools))
 	}
 
 	expected := map[string]bool{
@@ -144,6 +161,7 @@ func TestServerRegistersAllTools(t *testing.T) {
 		"search_go_context":   true,
 		"get_symbol_context":  true,
 		"get_package_summary": true,
+		"get_table_context":   true,
 		"index_status":        true,
 	}
 

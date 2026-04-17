@@ -1,7 +1,8 @@
 // Package mcpserver exposes ProjectLens's retrieval capabilities via the
-// Model Context Protocol (MCP) over Streamable HTTP. It registers 5 tools
+// Model Context Protocol (MCP) over Streamable HTTP. It registers 6 tools
 // that Claude Code can call to search symbols, query code semantically,
-// inspect symbol context, summarize packages, and check index freshness.
+// inspect symbol context, summarize packages, look up database table schemas,
+// and check index freshness.
 package mcpserver
 
 import (
@@ -46,6 +47,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mcpServer.AddTool(searchGoContextTool(), s.handleSearchGoContext)
 	mcpServer.AddTool(getSymbolContextTool(), s.handleGetSymbolContext)
 	mcpServer.AddTool(getPackageSummaryTool(), s.handleGetPackageSummary)
+	mcpServer.AddTool(getTableContextTool(), s.handleGetTableContext)
 	mcpServer.AddTool(indexStatusTool(), s.handleIndexStatus)
 
 	httpServer := server.NewStreamableHTTPServer(mcpServer)
@@ -114,6 +116,7 @@ func (s *Server) MCPServer() *server.MCPServer {
 	mcpServer.AddTool(searchGoContextTool(), s.handleSearchGoContext)
 	mcpServer.AddTool(getSymbolContextTool(), s.handleGetSymbolContext)
 	mcpServer.AddTool(getPackageSummaryTool(), s.handleGetPackageSummary)
+	mcpServer.AddTool(getTableContextTool(), s.handleGetTableContext)
 	mcpServer.AddTool(indexStatusTool(), s.handleIndexStatus)
 	return mcpServer
 }

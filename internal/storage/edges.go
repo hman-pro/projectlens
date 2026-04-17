@@ -124,6 +124,22 @@ func (db *DB) GetImplementors(ctx context.Context, symbolID int64) ([]EdgeResult
 	return db.scanEdgeResults(ctx, query, symbolID)
 }
 
+// GetEdgesTargetingDatastoreTable returns symbols that read or write a given datastore table.
+func (db *DB) GetEdgesTargetingDatastoreTable(ctx context.Context, tableID int64, edgeType string) ([]EdgeResult, error) {
+	const query = `
+		SELECT e.id, e.edge_type, s.id, s.name, s.kind, s.package_name,
+		       f.path, s.line_start, s.line_end
+		FROM edges e
+		JOIN symbols s ON s.id = e.source_id
+		JOIN files f ON f.id = s.file_id
+		WHERE e.target_type = 'datastore_table' AND e.target_id = $1
+		  AND e.source_type = 'symbol'
+		  AND e.edge_type = $2
+		ORDER BY s.name
+	`
+	return db.scanEdgeResults(ctx, query, tableID, edgeType)
+}
+
 // DeleteEdgesBySymbolID removes all edges where the given symbol is either
 // source or target.
 func (db *DB) DeleteEdgesBySymbolID(ctx context.Context, symbolID int64) error {

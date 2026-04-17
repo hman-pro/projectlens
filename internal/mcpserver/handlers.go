@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -222,6 +223,91 @@ func (s *Server) handleGetPackageSummary(ctx context.Context, req mcp.CallToolRe
 		}
 	} else {
 		b.WriteString("\nNo symbols found in this package.\n")
+	}
+
+	return mcp.NewToolResultText(b.String()), nil
+}
+
+// handleGetTableContext handles the get_table_context tool call.
+func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	tableName, err := req.RequireString("table_name")
+	if err != nil {
+		return mcp.NewToolResultError("get_table_context: missing required argument 'table_name'"), nil
+	}
+
+	// Try exact match first with "postgres" engine.
+	table, err := s.db.GetDatastoreTableByName(ctx, tableName, "postgres")
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("get_table_context: lookup failed", err), nil
+	}
+	if table == nil {
+		// Try listing all tables and find partial match.
+		tables, _ := s.db.ListDatastoreTables(ctx)
+		for _, t := range tables {
+			if strings.HasSuffix(t.Name, "."+tableName) || t.Name == tableName {
+				table = &t
+				break
+			}
+		}
+	}
+	if table == nil {
+		return mcp.NewToolResultText(fmt.Sprintf("No table found matching %q. Run 'projectlens index-datastore' to index database schemas.", tableName)), nil
+	}
+
+	// Build response.
+	var b strings.Builder
+	fmt.Fprintf(&b, "Table: %s\n", table.Name)
+	fmt.Fprintf(&b, "Engine: %s\n", table.Engine)
+
+	// Show columns from JSON.
+	if table.Columns != nil {
+		b.WriteString("\nColumns:\n")
+		var columns []struct {
+			Name         string `json:"name"`
+			Type         string `json:"type"`
+			IsNullable   bool   `json:"is_nullable"`
+			IsPrimaryKey bool   `json:"is_primary_key"`
+			Default      string `json:"default,omitempty"`
+			ForeignKey   string `json:"foreign_key,omitempty"`
+		}
+		if err := json.Unmarshal(table.Columns, &columns); err == nil {
+			for _, col := range columns {
+				attrs := col.Type
+				if col.IsPrimaryKey {
+					attrs += " PRIMARY KEY"
+				}
+				if !col.IsNullable {
+					attrs += " NOT NULL"
+				}
+				if col.Default != "" {
+					attrs += " DEFAULT " + col.Default
+				}
+				if col.ForeignKey != "" {
+					attrs += " → " + col.ForeignKey
+				}
+				fmt.Fprintf(&b, "  - %s %s\n", col.Name, attrs)
+			}
+		}
+	}
+
+	// Look up reads_table/writes_table edges.
+	readEdges, _ := s.db.GetEdgesTargetingDatastoreTable(ctx, table.ID, "reads_table")
+	writeEdges, _ := s.db.GetEdgesTargetingDatastoreTable(ctx, table.ID, "writes_table")
+
+	if len(readEdges) > 0 {
+		b.WriteString("\nRead by:\n")
+		for _, e := range readEdges {
+			fmt.Fprintf(&b, "  - %s %s (%s:%d)\n", e.SymbolKind, e.SymbolName, e.FilePath, e.LineStart)
+		}
+	}
+	if len(writeEdges) > 0 {
+		b.WriteString("\nWritten by:\n")
+		for _, e := range writeEdges {
+			fmt.Fprintf(&b, "  - %s %s (%s:%d)\n", e.SymbolKind, e.SymbolName, e.FilePath, e.LineStart)
+		}
+	}
+	if len(readEdges) == 0 && len(writeEdges) == 0 {
+		b.WriteString("\nNo code references discovered. Run 'projectlens index-datastore' to scan for SQL usage.\n")
 	}
 
 	return mcp.NewToolResultText(b.String()), nil

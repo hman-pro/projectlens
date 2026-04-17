@@ -4,13 +4,14 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// toolDefs returns the 5 MCP tool definitions for ProjectLens.
+// toolDefs returns the 6 MCP tool definitions for ProjectLens.
 func toolDefs() []mcp.Tool {
 	return []mcp.Tool{
 		findSymbolTool(),
 		searchGoContextTool(),
 		getSymbolContextTool(),
 		getPackageSummaryTool(),
+		getTableContextTool(),
 		indexStatusTool(),
 	}
 }
@@ -76,6 +77,19 @@ func getPackageSummaryTool() mcp.Tool {
 		mcp.WithString("package_name",
 			mcp.Required(),
 			mcp.Description("Fully qualified package name"),
+		),
+	)
+}
+
+// getTableContextTool defines the get_table_context tool.
+func getTableContextTool() mcp.Tool {
+	return mcp.NewTool("get_table_context",
+		mcp.WithDescription("Get database table schema, columns, and which Go code reads/writes it. Use with table names like 'rounding.sets' or just 'sets'."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("table_name",
+			mcp.Required(),
+			mcp.Description("Table name, optionally schema-qualified (e.g., 'rounding.sets' or 'sets')"),
 		),
 	)
 }
