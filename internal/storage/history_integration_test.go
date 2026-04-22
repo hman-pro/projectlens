@@ -192,7 +192,10 @@ func TestListCommitsInWindow(t *testing.T) {
 
 	// c1 is inside the 12-month window (24 hours ago).
 	// Use a truncated timestamp so we don't fight Postgres microsecond precision.
-	insideTS := time.Now().Add(-24 * time.Hour).UTC().Truncate(time.Second)
+	// c1/a and c1/b are deliberately inserted 5 minutes apart so we can assert
+	// the returned timestamp is MIN(committed_at) rather than MAX or arbitrary.
+	insideTSEarly := time.Now().Add(-24 * time.Hour).UTC().Truncate(time.Second)
+	insideTSLate := insideTSEarly.Add(5 * time.Minute)
 	// c_old is outside the window (400 days ago).
 	outsideTS := time.Now().Add(-400 * 24 * time.Hour).UTC().Truncate(time.Second)
 
@@ -201,7 +204,7 @@ func TestListCommitsInWindow(t *testing.T) {
 		FileID:      fileAID,
 		CommitHash:  c1Hash,
 		Author:      "test-author",
-		CommittedAt: insideTS,
+		CommittedAt: insideTSEarly,
 		ChangeType:  "modified",
 	}); err != nil {
 		t.Fatalf("InsertFileHistory c1/a: %v", err)
@@ -210,7 +213,7 @@ func TestListCommitsInWindow(t *testing.T) {
 		FileID:      fileBID,
 		CommitHash:  c1Hash,
 		Author:      "test-author",
-		CommittedAt: insideTS,
+		CommittedAt: insideTSLate,
 		ChangeType:  "modified",
 	}); err != nil {
 		t.Fatalf("InsertFileHistory c1/b: %v", err)
@@ -263,10 +266,27 @@ func TestListCommitsInWindow(t *testing.T) {
 			t.Errorf("Files[%d]: want %q, got %q (full: %v)", i, f, got.Files[i], got.Files)
 		}
 	}
-	// Timestamp should be within a second of insideTS (Postgres truncates,
-	// pgx scans back as UTC time.Time).
-	delta := got.Timestamp.Sub(insideTS)
+	// Timestamp should match the EARLIER of c1's two inserts — the query uses
+	// MIN(committed_at). Within a second tolerance for Postgres truncation /
+	// pgx UTC round-trip.
+	delta := got.Timestamp.Sub(insideTSEarly)
 	if delta < -time.Second || delta > time.Second {
-		t.Errorf("timestamp: want ~%v, got %v (delta %v)", insideTS, got.Timestamp, delta)
+		t.Errorf("timestamp: want ~%v (MIN of c1 inserts), got %v (delta %v)", insideTSEarly, got.Timestamp, delta)
 	}
+
+	// --- Empty-window case: months=0 means NOW() - 0 = NOW(), so nothing in
+	// the past qualifies. All seeded rows are in the past, so our marker
+	// should be absent. (We filter by marker so unrelated rows in the shared
+	// DB don't affect the assertion.)
+	t.Run("empty_window", func(t *testing.T) {
+		empty, err := db.ListCommitsInWindow(ctx, 0)
+		if err != nil {
+			t.Fatalf("ListCommitsInWindow(0): %v", err)
+		}
+		for _, c := range empty {
+			if len(c.Hash) >= len(marker) && c.Hash[:len(marker)] == marker {
+				t.Errorf("expected no rows with marker %q in zero-month window, got %+v", marker, c)
+			}
+		}
+	})
 }

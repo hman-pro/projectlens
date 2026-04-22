@@ -148,6 +148,8 @@ type CommitFiles struct {
 
 // ListCommitsInWindow returns commits recorded in file_history within the last
 // `months` months, one row per commit with its touched file paths aggregated.
+// Assumes files.path is NOT NULL (per migrations/001). A NULL path would fail
+// the []string scan below with a non-obvious pgx error.
 func (db *DB) ListCommitsInWindow(ctx context.Context, months int) ([]CommitFiles, error) {
 	const query = `
 		SELECT fh.commit_hash,
@@ -155,10 +157,10 @@ func (db *DB) ListCommitsInWindow(ctx context.Context, months int) ([]CommitFile
 		       ARRAY_AGG(f.path ORDER BY f.path) AS files
 		FROM file_history fh
 		JOIN files f ON f.id = fh.file_id
-		WHERE fh.committed_at >= NOW() - ($1 || ' months')::interval
+		WHERE fh.committed_at >= NOW() - make_interval(months => $1::int)
 		GROUP BY fh.commit_hash
 	`
-	rows, err := db.Pool.Query(ctx, query, fmt.Sprintf("%d", months))
+	rows, err := db.Pool.Query(ctx, query, months)
 	if err != nil {
 		return nil, fmt.Errorf("storage: list commits in window: %w", err)
 	}
