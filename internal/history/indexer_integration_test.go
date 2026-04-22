@@ -373,3 +373,106 @@ func TestIndexHistory_IncrementalSkipsOldCommits(t *testing.T) {
 			coEdges, coEdgesAfter)
 	}
 }
+
+// TestIndexHistory_IncrementalHonorsSince verifies that an incremental run
+// (FullReindex=false) on a fresh fixture correctly stores file_history rows
+// for commits whose timestamps fall within the since-safety-margin window.
+//
+// Note on DB scoping: the true "no prior history" branch inside IndexHistory
+// (where GetLatestFileHistoryTimestamp returns ok=false) can only fire against
+// a database with zero file_history rows total. Against the shared dev DB —
+// which has tens of thousands of rows from other runs — that branch is
+// effectively untestable: the global MAX timestamp is always recent. So
+// this test exercises the realistic path: incremental mode with a
+// global-MAX-derived since value, on a fixture commit that is newer than
+// that value (because we date it at "now"). A future improvement would be
+// to run integration tests against a scratch schema per test, which would
+// let us assert the ok=false branch directly.
+func TestIndexHistory_IncrementalHonorsSince(t *testing.T) {
+	db := connectForIntegration(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("ih-it-hs-%d", time.Now().UnixNano())
+	relA := marker + "-a.go"
+	relB := marker + "-b.go"
+
+	var fixtureHashes []string
+	t.Cleanup(func() {
+		if len(fixtureHashes) > 0 {
+			if _, err := db.Pool.Exec(ctx,
+				`DELETE FROM file_history WHERE commit_hash = ANY($1)`, fixtureHashes,
+			); err != nil {
+				t.Logf("cleanup file_history: %v", err)
+			}
+		}
+		if _, err := db.Pool.Exec(ctx, `
+			DELETE FROM edges
+			WHERE edge_type = 'co_changes'
+			  AND (
+			    (source_type = 'file' AND source_id IN (SELECT id FROM files WHERE path = ANY($1))) OR
+			    (target_type = 'file' AND target_id IN (SELECT id FROM files WHERE path = ANY($1)))
+			  )`,
+			[]string{relA, relB},
+		); err != nil {
+			t.Logf("cleanup edges: %v", err)
+		}
+		if _, err := db.Pool.Exec(ctx,
+			`DELETE FROM files WHERE path = ANY($1)`,
+			[]string{relA, relB},
+		); err != nil {
+			t.Logf("cleanup files: %v", err)
+		}
+	})
+
+	// Single commit dated within the safety-margin window. "30 seconds ago"
+	// is comfortably inside the 5-minute incrementalSafetyMargin, but also
+	// later than almost any realistic global MAX(committed_at) in the shared
+	// dev DB, so the incremental since value should not filter it out.
+	recentDate := time.Now().Add(-30 * time.Second).UTC().Format(time.RFC3339)
+	repoPath := setupGitRepo(t, []fixtureCommit{
+		{
+			files: map[string]string{
+				relA: "package a\nfunc A() {}\n",
+				relB: "package b\nfunc B() {}\n",
+			},
+			date: recentDate,
+			msg:  "fresh-incremental",
+		},
+	})
+	fixtureHashes = commitHashes(t, repoPath)
+	if len(fixtureHashes) != 1 {
+		t.Fatalf("expected 1 fixture commit, got %d", len(fixtureHashes))
+	}
+
+	// Seed both files so IndexHistory's indexed-file filter accepts them.
+	for _, rel := range []string{relA, relB} {
+		if _, err := db.UpsertFile(ctx, &storage.FileRecord{
+			Path:        rel,
+			PackageName: "testpkg",
+			Checksum:    "chk-" + rel,
+			Language:    "go",
+			CommitSHA:   "seed-" + marker,
+		}); err != nil {
+			t.Fatalf("UpsertFile %s: %v", rel, err)
+		}
+	}
+
+	cfg := Config{
+		WindowMonths:         12,
+		MinCommitsPerFile:    1,
+		CouplingMinCoChanges: 2,
+		CouplingMaxFiles:     20,
+		FullReindex:          false, // incremental path is the point of the test
+	}
+
+	if err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
+		t.Fatalf("IndexHistory incremental on fresh fixture: %v", err)
+	}
+
+	// 1 commit × 2 files = 2 file_history rows.
+	rows := countFileHistoryForHashes(t, db, fixtureHashes)
+	if rows != 2 {
+		t.Errorf("expected 2 file_history rows for fresh incremental fixture (1 commit × 2 files), got %d — "+
+			"the incremental since-filter may be excluding recent commits", rows)
+	}
+}

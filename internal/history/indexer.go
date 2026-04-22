@@ -9,6 +9,17 @@ import (
 	"github.com/hman-pro/projectlens/internal/storage"
 )
 
+// incrementalSafetyMargin is subtracted from the last indexed file_history
+// timestamp when computing the git --since value for incremental runs. It
+// protects against missing commits whose recorded committer date is slightly
+// earlier than the one we already stored (e.g., different files in the same
+// commit recorded at marginally different wall-clock moments, or a rebase
+// shifting dates by a few minutes). Widen cautiously: values above ~1 hour
+// re-parse a meaningful amount of work on every incremental run, while
+// full reindex remains the remedy for rebases that rewrite history beyond
+// this margin.
+const incrementalSafetyMargin = 5 * time.Minute
+
 // Config controls history indexing parameters.
 type Config struct {
 	WindowMonths         int  `yaml:"window_months"`
@@ -39,7 +50,7 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 			return fmt.Errorf("history: latest timestamp: %w", err)
 		}
 		if ok {
-			since := last.Add(-1 * time.Minute).UTC().Format(time.RFC3339)
+			since := last.Add(-incrementalSafetyMargin).UTC().Format(time.RFC3339)
 			window = since
 			logger.Info("parsing git log (incremental)", "since", since)
 		} else {
@@ -190,6 +201,11 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 		})
 	}
 
+	// NOTE: this delete+insert pair is intentionally non-transactional. On partial
+	// failure (delete succeeds, insert fails) the DB is left with no coupling edges
+	// until the next successful run. For an offline indexer this is acceptable;
+	// if consumers of coupling edges ever become latency-sensitive, wrap Steps 6-7
+	// in a pgx.BeginFunc transaction.
 	removed, err := db.DeleteEdgesByType(ctx, "file", "file", "co_changes")
 	if err != nil {
 		return fmt.Errorf("history: clear coupling edges: %w", err)
