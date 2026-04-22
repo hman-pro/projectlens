@@ -125,6 +125,20 @@ func (db *DB) EvictOldSymbolHistory(ctx context.Context, maxPerSymbol int) error
 	return nil
 }
 
+// GetLatestFileHistoryTimestamp returns the most recent committed_at across
+// all file_history rows. Returns (zero, false, nil) if the table is empty.
+func (db *DB) GetLatestFileHistoryTimestamp(ctx context.Context) (time.Time, bool, error) {
+	const query = `SELECT MAX(committed_at) FROM file_history`
+	var ts *time.Time
+	if err := db.Pool.QueryRow(ctx, query).Scan(&ts); err != nil {
+		return time.Time{}, false, fmt.Errorf("storage: latest file_history timestamp: %w", err)
+	}
+	if ts == nil {
+		return time.Time{}, false, nil
+	}
+	return *ts, true, nil
+}
+
 // EvictOldFileHistory removes file_history entries beyond maxPerFile for each file.
 func (db *DB) EvictOldFileHistory(ctx context.Context, maxPerFile int) error {
 	const query = `
