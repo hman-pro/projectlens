@@ -511,9 +511,10 @@ func newIndexDatastoreCmd() *cobra.Command {
 }
 
 func newIndexHistoryCmd() *cobra.Command {
-	return &cobra.Command{
+	var full bool
+	cmd := &cobra.Command{
 		Use:   "index-history",
-		Short: "Index git change history and compute co-change coupling",
+		Short: "Index git change history and compute co-change coupling (incremental by default)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			cfg, repoPath, err := loadCmdConfig(cmd)
@@ -531,9 +532,12 @@ func newIndexHistoryCmd() *cobra.Command {
 				MinCommitsPerFile:    cfg.History.MinCommitsPerFile,
 				CouplingMinCoChanges: cfg.History.CouplingMinCoChanges,
 				CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
+				FullReindex:          full,
 			})
 		},
 	}
+	cmd.Flags().BoolVar(&full, "full", false, "Reparse the entire history window instead of incremental since last run")
+	return cmd
 }
 
 func newIndexEmbedCmd() *cobra.Command {

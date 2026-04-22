@@ -147,7 +147,7 @@ Add to your Claude Code MCP configuration:
 | `inspect-package <name>` | Show package summary and exported symbols |
 | `query <text>` | Search the retrieval pipeline |
 | `index-datastore` | Index database schemas and SQL queries |
-| `index-history` | Index git history and compute coupling |
+| `index-history [--full]` | Index git history incrementally (use `--full` to reparse entire window) |
 | `index-embed` | Embed all chunks missing embeddings |
 | `index-summarize` | Generate summaries for packages missing one |
 | `index-all [--full]` | Run all indexing stages in sequence |
