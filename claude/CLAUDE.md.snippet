@@ -1,22 +1,39 @@
 ## ProjectLens — Repository Intelligence Layer
 
-This repo has a local intelligence layer called ProjectLens running at localhost:8484.
+This repo has a local intelligence layer called **ProjectLens** running at `localhost:8484`.
+It indexes Go code, database schemas, and git history into a searchable graph.
 
 ### When to use ProjectLens
-Use ProjectLens BEFORE opening files to answer implementation questions:
-- "Where is X implemented?" → use `find_symbol`
-- "How does X work?" → use `search_go_context`
-- "What calls X? What does X depend on?" → use `get_symbol_context`
-- "What does package Y do?" → use `get_package_summary`
+
+Call ProjectLens BEFORE opening files when answering implementation/architecture/history questions. Pick the tool by the question:
+
+**Discovery & navigation**
+- "Where is X implemented?" → `find_symbol`
+- "How does Y work?" / "How is Z handled?" (natural language) → `search_go_context`
+- "What calls X? What does X depend on? What implements interface I?" → `get_symbol_context`
+- "What does package P do?" → `get_package_summary`
+
+**Data layer**
+- "Which Go code reads/writes table T?" / "What columns does T have?" → `get_table_context`
+
+**Change analysis**
+- "When was X last changed? Who changes it?" → `get_change_history` (accepts a file path or symbol name)
+- "What files change together with X?" / "If I edit X, what else should I touch?" → `get_coupling`
+
+**Index health**
+- "Is the index up to date? When was the last reindex?" → `index_status`
 
 ### Preferred workflow
-1. Call ProjectLens first to locate relevant code
-2. Review the returned symbols, summaries, and relationships
-3. Only open files to verify specific details — do not explore broadly
-4. If results seem stale, check `index_status`
+
+1. Start with a ProjectLens call to locate relevant code and relationships.
+2. Read the returned symbols, summaries, and diff snippets.
+3. Only open files to verify specific details — do not explore broadly with Glob/Grep when a ProjectLens call would answer the question.
+4. If results look stale, call `index_status` and ask to rerun `index-history` / `index-all`.
 
 ### What NOT to use ProjectLens for
-- Reading file contents (use Read tool)
-- Editing code (use Edit tool)
-- Running commands (use Bash tool)
-- ProjectLens is for discovery and context, not for code manipulation
+
+- Reading full file contents — use `Read`.
+- Editing code — use `Edit`.
+- Running commands — use `Bash`.
+
+ProjectLens is for discovery and context, not for code manipulation.
