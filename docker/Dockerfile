@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 go build -o /bin/projectlens-mcp   ./cmd/projectlens-mcp
 # ── Runtime stage ─────────────────────────────────────────────
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates git
 
 COPY --from=builder /bin/projectlens      /bin/projectlens
 COPY --from=builder /bin/projectlens-mcp  /bin/projectlens-mcp
