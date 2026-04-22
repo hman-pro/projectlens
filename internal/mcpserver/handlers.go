@@ -443,6 +443,7 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 		if s.repoPath == "" {
 			return mcp.NewToolResultText("Symbol-level change history requires repoPath configured on the MCP server. Set REPO_PATH env or repo_path in configs/index.yaml, then restart. (File-level history via get_change_history on a file path works without it.)"), nil
 		}
+		// Defensive: unreachable today (symbol_history is not populated); retained for when a future indexer stage writes to it.
 		return mcp.NewToolResultText(fmt.Sprintf("No change history found for symbol %q in %s.", target.SymbolName, target.FilePath)), nil
 	}
 

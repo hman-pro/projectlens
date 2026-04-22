@@ -309,6 +309,9 @@ func TestIntegration_GetChangeHistory_BySymbol_NoRepoPath(t *testing.T) {
 	}
 
 	text := extractText(t, result)
+	if strings.Contains(text, "No file or symbol found") {
+		t.Fatalf("symbol lookup drift: seeded symbol not found by LexicalSearch, so the fallback branch was never exercised; got: %s", text)
+	}
 	if !strings.Contains(text, "repoPath") {
 		t.Errorf("expected fallback message to mention 'repoPath', got: %s", text)
 	}
