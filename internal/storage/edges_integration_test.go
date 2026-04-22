@@ -98,9 +98,15 @@ func TestDeleteEdgesByType(t *testing.T) {
 		}
 	})
 
-	// Insert two edges:
-	//  - A -> B of the coupling-like test type (the type we'll delete)
-	//  - A -> C of a different test type       (same source_type/target_type, different edge_type; must survive)
+	// Insert three edges:
+	//  - A -> B (file→file) of the coupling-like test type (the type we'll delete)
+	//  - A -> C (file→file) of a different test type       (same source_type/target_type, different edge_type; must survive)
+	//  - A -> symbol(fakeSymbolID) (file→symbol) with SAME edge_type as the deleted one
+	//    (tests target_type discrimination — if the method accidentally used
+	//    source_type as both predicates, this would also get deleted.)
+	// The edges table is polymorphic with no FK to symbols, so a made-up
+	// target_id is fine.
+	const fakeSymbolID int64 = 999999
 	conf := float32(0.5)
 	if err := db.InsertEdges(ctx, []EdgeRecord{
 		{
@@ -117,6 +123,14 @@ func TestDeleteEdgesByType(t *testing.T) {
 			TargetType: "file",
 			TargetID:   fileCID,
 			EdgeType:   testCallsType,
+			Confidence: &conf,
+		},
+		{
+			SourceType: "file",
+			SourceID:   fileAID,
+			TargetType: "symbol",
+			TargetID:   fakeSymbolID,
+			EdgeType:   testCoChangesType,
 			Confidence: &conf,
 		},
 	}); err != nil {
@@ -149,8 +163,12 @@ func TestDeleteEdgesByType(t *testing.T) {
 	// Act: delete only edges matching (file, file, testCoChangesType).
 	// This exercises DeleteEdgesByType exactly as IndexHistory will use it:
 	// scoped to the triple (source_type, target_type, edge_type).
-	if err := db.DeleteEdgesByType(ctx, "file", "file", testCoChangesType); err != nil {
+	removed, err := db.DeleteEdgesByType(ctx, "file", "file", testCoChangesType)
+	if err != nil {
 		t.Fatalf("DeleteEdgesByType: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("expected RowsAffected=1 for (file,file,%s), got %d", testCoChangesType, removed)
 	}
 
 	// Assert: our testCoChangesType A->B edge is gone.
@@ -178,4 +196,31 @@ func TestDeleteEdgesByType(t *testing.T) {
 	if postCalls != 1 {
 		t.Errorf("expected %s edge to survive, got count=%d", testCallsType, postCalls)
 	}
+
+	// Assert: the file->symbol edge with the SAME edge_type survives.
+	// This verifies target_type is an actual predicate (not a copy-paste of source_type).
+	var postSymbol int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM edges
+		 WHERE source_type='file' AND source_id=$1 AND target_type='symbol' AND target_id=$2 AND edge_type=$3`,
+		fileAID, fakeSymbolID, testCoChangesType,
+	).Scan(&postSymbol); err != nil {
+		t.Fatalf("post-count file->symbol: %v", err)
+	}
+	if postSymbol != 1 {
+		t.Errorf("expected file->symbol %s edge to survive (target_type discrimination), got count=%d",
+			testCoChangesType, postSymbol)
+	}
+
+	// Negative path: deleting a non-existent (file, file, edge_type) triple
+	// should return (0, nil) — no rows matched is not an error.
+	t.Run("no_rows_matched", func(t *testing.T) {
+		n, err := db.DeleteEdgesByType(ctx, "file", "file", "nonexistent_"+marker)
+		if err != nil {
+			t.Fatalf("DeleteEdgesByType (negative path) returned error: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("expected RowsAffected=0 for nonexistent edge_type, got %d", n)
+		}
+	})
 }

@@ -158,16 +158,18 @@ func (db *DB) GetEdgesTargetingDatastoreTable(ctx context.Context, tableID int64
 // DeleteEdgesByType removes all edges matching (source_type, target_type, edge_type).
 // Used by the incremental history indexer to clear stale coupling edges before
 // recomputing them from the current window.
-func (db *DB) DeleteEdgesByType(ctx context.Context, sourceType, targetType, edgeType string) error {
+// This is an unscoped delete: it removes every matching row across the table.
+// Returns the number of rows removed.
+func (db *DB) DeleteEdgesByType(ctx context.Context, sourceType, targetType, edgeType string) (int64, error) {
 	const query = `
 		DELETE FROM edges
 		WHERE source_type = $1 AND target_type = $2 AND edge_type = $3
 	`
-	_, err := db.Pool.Exec(ctx, query, sourceType, targetType, edgeType)
+	tag, err := db.Pool.Exec(ctx, query, sourceType, targetType, edgeType)
 	if err != nil {
-		return fmt.Errorf("storage: delete edges by type: %w", err)
+		return 0, fmt.Errorf("storage: delete edges by type: %w", err)
 	}
-	return nil
+	return tag.RowsAffected(), nil
 }
 
 // DeleteEdgesBySymbolID removes all edges where the given symbol is either
