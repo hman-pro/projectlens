@@ -11,10 +11,11 @@ import (
 
 // Config controls history indexing parameters.
 type Config struct {
-	WindowMonths         int `yaml:"window_months"`
-	MinCommitsPerFile    int `yaml:"min_commits_per_file"`
-	CouplingMinCoChanges int `yaml:"coupling_min_cochanges"`
-	CouplingMaxFiles     int `yaml:"coupling_exclude_max_files"`
+	WindowMonths         int  `yaml:"window_months"`
+	MinCommitsPerFile    int  `yaml:"min_commits_per_file"`
+	CouplingMinCoChanges int  `yaml:"coupling_min_cochanges"`
+	CouplingMaxFiles     int  `yaml:"coupling_exclude_max_files"`
+	FullReindex          bool `yaml:"-"` // CLI-only; not persisted
 }
 
 // maxBackfillFiles is the threshold above which per-file backfill is skipped
@@ -26,9 +27,27 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 	startTime := time.Now()
 	logger.Step("History indexing")
 
-	// Step 1: Parse git log
+	// Step 1: Parse git log.
+	// Incremental by default: if file_history already has rows, pass
+	// git's --since the latest observed committed_at (minus a small buffer
+	// to handle late-arriving commits with the same or slightly-earlier ts).
+	// With FullReindex, fall back to the configured WindowMonths window.
 	window := fmt.Sprintf("%d months", cfg.WindowMonths)
-	logger.Info("parsing git log...", "window", window)
+	if !cfg.FullReindex {
+		last, ok, err := db.GetLatestFileHistoryTimestamp(ctx)
+		if err != nil {
+			return fmt.Errorf("history: latest timestamp: %w", err)
+		}
+		if ok {
+			since := last.Add(-1 * time.Minute).UTC().Format(time.RFC3339)
+			window = since
+			logger.Info("parsing git log (incremental)", "since", since)
+		} else {
+			logger.Info("parsing git log (no prior history, full window)", "window", window)
+		}
+	} else {
+		logger.Info("parsing git log (full reindex)", "window", window)
+	}
 	commits, err := ParseGitLog(repoPath, window)
 	if err != nil {
 		return fmt.Errorf("history: parse git log: %w", err)
@@ -136,12 +155,25 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 	}
 	logger.Info("stored file_history records", "count", historyCount)
 
-	// Step 6: Compute coupling
-	logger.Info("computing co-change coupling...")
-	pairs := ComputeCoupling(filteredCommits, cfg.CouplingMinCoChanges, cfg.CouplingMaxFiles)
+	// Step 6: Compute coupling over the full WindowMonths window from DB state.
+	// Sourcing from the DB (rather than just the commits we parsed this run)
+	// means incremental runs still compute coupling over the whole window,
+	// and the result is deterministic with respect to accumulated history.
+	logger.Info("computing co-change coupling from DB...")
+	windowCommits, err := db.ListCommitsInWindow(ctx, cfg.WindowMonths)
+	if err != nil {
+		return fmt.Errorf("history: list commits in window: %w", err)
+	}
+	adapted := make([]Commit, len(windowCommits))
+	for i, w := range windowCommits {
+		adapted[i] = Commit{Hash: w.Hash, Timestamp: w.Timestamp.Unix(), Files: w.Files}
+	}
+	pairs := ComputeCoupling(adapted, cfg.CouplingMinCoChanges, cfg.CouplingMaxFiles)
 	logger.Info("found coupling pairs", "count", len(pairs), "min_co_changes", cfg.CouplingMinCoChanges)
 
-	// Step 7: Store coupling as edges
+	// Step 7: Store coupling as edges. Clear the existing set first so the
+	// result reflects the latest window exactly (no accumulation of stale
+	// pairs that fell out of the window or were invalidated by file renames).
 	var edges []storage.EdgeRecord
 	for _, p := range pairs {
 		fidA, okA := fileIDMap[p.FileA]
@@ -157,6 +189,12 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 			EdgeType:   "co_changes",
 		})
 	}
+
+	removed, err := db.DeleteEdgesByType(ctx, "file", "file", "co_changes")
+	if err != nil {
+		return fmt.Errorf("history: clear coupling edges: %w", err)
+	}
+	logger.Info("cleared stale coupling edges", "count", removed)
 
 	if len(edges) > 0 {
 		if err := db.InsertEdges(ctx, edges); err != nil {
