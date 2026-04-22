@@ -139,6 +139,42 @@ func (db *DB) GetLatestFileHistoryTimestamp(ctx context.Context) (time.Time, boo
 	return *ts, true, nil
 }
 
+// CommitFiles is the shape ComputeCoupling consumes: commit hash + timestamp + files touched.
+type CommitFiles struct {
+	Hash      string
+	Timestamp time.Time
+	Files     []string
+}
+
+// ListCommitsInWindow returns commits recorded in file_history within the last
+// `months` months, one row per commit with its touched file paths aggregated.
+func (db *DB) ListCommitsInWindow(ctx context.Context, months int) ([]CommitFiles, error) {
+	const query = `
+		SELECT fh.commit_hash,
+		       MIN(fh.committed_at)         AS ts,
+		       ARRAY_AGG(f.path ORDER BY f.path) AS files
+		FROM file_history fh
+		JOIN files f ON f.id = fh.file_id
+		WHERE fh.committed_at >= NOW() - ($1 || ' months')::interval
+		GROUP BY fh.commit_hash
+	`
+	rows, err := db.Pool.Query(ctx, query, fmt.Sprintf("%d", months))
+	if err != nil {
+		return nil, fmt.Errorf("storage: list commits in window: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CommitFiles
+	for rows.Next() {
+		var c CommitFiles
+		if err := rows.Scan(&c.Hash, &c.Timestamp, &c.Files); err != nil {
+			return nil, fmt.Errorf("storage: scan commit: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // EvictOldFileHistory removes file_history entries beyond maxPerFile for each file.
 func (db *DB) EvictOldFileHistory(ctx context.Context, maxPerFile int) error {
 	const query = `

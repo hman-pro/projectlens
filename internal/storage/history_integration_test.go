@@ -143,3 +143,130 @@ func TestGetLatestFileHistoryTimestamp(t *testing.T) {
 		t.Errorf("expected latest timestamp == %v (empty starting state), got %v", later, ts)
 	}
 }
+
+func TestListCommitsInWindow(t *testing.T) {
+	db := connectForIntegration(t)
+	ctx := context.Background()
+
+	// Unique markers so we can isolate this test's rows on a shared dev DB.
+	marker := fmt.Sprintf("test-lciw-%d", time.Now().UnixNano())
+	c1Hash := marker + "-c1"
+	cOldHash := marker + "-c-old"
+	pathA := "/tmp/" + marker + "-a.go"
+	pathB := "/tmp/" + marker + "-b.go"
+
+	t.Cleanup(func() {
+		if _, err := db.Pool.Exec(ctx,
+			`DELETE FROM file_history WHERE commit_hash LIKE $1`, marker+"-%",
+		); err != nil {
+			t.Logf("cleanup file_history: %v", err)
+		}
+		if _, err := db.Pool.Exec(ctx,
+			`DELETE FROM files WHERE path = ANY($1)`, []string{pathA, pathB},
+		); err != nil {
+			t.Logf("cleanup files: %v", err)
+		}
+	})
+
+	// Seed two files.
+	fileAID, err := db.UpsertFile(ctx, &FileRecord{
+		Path:        pathA,
+		PackageName: "testpkg",
+		Checksum:    "checksum-a-" + marker,
+		Language:    "go",
+		CommitSHA:   "commit-" + marker,
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile a: %v", err)
+	}
+	fileBID, err := db.UpsertFile(ctx, &FileRecord{
+		Path:        pathB,
+		PackageName: "testpkg",
+		Checksum:    "checksum-b-" + marker,
+		Language:    "go",
+		CommitSHA:   "commit-" + marker,
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile b: %v", err)
+	}
+
+	// c1 is inside the 12-month window (24 hours ago).
+	// Use a truncated timestamp so we don't fight Postgres microsecond precision.
+	insideTS := time.Now().Add(-24 * time.Hour).UTC().Truncate(time.Second)
+	// c_old is outside the window (400 days ago).
+	outsideTS := time.Now().Add(-400 * 24 * time.Hour).UTC().Truncate(time.Second)
+
+	// c1 touches both files (two file_history rows, same commit_hash).
+	if err := db.InsertFileHistory(ctx, &FileHistoryRecord{
+		FileID:      fileAID,
+		CommitHash:  c1Hash,
+		Author:      "test-author",
+		CommittedAt: insideTS,
+		ChangeType:  "modified",
+	}); err != nil {
+		t.Fatalf("InsertFileHistory c1/a: %v", err)
+	}
+	if err := db.InsertFileHistory(ctx, &FileHistoryRecord{
+		FileID:      fileBID,
+		CommitHash:  c1Hash,
+		Author:      "test-author",
+		CommittedAt: insideTS,
+		ChangeType:  "modified",
+	}); err != nil {
+		t.Fatalf("InsertFileHistory c1/b: %v", err)
+	}
+	// c_old touches only file a, outside window.
+	if err := db.InsertFileHistory(ctx, &FileHistoryRecord{
+		FileID:      fileAID,
+		CommitHash:  cOldHash,
+		Author:      "test-author",
+		CommittedAt: outsideTS,
+		ChangeType:  "modified",
+	}); err != nil {
+		t.Fatalf("InsertFileHistory c_old/a: %v", err)
+	}
+
+	all, err := db.ListCommitsInWindow(ctx, 12)
+	if err != nil {
+		t.Fatalf("ListCommitsInWindow: %v", err)
+	}
+
+	// The shared DB has 14K+ rows; filter to just ours by marker prefix.
+	var mine []CommitFiles
+	for _, c := range all {
+		// Defensive: we only care about rows we created.
+		if len(c.Hash) >= len(marker) && c.Hash[:len(marker)] == marker {
+			mine = append(mine, c)
+		}
+	}
+
+	if len(mine) != 1 {
+		t.Fatalf("expected exactly one commit with marker %q in window, got %d: %+v", marker, len(mine), mine)
+	}
+	got := mine[0]
+	if got.Hash != c1Hash {
+		t.Errorf("hash: want %q, got %q", c1Hash, got.Hash)
+	}
+	// c_old must NOT appear.
+	for _, c := range mine {
+		if c.Hash == cOldHash {
+			t.Errorf("c_old (%q) should have been filtered out by the 12-month window", cOldHash)
+		}
+	}
+	if len(got.Files) != 2 {
+		t.Fatalf("expected 2 files for c1, got %d: %+v", len(got.Files), got.Files)
+	}
+	// ARRAY_AGG is ORDER BY path in the query — so Files should be sorted.
+	wantFiles := []string{pathA, pathB} // pathA ends in "-a.go", pathB ends in "-b.go"
+	for i, f := range wantFiles {
+		if got.Files[i] != f {
+			t.Errorf("Files[%d]: want %q, got %q (full: %v)", i, f, got.Files[i], got.Files)
+		}
+	}
+	// Timestamp should be within a second of insideTS (Postgres truncates,
+	// pgx scans back as UTC time.Time).
+	delta := got.Timestamp.Sub(insideTS)
+	if delta < -time.Second || delta > time.Second {
+		t.Errorf("timestamp: want ~%v, got %v (delta %v)", insideTS, got.Timestamp, delta)
+	}
+}
