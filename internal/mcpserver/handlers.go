@@ -440,7 +440,10 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 		return mcp.NewToolResultErrorFromErr("get_change_history: failed to get symbol history", err), nil
 	}
 	if len(records) == 0 {
-		return mcp.NewToolResultText(fmt.Sprintf("No change history found for symbol %q. Run 'projectlens index-history' to index git history.", name)), nil
+		if s.repoPath == "" {
+			return mcp.NewToolResultText("Symbol-level change history requires repoPath configured on the MCP server. Set REPO_PATH env or repo_path in configs/index.yaml, then restart. (File-level history via get_change_history on a file path works without it.)"), nil
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("No change history found for symbol %q in %s.", target.SymbolName, target.FilePath)), nil
 	}
 
 	var b strings.Builder

@@ -287,6 +287,37 @@ func TestIntegration_GetChangeHistory_BySymbol(t *testing.T) {
 	t.Logf("symbol change history:\n%s", truncateForLog(text))
 }
 
+// TestIntegration_GetChangeHistory_BySymbol_NoRepoPath verifies the fallback
+// message when the server is configured without a repoPath and the
+// symbol_history table has no rows for the target symbol. The message should
+// direct the user to configure repoPath (since symbol-level git history needs
+// the on-disk repo) and must NOT suggest running 'projectlens index-history'
+// (which only populates file_history, not symbol_history).
+func TestIntegration_GetChangeHistory_BySymbol_NoRepoPath(t *testing.T) {
+	// setupIntegrationServer already constructs a Server with repoPath="".
+	// symbol_history is never populated by any indexer stage, so this
+	// exercises the fallback branch of handleGetChangeHistory.
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	result, err := srv.handleGetChangeHistory(ctx, makeRequest(map[string]interface{}{
+		"name":  "SupplierFunding",
+		"limit": 3,
+	}))
+	if err != nil {
+		t.Fatalf("handleGetChangeHistory error: %v", err)
+	}
+
+	text := extractText(t, result)
+	if !strings.Contains(text, "repoPath") {
+		t.Errorf("expected fallback message to mention 'repoPath', got: %s", text)
+	}
+	if strings.Contains(text, "index-history") {
+		t.Errorf("fallback message should not mention 'index-history' (misleading for symbol history), got: %s", text)
+	}
+	t.Logf("no-repoPath symbol fallback:\n%s", truncateForLog(text))
+}
+
 // --- get_coupling ---
 
 func TestIntegration_GetCoupling(t *testing.T) {
