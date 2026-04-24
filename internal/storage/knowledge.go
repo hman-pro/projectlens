@@ -305,6 +305,114 @@ func (db *DB) SearchKnowledgeByVector(
 	return out, rows.Err()
 }
 
+// KnowledgeForAnchor finds knowledge entries anchored to a single target.
+// For type="package", looks up by the package name (resolves through files).
+func (db *DB) KnowledgeForAnchor(ctx context.Context, a AnchorRequest, limit int) ([]KnowledgeEntry, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	targetID, ok, err := db.resolveAnchor(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+
+	var q string
+	switch a.Type {
+	case "package":
+		// All edges with target_type='package' that point at any file in this package.
+		q = `
+          SELECT k.id, k.category, k.title, k.body, k.tags, k.source, k.session_id
+          FROM edges e
+          JOIN files f             ON f.id = e.target_id
+          JOIN knowledge_entries k ON k.id = e.source_id
+          WHERE e.source_type = 'knowledge'
+            AND e.edge_type = 'knowledge_about'
+            AND e.target_type = 'package'
+            AND f.package_name = (SELECT package_name FROM files WHERE id = $1)
+          ORDER BY k.created_at DESC
+          LIMIT $2`
+	default:
+		q = `
+          SELECT k.id, k.category, k.title, k.body, k.tags, k.source, k.session_id
+          FROM edges e
+          JOIN knowledge_entries k ON k.id = e.source_id
+          WHERE e.source_type = 'knowledge'
+            AND e.edge_type = 'knowledge_about'
+            AND e.target_type = $1
+            AND e.target_id = $2
+          ORDER BY k.created_at DESC
+          LIMIT $3`
+	}
+
+	var rows pgx.Rows
+	if a.Type == "package" {
+		rows, err = db.Pool.Query(ctx, q, targetID, limit)
+	} else {
+		rows, err = db.Pool.Query(ctx, q, a.Type, targetID, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage: knowledge: anchor search: %w", err)
+	}
+	defer rows.Close()
+
+	var out []KnowledgeEntry
+	for rows.Next() {
+		var e KnowledgeEntry
+		if err := rows.Scan(&e.ID, &e.Category, &e.Title, &e.Body, &e.Tags, &e.Source, &e.SessionID); err != nil {
+			return nil, fmt.Errorf("storage: knowledge: scan: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// KnowledgeForSymbolWithPackage returns knowledge anchored either directly
+// to symbolID, or to the symbol's enclosing package. Deduped by entry id.
+func (db *DB) KnowledgeForSymbolWithPackage(ctx context.Context, symbolID int64, limit int) ([]KnowledgeEntry, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	const q = `
+      WITH sym_pkg AS (
+        SELECT s.id AS sid, f.package_name AS pkg
+        FROM symbols s JOIN files f ON f.id = s.file_id
+        WHERE s.id = $1
+      )
+      SELECT DISTINCT ON (k.id)
+        k.id, k.category, k.title, k.body, k.tags, k.source, k.session_id
+      FROM edges e
+      JOIN knowledge_entries k ON k.id = e.source_id
+      LEFT JOIN files pf       ON pf.id = e.target_id
+      WHERE e.source_type = 'knowledge'
+        AND e.edge_type = 'knowledge_about'
+        AND (
+          (e.target_type = 'symbol'  AND e.target_id = (SELECT sid FROM sym_pkg))
+          OR
+          (e.target_type = 'package' AND pf.package_name = (SELECT pkg FROM sym_pkg))
+        )
+      ORDER BY k.id, k.created_at DESC
+      LIMIT $2`
+
+	rows, err := db.Pool.Query(ctx, q, symbolID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("storage: knowledge: symbol+package search: %w", err)
+	}
+	defer rows.Close()
+
+	var out []KnowledgeEntry
+	for rows.Next() {
+		var e KnowledgeEntry
+		if err := rows.Scan(&e.ID, &e.Category, &e.Title, &e.Body, &e.Tags, &e.Source, &e.SessionID); err != nil {
+			return nil, fmt.Errorf("storage: knowledge: scan: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // resolveAnchor maps an AnchorRequest to the target row id.
 // Package anchors are stored against the smallest file.id in that package;
 // retrieval (KnowledgeForAnchor) joins via files.package_name to traverse.
