@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/pgvector/pgvector-go"
 )
 
 var validKnowledgeCategories = map[string]struct{}{
@@ -245,6 +246,63 @@ func (db *DB) InsertKnowledgeAnchors(ctx context.Context, knowledgeID int64, anc
 		}
 	}
 	return out, nil
+}
+
+type KnowledgeSearchHit struct {
+	Entry KnowledgeEntry
+	Score float32
+}
+
+// SearchKnowledgeByVector returns top-k knowledge entries ordered by cosine
+// similarity to queryVec. Optional category filter.
+func (db *DB) SearchKnowledgeByVector(
+	ctx context.Context,
+	queryVec []float32,
+	category string,
+	limit int,
+) ([]KnowledgeSearchHit, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	args := []any{pgvector.NewHalfVector(queryVec)}
+	where := "c.source_type = 'knowledge'"
+	if category != "" {
+		if _, ok := validKnowledgeCategories[category]; !ok {
+			return nil, fmt.Errorf("storage: knowledge: bad category %q", category)
+		}
+		args = append(args, category)
+		where += fmt.Sprintf(" AND k.category = $%d", len(args))
+	}
+	args = append(args, limit)
+
+	q := fmt.Sprintf(`
+        SELECT k.id, k.category, k.title, k.body, k.tags, k.source, k.session_id,
+               1 - (e.embedding <=> $1) AS score
+        FROM embeddings e
+        JOIN chunks c             ON c.id = e.chunk_id
+        JOIN knowledge_entries k  ON ('knowledge:' || k.id) = c.source_uri
+        WHERE %s
+        ORDER BY e.embedding <=> $1
+        LIMIT $%d`, where, len(args))
+
+	rows, err := db.Pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: knowledge: vector search: %w", err)
+	}
+	defer rows.Close()
+
+	var out []KnowledgeSearchHit
+	for rows.Next() {
+		var h KnowledgeSearchHit
+		if err := rows.Scan(
+			&h.Entry.ID, &h.Entry.Category, &h.Entry.Title, &h.Entry.Body,
+			&h.Entry.Tags, &h.Entry.Source, &h.Entry.SessionID, &h.Score,
+		); err != nil {
+			return nil, fmt.Errorf("storage: knowledge: scan: %w", err)
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
 }
 
 // resolveAnchor maps an AnchorRequest to the target row id.
