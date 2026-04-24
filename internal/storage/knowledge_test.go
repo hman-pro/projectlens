@@ -5,6 +5,30 @@ import (
 	"testing"
 )
 
+func TestKnowledgeListFiltersValidate(t *testing.T) {
+	cases := []struct {
+		name    string
+		f       KnowledgeListFilters
+		wantErr string
+	}{
+		{"bad category", KnowledgeListFilters{Category: "rant"}, "category"},
+		{"empty ok", KnowledgeListFilters{}, ""},
+		{"valid category", KnowledgeListFilters{Category: "lesson"}, ""},
+		{"negative limit", KnowledgeListFilters{Limit: -1}, "limit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.f.Validate()
+			if (tc.wantErr == "") != (err == nil) {
+				t.Fatalf("wantErr=%q got=%v", tc.wantErr, err)
+			}
+			if tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected %q in %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestKnowledgeEntryValidate(t *testing.T) {
 	cases := []struct {
 		name    string
