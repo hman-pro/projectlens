@@ -201,3 +201,79 @@ func (db *DB) ListKnowledgeEntries(ctx context.Context, f KnowledgeListFilters) 
 	}
 	return out, rows.Err()
 }
+
+type AnchorRequest struct {
+	Type string // "symbol" | "file" | "package" | "table"
+	Ref  string // scip_symbol | path | package_name | table_name
+}
+
+type AnchorResolution struct {
+	Anchor   AnchorRequest
+	TargetID int64 // 0 if unresolved
+	Resolved bool
+}
+
+// InsertKnowledgeAnchors resolves each anchor to an existing target and writes
+// edges (knowledge → target). Unresolved anchors are returned in the result; not an error.
+func (db *DB) InsertKnowledgeAnchors(ctx context.Context, knowledgeID int64, anchors []AnchorRequest) ([]AnchorResolution, error) {
+	out := make([]AnchorResolution, 0, len(anchors))
+	edges := make([]EdgeRecord, 0, len(anchors))
+
+	for _, a := range anchors {
+		targetID, ok, err := db.resolveAnchor(ctx, a)
+		if err != nil {
+			return nil, fmt.Errorf("storage: knowledge: resolve anchor %s:%s: %w", a.Type, a.Ref, err)
+		}
+		out = append(out, AnchorResolution{Anchor: a, TargetID: targetID, Resolved: ok})
+		if !ok {
+			continue
+		}
+		conf := float32(1.0)
+		edges = append(edges, EdgeRecord{
+			SourceType: "knowledge",
+			SourceID:   knowledgeID,
+			TargetType: a.Type,
+			TargetID:   targetID,
+			EdgeType:   "knowledge_about",
+			Confidence: &conf,
+		})
+	}
+
+	if len(edges) > 0 {
+		if err := db.InsertEdges(ctx, edges); err != nil {
+			return nil, fmt.Errorf("storage: knowledge: insert anchor edges: %w", err)
+		}
+	}
+	return out, nil
+}
+
+// resolveAnchor maps an AnchorRequest to the target row id.
+// Package anchors are stored against the smallest file.id in that package;
+// retrieval (KnowledgeForAnchor) joins via files.package_name to traverse.
+func (db *DB) resolveAnchor(ctx context.Context, a AnchorRequest) (int64, bool, error) {
+	var id int64
+	var query string
+	switch a.Type {
+	case "symbol":
+		query = `SELECT id FROM symbols WHERE scip_symbol = $1 LIMIT 1`
+	case "file":
+		query = `SELECT id FROM files WHERE path = $1 LIMIT 1`
+	case "package":
+		query = `SELECT MIN(id) FROM files WHERE package_name = $1`
+	case "table":
+		query = `SELECT id FROM datastore_tables WHERE name = $1 LIMIT 1`
+	default:
+		return 0, false, fmt.Errorf("unknown anchor type %q", a.Type)
+	}
+	err := db.Pool.QueryRow(ctx, query, a.Ref).Scan(&id)
+	if err != nil {
+		if err.Error() == "no rows in result set" || strings.Contains(err.Error(), "no rows") {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	if id == 0 {
+		return 0, false, nil
+	}
+	return id, true, nil
+}
