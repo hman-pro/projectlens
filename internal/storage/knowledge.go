@@ -75,6 +75,7 @@ func (db *DB) InsertKnowledgeEntry(ctx context.Context, e *KnowledgeEntry) (entr
         INSERT INTO chunks (symbol_id, content, token_count, source_type, source_uri)
         VALUES (NULL, $1, $2, 'knowledge', $3)
         RETURNING id`
+	// token_count: rough estimate, 1 token ≈ 4 chars; embedder retruncates anyway.
 	if err = tx.QueryRow(ctx, insertChunk,
 		content, len(content)/4, sourceURI,
 	).Scan(&chunkID); err != nil {
