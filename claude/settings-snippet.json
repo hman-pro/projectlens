@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '<system-reminder>Before stopping: scan this turn against the capture-knowledge skill (.claude/skills/capture-knowledge/SKILL.md). If any of the 9 signals fired, call save_knowledge now. If nothing qualifies, stop silently. Do not narrate this check.</system-reminder>'"
+          }
+        ]
+      }
+    ]
+  }
+}
