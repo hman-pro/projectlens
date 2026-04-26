@@ -101,6 +101,27 @@ func (s *Server) handleSearchGoContext(ctx context.Context, req mcp.CallToolRequ
 		}
 	}
 
+	seen := map[string]struct{}{}
+	var pkgs []string
+	for i, r := range results {
+		if i >= 5 {
+			break
+		}
+		if r.PackageName == "" {
+			continue
+		}
+		if _, ok := seen[r.PackageName]; ok {
+			continue
+		}
+		seen[r.PackageName] = struct{}{}
+		pkgs = append(pkgs, r.PackageName)
+	}
+	for _, p := range pkgs {
+		if extra := s.surfaceKnowledgeForPackage(ctx, p); extra != "" {
+			b.WriteString(extra)
+		}
+	}
+
 	return mcp.NewToolResultText(b.String()), nil
 }
 
@@ -180,6 +201,12 @@ func (s *Server) handleGetSymbolContext(ctx context.Context, req mcp.CallToolReq
 		}
 	}
 
+	if target.SymbolID > 0 {
+		if extra := s.surfaceKnowledgeForSymbol(ctx, target.SymbolID); extra != "" {
+			b.WriteString(extra)
+		}
+	}
+
 	return mcp.NewToolResultText(b.String()), nil
 }
 
@@ -224,6 +251,12 @@ func (s *Server) handleGetPackageSummary(ctx context.Context, req mcp.CallToolRe
 		}
 	} else {
 		b.WriteString("\nNo symbols found in this package.\n")
+	}
+
+	if pkgName != "" {
+		if extra := s.surfaceKnowledgeForPackage(ctx, pkgName); extra != "" {
+			b.WriteString(extra)
+		}
 	}
 
 	return mcp.NewToolResultText(b.String()), nil
