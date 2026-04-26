@@ -50,6 +50,11 @@ func (db *DB) InsertKnowledgeEntry(ctx context.Context, e *KnowledgeEntry) (entr
 	if e.Source == "" {
 		e.Source = "claude"
 	}
+	// tags column is NOT NULL DEFAULT '{}'; pgx maps a nil slice to SQL NULL,
+	// which would violate the constraint instead of taking the default.
+	if e.Tags == nil {
+		e.Tags = []string{}
+	}
 
 	tx, err := db.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -109,6 +114,7 @@ func (f *KnowledgeListFilters) Validate() error {
 	return nil
 }
 
+// GetKnowledgeEntry returns the entry by id, or (nil, nil) if not found.
 func (db *DB) GetKnowledgeEntry(ctx context.Context, id int64) (*KnowledgeEntry, error) {
 	const q = `
         SELECT id, category, title, body, tags, source, session_id
@@ -119,6 +125,9 @@ func (db *DB) GetKnowledgeEntry(ctx context.Context, id int64) (*KnowledgeEntry,
 		&e.ID, &e.Category, &e.Title, &e.Body, &e.Tags, &e.Source, &e.SessionID,
 	)
 	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("storage: knowledge: get %d: %w", id, err)
 	}
 	return &e, nil
@@ -375,25 +384,31 @@ func (db *DB) KnowledgeForSymbolWithPackage(ctx context.Context, symbolID int64,
 	if limit <= 0 {
 		limit = 10
 	}
+	// DISTINCT ON requires its leading column to lead ORDER BY, so dedup happens
+	// in an inner query and the outer ORDER BY restores newest-first ordering.
 	const q = `
       WITH sym_pkg AS (
         SELECT s.id AS sid, f.package_name AS pkg
         FROM symbols s JOIN files f ON f.id = s.file_id
         WHERE s.id = $1
       )
-      SELECT DISTINCT ON (k.id)
-        k.id, k.category, k.title, k.body, k.tags, k.source, k.session_id
-      FROM edges e
-      JOIN knowledge_entries k ON k.id = e.source_id
-      LEFT JOIN files pf       ON pf.id = e.target_id
-      WHERE e.source_type = 'knowledge'
-        AND e.edge_type = 'knowledge_about'
-        AND (
-          (e.target_type = 'symbol'  AND e.target_id = (SELECT sid FROM sym_pkg))
-          OR
-          (e.target_type = 'package' AND pf.package_name = (SELECT pkg FROM sym_pkg))
-        )
-      ORDER BY k.id, k.created_at DESC
+      SELECT id, category, title, body, tags, source, session_id
+      FROM (
+        SELECT DISTINCT ON (k.id)
+          k.id, k.category, k.title, k.body, k.tags, k.source, k.session_id, k.created_at
+        FROM edges e
+        JOIN knowledge_entries k ON k.id = e.source_id
+        LEFT JOIN files pf       ON pf.id = e.target_id
+        WHERE e.source_type = 'knowledge'
+          AND e.edge_type = 'knowledge_about'
+          AND (
+            (e.target_type = 'symbol'  AND e.target_id = (SELECT sid FROM sym_pkg))
+            OR
+            (e.target_type = 'package' AND pf.package_name = (SELECT pkg FROM sym_pkg))
+          )
+        ORDER BY k.id, k.created_at DESC
+      ) deduped
+      ORDER BY created_at DESC
       LIMIT $2`
 
 	rows, err := db.Pool.Query(ctx, q, symbolID, limit)

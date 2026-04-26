@@ -88,6 +88,9 @@ func newKnowledgeShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if e == nil {
+				return fmt.Errorf("no entry with id %d", id)
+			}
 			out, _ := json.MarshalIndent(e, "", "  ")
 			fmt.Println(string(out))
 			return nil

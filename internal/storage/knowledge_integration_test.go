@@ -142,3 +142,111 @@ func TestKnowledgeRoundtrip(t *testing.T) {
 		t.Fatalf("expected anchor edges deleted, found %d", count)
 	}
 }
+
+// Exercises KnowledgeForSymbolWithPackage and the package-anchor path, plus
+// the not-found semantics of GetKnowledgeEntry. Specifically asserts that
+// surfaced entries are ordered newest-first.
+func TestKnowledgeSymbolWithPackageAndNotFound(t *testing.T) {
+	ctx := context.Background()
+	db, err := Connect(ctx, dbURL(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer db.Close()
+
+	marker := fmt.Sprintf("knowledge-symxpkg-%d", time.Now().UnixNano())
+	pkg := marker + "_pkg"
+
+	fileID, err := db.UpsertFile(ctx, &FileRecord{
+		Path: marker + "/bar.go", PackageName: pkg,
+		Checksum: "x", Language: "go", LineCount: 1, CommitSHA: "deadbeef",
+		IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("upsert file: %v", err)
+	}
+	scip := "go . " + pkg + " . Bar()"
+	if err := db.InsertSymbols(ctx, []SymbolRecord{{
+		FileID: fileID, Name: "Bar", Kind: "func", PackageName: pkg,
+		Signature: "func Bar()", LineStart: 1, LineEnd: 1, Checksum: "y",
+		IndexedAt: time.Now(), ScipSymbol: &scip,
+	}}); err != nil {
+		t.Fatalf("insert symbol: %v", err)
+	}
+	var symID int64
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT id FROM symbols WHERE scip_symbol = $1`, scip).Scan(&symID); err != nil {
+		t.Fatalf("lookup symbol: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = db.Pool.Exec(ctx, `DELETE FROM symbols WHERE file_id = $1`, fileID)
+		_, _ = db.Pool.Exec(ctx, `DELETE FROM files   WHERE id = $1`, fileID)
+		_, _ = db.Pool.Exec(ctx, `DELETE FROM knowledge_entries WHERE title LIKE $1`, marker+"%")
+	})
+
+	// Older entry, anchored to the package.
+	older := &KnowledgeEntry{
+		Category: "convention",
+		Title:    marker + " older",
+		Body:     "older body",
+	}
+	olderID, _, err := db.InsertKnowledgeEntry(ctx, older)
+	if err != nil {
+		t.Fatalf("insert older: %v", err)
+	}
+	if _, err := db.InsertKnowledgeAnchors(ctx, olderID,
+		[]AnchorRequest{{Type: "package", Ref: pkg}}); err != nil {
+		t.Fatalf("anchor older: %v", err)
+	}
+
+	// Force a measurable created_at delta.
+	time.Sleep(20 * time.Millisecond)
+
+	// Newer entry, anchored directly to the symbol.
+	newer := &KnowledgeEntry{
+		Category: "lesson",
+		Title:    marker + " newer",
+		Body:     "newer body",
+	}
+	newerID, _, err := db.InsertKnowledgeEntry(ctx, newer)
+	if err != nil {
+		t.Fatalf("insert newer: %v", err)
+	}
+	if _, err := db.InsertKnowledgeAnchors(ctx, newerID,
+		[]AnchorRequest{{Type: "symbol", Ref: scip}}); err != nil {
+		t.Fatalf("anchor newer: %v", err)
+	}
+
+	// KnowledgeForSymbolWithPackage should see both entries (one symbol, one
+	// package) and order newest-first.
+	hits, err := db.KnowledgeForSymbolWithPackage(ctx, symID, 10)
+	if err != nil {
+		t.Fatalf("symbol+package search: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %+v", len(hits), hits)
+	}
+	if hits[0].ID != newerID || hits[1].ID != olderID {
+		t.Fatalf("expected newer (%d) before older (%d), got [%d, %d]",
+			newerID, olderID, hits[0].ID, hits[1].ID)
+	}
+
+	// Package-anchor path of KnowledgeForAnchor.
+	pkgHits, err := db.KnowledgeForAnchor(ctx, AnchorRequest{Type: "package", Ref: pkg}, 10)
+	if err != nil {
+		t.Fatalf("package anchor search: %v", err)
+	}
+	if len(pkgHits) != 1 || pkgHits[0].ID != olderID {
+		t.Fatalf("expected only older (%d) on package anchor, got %+v", olderID, pkgHits)
+	}
+
+	// GetKnowledgeEntry returns (nil, nil) for missing ids.
+	got, err := db.GetKnowledgeEntry(ctx, 0)
+	if err != nil {
+		t.Fatalf("get missing: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil for missing id, got %+v", got)
+	}
+}
