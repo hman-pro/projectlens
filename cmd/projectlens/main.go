@@ -45,6 +45,7 @@ func main() {
 		newInspectSymbolCmd(),
 		newInspectPackageCmd(),
 		newQueryCmd(),
+		newKnowledgeCmd(),
 		newIndexDatastoreCmd(),
 		newIndexHistoryCmd(),
 		newIndexEmbedCmd(),
