@@ -36,8 +36,8 @@ projectlens/
     indexer/                 # full indexing orchestrator
     retrieval/               # lexical, semantic, graph retrieval + router
     rerank/                  # scoring and ranking
-    mcpserver/               # MCP HTTP server with 5 tools
-    storage/                 # Postgres client (pgx) for all 12 tables
+    mcpserver/               # MCP HTTP server with 10 tools
+    storage/                 # Postgres client (pgx) for all 13 tables
     providers/
       ollama/                # Ollama embedding client (local)
       anthropic/             # Anthropic/Claude summarization client
@@ -52,13 +52,16 @@ projectlens/
     001_initial_schema.up.sql
     002_intelligence_platform.up.sql
     003_vector_dimensions.up.sql
+    004_knowledge_layer.up.sql
   claude/
     mcp-config.json          # Claude Code MCP configuration
     CLAUDE.md.snippet         # guidance to add to target repo's CLAUDE.md
+    settings-snippet.json    # Stop-hook snippet to install in target repo
     skills/
       trace-go-flow/          # locate implementation paths
       debug-go-test/          # investigate test behavior
       explain-go-impact/      # estimate change impact
+      capture-knowledge/      # detect + persist durable knowledge during sessions
   docs/
     plans/
       2026-04-14-projectlens-design.md
@@ -145,7 +148,7 @@ docker compose down -v
 
 ## Database
 
-**12 tables:** files, symbols, chunks, embeddings, summaries, edges, index_runs, git_refs, datastore_tables, documents, symbol_history, file_history, schema_migrations
+**13 tables:** files, symbols, chunks, embeddings, summaries, edges, index_runs, git_refs, datastore_tables, documents, symbol_history, file_history, knowledge_entries, schema_migrations
 
 ```bash
 # Connect to database
@@ -155,6 +158,7 @@ psql "postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disa
 psql "..." -f migrations/001_initial_schema.up.sql
 psql "..." -f migrations/002_intelligence_platform.up.sql
 psql "..." -f migrations/003_vector_dimensions.up.sql
+psql "..." -f migrations/004_knowledge_layer.up.sql
 
 # Check table sizes
 SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC;
@@ -164,10 +168,10 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC;
 
 - **Polymorphic edges table** — `(source_type, source_id, target_type, target_id, edge_type, properties, confidence)`. One table for call graph, data flow, coupling, and doc links.
 - **SCIP-style symbol IDs** — `symbols.scip_symbol` with hierarchical naming: `go . internal/indexer . Indexer.Run()`
-- **Universal chunks** — `chunks.source_type` discriminator: `code`, `confluence`, `jira`, `migration`. All types share the same embedding vector space.
+- **Universal chunks** — `chunks.source_type` discriminator: `code`, `confluence`, `jira`, `migration`, `knowledge`. All types share the same embedding vector space.
 - **Schema migrations tracker** — `schema_migrations` table prevents re-applying migrations.
 
-## MCP tools (5)
+## MCP tools (10)
 
 | Tool | Purpose |
 |------|---------|
@@ -175,7 +179,14 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC;
 | `search_go_context` | Natural language search over indexed code (+ docs when available) |
 | `get_symbol_context` | Symbol + callers, callees, implementors, SCIP ID |
 | `get_package_summary` | LLM-generated package summary + exports |
+| `get_table_context` | SQL table → reading/writing Go code, columns, migrations |
+| `get_change_history` | Git history for a file or symbol |
+| `get_coupling` | Files that change together with the target |
 | `index_status` | Index freshness and per-stage statistics |
+| `save_knowledge` | Persist a durable lesson/best_practice/convention/etc. with optional anchors |
+| `search_knowledge` | Search captured knowledge by query, category, and/or anchor |
+
+`get_symbol_context`, `get_package_summary`, and `search_go_context` automatically append a `Related knowledge` block when entries are anchored to the target — no extra call needed.
 
 ## Indexer pipeline
 
@@ -202,6 +213,8 @@ Currently, `bootstrap` and `reindex` run code + summarize + embed as a monolithi
 7. **Store** — persist all to Postgres + pgvector
 
 Incremental reindex compares checksums — only changed files are reprocessed.
+
+Knowledge entries (captured via the `save_knowledge` MCP tool) flow through the existing chunk + embedding pipeline — no separate stage. Each entry creates a `knowledge_entries` row and a paired `chunks` row with `source_type='knowledge'`; the next embed pass picks it up automatically.
 
 ## Provider configuration
 
