@@ -53,6 +53,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mcpServer.AddTool(indexStatusTool(), s.handleIndexStatus)
 	mcpServer.AddTool(getChangeHistoryTool(), s.handleGetChangeHistory)
 	mcpServer.AddTool(getCouplingTool(), s.handleGetCoupling)
+	mcpServer.AddTool(saveKnowledgeTool(), s.handleSaveKnowledge)
+	mcpServer.AddTool(searchKnowledgeTool(), s.handleSearchKnowledge)
 
 	httpServer := server.NewStreamableHTTPServer(mcpServer)
 
@@ -124,5 +126,7 @@ func (s *Server) MCPServer() *server.MCPServer {
 	mcpServer.AddTool(indexStatusTool(), s.handleIndexStatus)
 	mcpServer.AddTool(getChangeHistoryTool(), s.handleGetChangeHistory)
 	mcpServer.AddTool(getCouplingTool(), s.handleGetCoupling)
+	mcpServer.AddTool(saveKnowledgeTool(), s.handleSaveKnowledge)
+	mcpServer.AddTool(searchKnowledgeTool(), s.handleSearchKnowledge)
 	return mcpServer
 }

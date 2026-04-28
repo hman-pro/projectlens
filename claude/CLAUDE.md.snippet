@@ -23,6 +23,21 @@ Call ProjectLens BEFORE opening files when answering implementation/architecture
 **Index health**
 - "Is the index up to date? When was the last reindex?" → `index_status`
 
+**Knowledge layer**
+- "Save what we just learned" / "remember that X" → `save_knowledge`
+- "What do we know about <topic>?" / "what's the lesson about Y?" → `search_knowledge`
+- Knowledge anchored to symbols/packages auto-surfaces in `get_symbol_context`,
+  `get_package_summary`, and `search_go_context` results — no extra call needed.
+
+### Install the capture loop (optional but recommended)
+
+1. Symlink or copy `claude/skills/capture-knowledge/` into your repo's `.claude/skills/`.
+2. Merge `claude/settings-snippet.json` into your repo's `.claude/settings.json`.
+
+The skill tells Claude *what* counts as a capture-worthy moment; the Stop hook
+ensures Claude actually checks every turn. Both work standalone — installing
+just one is a graceful degradation.
+
 ### Preferred workflow
 
 1. Start with a ProjectLens call to locate relevant code and relationships.

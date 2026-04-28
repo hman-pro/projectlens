@@ -343,6 +343,23 @@ func extractQueryPackage(query string) string {
 	return ""
 }
 
+// EmbedQuery embeds a single query string via the configured embedder and
+// returns its 1024-dim float32 vector. Returns an error if no embedder is
+// configured or the embedder returns no vectors.
+func (r *Router) EmbedQuery(ctx context.Context, q string) ([]float32, error) {
+	if r.embedder == nil {
+		return nil, fmt.Errorf("retrieval: no embedder configured")
+	}
+	out, err := r.embedder.EmbedBatch(ctx, []string{q})
+	if err != nil {
+		return nil, fmt.Errorf("retrieval: embed query: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("retrieval: empty embedding")
+	}
+	return out[0], nil
+}
+
 // extractSymbolFromDependencyQuery extracts the symbol name from a dependency
 // trace query like "what calls ProcessPayment" or "callers of HandleRequest".
 func extractSymbolFromDependencyQuery(query string) string {

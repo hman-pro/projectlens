@@ -154,8 +154,8 @@ func TestServerRegistersAllTools(t *testing.T) {
 	mcpSrv := srv.MCPServer()
 
 	tools := mcpSrv.ListTools()
-	if len(tools) != 8 {
-		t.Fatalf("expected 8 registered tools, got %d", len(tools))
+	if len(tools) != 10 {
+		t.Fatalf("expected 10 registered tools, got %d", len(tools))
 	}
 
 	expected := map[string]bool{
@@ -167,6 +167,8 @@ func TestServerRegistersAllTools(t *testing.T) {
 		"index_status":        true,
 		"get_change_history":  true,
 		"get_coupling":        true,
+		"save_knowledge":      true,
+		"search_knowledge":    true,
 	}
 
 	for name := range tools {

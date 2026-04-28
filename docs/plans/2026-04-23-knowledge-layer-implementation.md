@@ -1054,7 +1054,7 @@ import (
     "strings"
 
     "github.com/mark3labs/mcp-go/mcp"
-    "github.com/example-org/projectlens/internal/storage"
+    "github.com/hman-pro/projectlens/internal/storage"
 )
 
 type saveKnowledgeResponse struct {
@@ -1297,7 +1297,7 @@ import (
     "strings"
 
     "github.com/mark3labs/mcp-go/mcp"
-    "github.com/example-org/projectlens/internal/storage"
+    "github.com/hman-pro/projectlens/internal/storage"
 )
 ```
 
@@ -1370,7 +1370,7 @@ import (
     "fmt"
     "strings"
 
-    "github.com/example-org/projectlens/internal/storage"
+    "github.com/hman-pro/projectlens/internal/storage"
 )
 
 const surfacingLimit = 3
@@ -1582,7 +1582,7 @@ import (
 
     "github.com/spf13/cobra"
 
-    "github.com/example-org/projectlens/internal/storage"
+    "github.com/hman-pro/projectlens/internal/storage"
 )
 
 func newKnowledgeCmd() *cobra.Command {
