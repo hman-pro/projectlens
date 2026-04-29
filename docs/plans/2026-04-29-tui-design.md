@@ -16,8 +16,10 @@ Phase 2 (indexer control plane) and Phase 3 (knowledge/code explorer) are out of
 
 - Triggering reindex or controlling the indexer (Phase 2).
 - Browsing symbols / knowledge / running queries (Phase 3).
-- Provider reachability checks beyond config display (deferred until a `doctor` command exists).
+- Provider reachability checks (deferred until a `doctor` command exists; would block the UI loop).
+- Persisting run errors (`index_runs` has no error column today; adding it is a separate change).
 - Persisted user preferences (theme, layout ratios).
+- Mouse interaction (Phase 1 is keyboard-only; mouse capture is intentionally not enabled).
 
 ## Tech choices
 
@@ -83,23 +85,43 @@ const (
 )
 
 type Section interface {
-    tea.Model
-    ID() string                  // stable routing key, e.g. "health"
-    Title() string               // sidebar label
-    Refresh() tea.Cmd            // yields RefreshedMsg targeted at this section
-    SetSize(w, h int)            // app forwards on WindowSizeMsg
-    SetFocused(bool)             // summary vs detail rendering hint
+    ID() string                              // stable routing key, e.g. "health"
+    Title() string                           // sidebar label
+    Init() tea.Cmd
+    Update(msg tea.Msg) (Section, tea.Cmd)   // returns Section, NOT tea.Model — avoids casts
+    View() string
+    Refresh() tea.Cmd                        // yields a section-specific *RefreshedMsg
     Status() Status
     LastRefresh() time.Time
 }
-
-type RefreshedMsg struct {
-    SectionID string
-    Snapshot  any
-    Err       error
-    Gen       uint64             // generation counter; section drops if stale
-}
 ```
+
+`Update` returns `Section` (not `tea.Model`) so the app router can store the
+result back without runtime type assertions. All concrete section models are
+pointer types (`*health.Model`, etc.) to make in-place state updates ergonomic.
+
+**Size and focus are messages, not setters.** The app emits `SizeMsg{W,H int}`
+and `FocusMsg{Focused bool}` via `tea.Cmd` to the targeted section; sections
+absorb them inside their own `Update`. No mutating methods on the interface.
+
+**Refresh result types are section-specific** to avoid `any` payloads:
+
+```go
+// In package sections/health
+type RefreshedMsg struct {
+    Snap HealthSnapshot
+    Err  error
+    Gen  uint64
+}
+
+// Each section package defines its own RefreshedMsg with the typed snapshot.
+// The app dispatches messages to all sections; each section ignores messages
+// that aren't its own type.
+```
+
+The generation counter increments on each `Refresh()` call within the section;
+incoming `RefreshedMsg` with stale `Gen` is dropped silently inside the
+section's `Update`.
 
 ### Store interface
 
@@ -108,33 +130,46 @@ type Store interface {
     Health(ctx context.Context) (HealthSnapshot, error)
     Pipeline(ctx context.Context) (PipelineSnapshot, error)
     Storage(ctx context.Context) (StorageSnapshot, error)
-    Runs(ctx context.Context, limit int) (RunsSnapshot, error)
+    Runs(ctx context.Context, limit int) (RunsSnapshot, error) // limit ≤ runsMaxRows (100)
     Config(ctx context.Context) (ConfigSnapshot, error)
 }
 
+const runsMaxRows = 100 // hard cap; Runs() returns at most this many rows
+
+// Field names mirror the actual `index_runs` columns (started_at, completed_at,
+// commit_sha, files_processed, symbols_extracted, edges_created, status, stage).
+// No `error` column exists; runs detail does not surface error text.
 type HealthSnapshot struct {
-    LastRun    time.Time
-    Commit     string
-    Stage      string
-    Status     string
-    Duration   time.Duration
-    HeadCommit string
-    Staleness  time.Duration
+    StartedAt        time.Time
+    CompletedAt      *time.Time     // nil while a run is in progress
+    CommitSHA        string         // full SHA; UI may abbreviate to 7 chars
+    Stage            string
+    Status           string
+    FilesProcessed   int
+    SymbolsExtracted int
+    EdgesCreated     int
+    HeadCommit       string         // git HEAD of the target repo, may be empty
+    Staleness        time.Duration  // time.Since(StartedAt)
+}
+
+func (h HealthSnapshot) Duration() time.Duration {
+    if h.CompletedAt == nil { return 0 }
+    return h.CompletedAt.Sub(h.StartedAt)
 }
 
 type StageStat struct {
-    Name           string
-    LastRunAt      time.Time
-    Status         string
-    ItemsProcessed int64
-    Duration       time.Duration
+    Name             string
+    LastRunStartedAt time.Time
+    Status           string
+    FilesProcessed   int
+    Duration         time.Duration  // 0 when not yet completed
 }
 type PipelineSnapshot struct{ Stages []StageStat }
 
 type TableStat struct {
-    Name  string
-    Rows  int64
-    Bytes int64
+    Name        string
+    EstRows     int64  // pg_stat_user_tables.n_live_tup — approximate
+    Bytes       int64
 }
 type ChunkStats struct {
     Total    int64
@@ -147,12 +182,15 @@ type StorageSnapshot struct {
 }
 
 type IndexRun struct {
-    ID         int64
-    StartedAt  time.Time
-    Stage      string
-    Status     string
-    Duration   time.Duration
-    Error      string
+    ID               int64
+    StartedAt        time.Time
+    CompletedAt      *time.Time
+    CommitSHA        string
+    Stage            string
+    Status           string
+    FilesProcessed   int
+    SymbolsExtracted int
+    EdgesCreated     int
 }
 type RunsSnapshot struct{ Runs []IndexRun }
 
@@ -171,50 +209,64 @@ type ConfigSnapshot struct {
 
 **Boot:**
 
-1. `main.go` loads config, opens `pgxpool`, constructs `store.NewPG(pool, cfg, repoPath)`.
-2. `app.New(store, cfg)` builds 5 sections, sidebar list, footer help.
-3. `tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()`.
-4. `Init()` returns `tea.Batch(sections[0].Refresh(), tickCmd(30s))`.
+1. `main.go` calls `signal.NotifyContext(context.Background(), SIGINT, SIGTERM)` → `appCtx`. The cancel is `defer`-ed.
+2. Load config, open `pgxpool` (using `appCtx`), construct `store.NewPG(pool, cfg, repoPath)`.
+3. `app.New(appCtx, store, cfg)` builds the 5 sections and stores `appCtx` for use as the parent of all DB-call timeouts.
+4. `tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(appCtx)).Run()`.
+   - `WithMouseCellMotion()` is **not** enabled — Phase 1 is keyboard-only and mouse capture would alter terminal behavior for no benefit.
+5. `Init()` returns `tea.Batch(sections[focused].Refresh(), tickCmd(30*time.Second))`.
+
+**Tick re-arming.** `tea.Tick` fires once. The app's `tickMsg` handler must:
+1. Issue `sections[focused].Refresh()` (only the visible section).
+2. Return a fresh `tickCmd(30*time.Second)` so the next tick is scheduled.
+There is no header clock; one tick stream is enough.
 
 **Steady state:**
 
-- `tickMsg` every 30s → re-issue `Refresh()` on currently visible section only.
+- `tickMsg` (every 30s) → `Refresh()` focused section + reissue tick.
 - Sidebar selection change → if `time.Since(focused.LastRefresh()) > 2s` issue `Refresh()`, else use cached snapshot.
 - `keyMsg{r}` → unconditional `Refresh()` on focused section.
-- `RefreshedMsg{SectionID,Snapshot,Err,Gen}` routed by ID; section absorbs into local state if `Gen` is current.
-- `keyMsg{enter}` toggles focused section's `SetFocused(true)` — section may render expanded view.
-- `keyMsg{esc/h}` toggles back to summary mode.
+- Section-typed `RefreshedMsg` is delivered to all sections via `Update`; non-matching sections ignore it. The targeted section drops the message if its `Gen` is stale; otherwise it absorbs the snapshot.
+- `keyMsg{enter}` → app emits `FocusMsg{Focused: true}` to the focused section, which transitions to its detail rendering.
+- `keyMsg{esc/h}` → app emits `FocusMsg{Focused: false}`; section returns to summary rendering.
+- `WindowSizeMsg` → app computes per-section width/height and emits `SizeMsg{W,H}` to that section.
 
 **Concurrency:**
 
-- DB calls run inside `tea.Cmd` returned by `Refresh()`, wrapped with `context.WithTimeout(parent, 5s)`.
-- Section state mutated only inside its own `Update`. No locks.
-- `pgxpool` is thread-safe; `tea.Cmd` may run on any goroutine — message bus is the only crossing point back into the model.
-- Per-section generation counter increments on each `Refresh()`; results with stale `Gen` are dropped.
+- All DB calls derive from `appCtx`: `ctx, cancel := context.WithTimeout(appCtx, 5*time.Second)` inside the `tea.Cmd`. On quit, `appCtx` is cancelled and in-flight queries return `context.Canceled`; `pgxpool.Close()` runs in `main` after `tea.Program.Run()` returns.
+- Section state is only mutated inside that section's `Update`. No locks.
+- `pgxpool` is goroutine-safe; `tea.Cmd` may run on any goroutine — the message bus is the only crossing back into the model.
+- Generation counter increments on every `Refresh()` issued by a section; results with stale `Gen` are dropped (covers out-of-order responses where a fast retry races a slow first call).
 
 ## Per-section behavior
 
 | Section | Summary view | Detail view (Enter) | Widget |
 |---|---|---|---|
-| Health | 6 key/value lines: last run, commit, stage, status, duration, staleness | same + 5 most recent runs as a mini-list, color-coded status | text + small list |
-| Pipeline | table: stage / last-run / status / items / duration (one row per stage) | same table sortable by column (`s` cycles), `j/k` row nav | `bubbles/table` |
-| Storage | table: table-name / rows / size + chunks-by-type footer | same + embedded vs unembedded bar per `source_type` | `bubbles/table` |
-| Recent runs | last 10 runs as table | scrollable list of all runs, Enter on row → modal viewport with full error text | `bubbles/table` + `bubbles/viewport` |
-| Config | static keys (provider/model/dim/host) + grey reachability dot ("unknown") | same + last successful provider call timestamp from `index_runs` metadata if present, else "unknown" | text |
+| Health | Key/value lines: started, completed, commit (7-char), stage, status, duration, files/symbols/edges counts, staleness | same + 5 most recent runs as a mini-list, color-coded status | text + small list |
+| Pipeline | table: stage / last started / status / files / duration (one row per stage) | same table sortable by column (`s` cycles), `j/k` row nav | `bubbles/table` |
+| Storage | table: table-name / rows (estimate) / size + chunks-by-type footer | same + embedded vs unembedded bar per `source_type` | `bubbles/table` |
+| Recent runs | last 10 runs as table (id, started, stage, status, duration, files) | scrollable table of up to `runsMaxRows` (100) runs; Enter shows row detail panel inline (no modal): all stats + completed-at + commit. **No error text** — `index_runs` has no error column today. | `bubbles/table` |
+| Config | static keys: embedding provider/model/dim/endpoint, summarization provider/model, DB host/dbname | same view; no provider reachability or "last successful call" — both require schema additions outside Phase 1 scope | text |
 
-**Reachability dots:** TUI does not ping providers (would block). Always renders as "unknown" in Phase 1; future `doctor` command will populate.
+**Phase 1 read-only constraints surfaced in UI:**
+
+- **Provider reachability** is not displayed. A future `projectlens doctor` command will own pings; until then the Config section omits status indicators rather than render misleading dots.
+- **Run errors** are not displayed because `index_runs` does not currently store error text. Adding an `error TEXT` column is out of Phase 1 scope; once added, the runs detail can grow an inline error panel without contract changes.
+- **Storage row counts** come from `pg_stat_user_tables.n_live_tup` and are labelled `~rows` (estimate). Exact counts would require `count(*)` per table on every refresh — too heavy for a 30s tick.
 
 ## Layout
 
 ```
-┌─ projectlens · dashboard ──────────────────────────────── 11:42:07 ─┐
+┌─ projectlens · dashboard ─────────── refreshed 12s ago ─────────────┐
 │┌─ Sections ──────┐┌─ Index health ───────────────────────────────┐│
-││> Index health   ││ Last run:    2026-04-29 09:14:02 UTC         ││
-││  Pipeline       ││ Commit:      ffdfc82                          ││
-││  Storage        ││ Stage:       embed                            ││
-││  Recent runs    ││ Status:      ok                               ││
-││  Config         ││ Duration:    14m22s                           ││
-│└─────────────────┘│ Staleness:   3h ago vs HEAD (a1b2c3d)          ││
+││> Index health   ││ Started:     2026-04-29 09:14:02 UTC         ││
+││  Pipeline       ││ Completed:   2026-04-29 09:28:24 UTC         ││
+││  Storage        ││ Commit:      ffdfc82                          ││
+││  Recent runs    ││ Stage:       embed                            ││
+││  Config         ││ Status:      ok                               ││
+│└─────────────────┘│ Duration:    14m22s                           ││
+│                   │ Files:       4150  Symbols: 28432  Edges: 91k ││
+│                   │ Staleness:   3h ago vs HEAD (a1b2c3d)          ││
 │                   └────────────────────────────────────────────────┘│
 │ ↑/↓ select  enter focus detail  r refresh  q quit                  │
 └────────────────────────────────────────────────────────────────────┘
@@ -222,8 +274,8 @@ type ConfigSnapshot struct {
 
 - Sidebar width: `min(24, w/4)`.
 - Footer: 1 row of contextual key hints via `bubbles/help`.
-- Header: 1 row, title left + clock right.
-- `WindowSizeMsg` propagates to focused section via `SetSize(w-sidebarW-2, h-2)`.
+- Header: 1 row, title left + "refreshed Ns ago" hint right (computed from focused section's `LastRefresh()` on each render — no separate clock tick).
+- `WindowSizeMsg` is consumed by the app, which then dispatches `SizeMsg{W: w-sidebarW-2, H: h-2}` to the focused section.
 
 ## Keymap
 
@@ -243,15 +295,17 @@ Section-specific keys (e.g. column sort `s` in pipeline) take priority while foc
 
 ## Query plan (`store/pg.go`)
 
+Column names below mirror the actual `index_runs` schema (`migrations/001_initial_schema.up.sql` + the `stage` column added in `002`). The `projectlens status` command (`cmd/projectlens/main.go:188`) and `internal/storage/indexruns.go` are the source of truth.
+
 | Snapshot | Query |
 |---|---|
-| Health | `SELECT started_at, finished_at, commit, stage, status FROM index_runs ORDER BY id DESC LIMIT 1` + `git -C <repoPath> rev-parse HEAD` via `os/exec` |
-| Pipeline | `SELECT DISTINCT ON (stage) stage, finished_at, status, items_processed, finished_at - started_at FROM index_runs ORDER BY stage, id DESC` |
-| Storage | `SELECT relname, n_live_tup, pg_total_relation_size(relid) FROM pg_stat_user_tables WHERE relname = ANY($1)` (param: 13 known tables) + `SELECT source_type, count(*), count(*) FILTER (WHERE id IN (SELECT chunk_id FROM embeddings)) FROM chunks GROUP BY source_type` |
-| Runs | `SELECT id, started_at, stage, status, finished_at - started_at, COALESCE(error,'') FROM index_runs ORDER BY id DESC LIMIT $1` |
+| Health | `SELECT id, started_at, completed_at, commit_sha, stage, status, files_processed, symbols_extracted, edges_created FROM index_runs ORDER BY id DESC LIMIT 1` + `git -C <repoPath> rev-parse HEAD` via `os/exec` (best-effort; absence is non-fatal) |
+| Pipeline | `SELECT DISTINCT ON (stage) stage, started_at, completed_at, status, files_processed FROM index_runs ORDER BY stage, id DESC` (duration computed in Go from `completed_at - started_at`, zero when null) |
+| Storage | `SELECT relname, n_live_tup, pg_total_relation_size(relid) FROM pg_stat_user_tables WHERE relname = ANY($1)` (param: known tables list) **plus** `SELECT c.source_type, count(*) AS total, count(e.id) AS embedded FROM chunks c LEFT JOIN embeddings e ON e.chunk_id = c.id GROUP BY c.source_type` |
+| Runs | `SELECT id, started_at, completed_at, commit_sha, stage, status, files_processed, symbols_extracted, edges_created FROM index_runs ORDER BY id DESC LIMIT $1` with `$1 ≤ runsMaxRows (100)` |
 | Config | pure read of `*config.Config` + parse `DATABASE_URL` for host/dbname (no DB call) |
 
-**Implementation note:** verify `index_runs` actual column names against the existing `projectlens status` command before finalizing queries. Current code is the source of truth — match it exactly.
+The known-tables list for the Storage query is the set declared in CLAUDE.md (`files`, `symbols`, `chunks`, `embeddings`, `summaries`, `edges`, `index_runs`, `git_refs`, `datastore_tables`, `documents`, `symbol_history`, `file_history`, `knowledge_entries`, `schema_migrations`).
 
 ## Error handling
 
@@ -275,11 +329,21 @@ Section-specific keys (e.g. column sort `s` in pipeline) take priority while foc
 
 | Layer | Coverage | DB? |
 |---|---|---|
-| `store/pg_integration_test.go` (`//go:build integration`) | Each query returns expected snapshot shape against current schema | yes |
-| `store/fake.go` | In-memory canned snapshots; consumed by all model tests | no |
-| `sections/<name>/section_test.go` | Feed `RefreshedMsg{Snapshot}`; assert `View()` substrings; feed `tea.KeyMsg`; assert state | no |
+| `store/pg_integration_test.go` (`//go:build integration`) | Each query returns expected snapshot shape against current schema; covers a populated index_runs and an empty one | yes |
+| `store/fake.go` | In-memory canned snapshots; injectable failures and delays for model tests | no |
+| `sections/<name>/section_test.go` | Feed typed `RefreshedMsg`; assert `View()` substrings; feed `tea.KeyMsg`; feed `SizeMsg`/`FocusMsg`; assert state transitions | no |
 | `app/app_test.go` | Boot with fake store; send key sequences; assert focus/mode transitions; golden-file render at 100×30 | no |
 | `cmd/projectlens-tui/` | Smoke build only | no |
+
+**Concurrency / failure-edge tests required (in `app_test.go` unless noted):**
+
+- **Stale-generation drop** — issue two refreshes in flight; deliver them out of order; assert only the newest snapshot ends up in section state.
+- **Out-of-order refresh** — slow-fake returns the first snapshot after the second; same assertion.
+- **Query timeout** — fake returns `context.DeadlineExceeded` after 5s simulated wait; section transitions to `StatusError` with `query timeout (5s)`.
+- **DB unreachable on boot** — fake constructor returns `nil` store + boot error; TUI still launches; sections render error state with `r retry` hint; pressing `r` re-runs `Refresh()` and recovers when fake comes online.
+- **Tiny terminal recovery** — feed `WindowSizeMsg{60,15}`, assert the small-terminal banner; feed `WindowSizeMsg{120,40}`, assert normal layout returns.
+- **Tick re-arming** — drive 5 successive `tickMsg` deliveries and assert that each one yields both a refresh of the focused section and a fresh `tickCmd`.
+- **Quit cancels in-flight queries** (in `store/pg_integration_test.go`) — start a slow query, cancel `appCtx`, assert the query returns `context.Canceled` within 50ms.
 
 **Golden files:** `lipgloss.NewRenderer` with profile forced to `Ascii` in tests; goldens in `testdata/<case>.txt`; `-update` flag rewrites.
 
@@ -293,17 +357,17 @@ Each step ends in green build + tests + a runnable binary.
 4. **Sidebar + theming + footer** — `app` renders fixed sidebar of 5 placeholder titles, footer keybindings, focus navigable.
 5. **Health section (vertical slice)** — first end-to-end: section package, summary view, detail view, refresh wiring, unit tests. Validates the section contract.
 6. **Pipeline / Storage / Runs / Config** — each cookie-cutter from health, parallelizable.
-7. **Refresh tick + generation counter** — 30s tick, focus-change refresh, manual `r`, stale-result drop. App-level test.
-8. **Resize / error / empty states** — window-size handling, error rendering, empty-DB rendering. Golden-file tests.
-9. **Polish** — `?` help overlay, color theme, alt-screen, file logging.
+7. **Refresh tick + generation counter** — `tea.Tick(30s)` with explicit re-arming on each `tickMsg`; focus-change refresh (≥ 2s threshold); manual `r`; stale-`Gen` drop. Concurrency tests from the testing section (stale-drop, out-of-order, tick re-arm).
+8. **Resize / error / empty states** — `WindowSizeMsg`/`SizeMsg` plumbing; small-terminal banner + recovery; per-section error rendering; DB-unreachable boot; empty-DB rendering. Golden-file tests.
+9. **Polish** — `?` help overlay, color theme, alt-screen, file logging at `PROJECTLENS_TUI_LOG_FILE`.
 10. **Docs** — `docs/plans/2026-04-29-tui-implementation.md`; CLAUDE.md updated with new binary, build instructions, and `PROJECTLENS_TUI_LOG_FILE` env var.
 
 ## Risks & mitigations
 
 | Risk | Mitigation |
 |---|---|
-| `index_runs` column names differ from assumption | Verify against existing `status` cmd source before query implementation. |
 | `bubbles/table` styling on narrow terminals | Drop columns progressively: duration first, then status text → glyph. |
-| 5s timeout too tight for cold-cache `pg_total_relation_size` | Bump to 10s only for storage if observed in practice. |
+| 5s timeout too tight for cold-cache `pg_total_relation_size` | Bump to 10s only for the Storage query if observed in practice. |
 | Section package growth bloats `internal/tui/sections` | Each section already isolated to own subpackage; no shared mutable state. Future Phase 2/3 sections add as siblings. |
-| Phase 2/3 want top-level tabs (Dashboard / Indexer / Explorer) | App's sidebar list of 5 becomes tab-of-sidebars; section interface unchanged. |
+| Phase 2 (indexer control) needs writes/streams/confirms beyond `Refresh()` | The current `Section` interface is read-only by design. Phase 2 will introduce a sibling interface (e.g. `ActionableSection` adding `Run(action Action) tea.Cmd` + progress messages) that Phase 1 sections continue to satisfy trivially. The store layer will gain a write surface at that point. **The "no restructuring" claim only covers layout / sidebar / interface composition; the section contract will grow.** |
+| `pg_stat_user_tables.n_live_tup` lags reality after large mutations | Labelled `~rows` in UI; if it becomes confusing, swap to `count(*)` per table behind a config toggle. |
