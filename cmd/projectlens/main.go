@@ -24,6 +24,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/hman-pro/projectlens/internal/summarize"
 	"github.com/hman-pro/projectlens/internal/summaries"
+	_ "github.com/joho/godotenv/autoload"
 	"github.com/spf13/cobra"
 )
 

@@ -15,6 +15,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
+	_ "github.com/joho/godotenv/autoload"
 )
 
 func main() {
