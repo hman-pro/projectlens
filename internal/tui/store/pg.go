@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -211,8 +213,10 @@ func (s *PG) Runs(ctx context.Context, limit int) (RunsSnapshot, error) {
 	return RunsSnapshot{Runs: runs}, nil
 }
 
-func (s *PG) Config(_ context.Context) (ConfigSnapshot, error) {
+func (s *PG) Config(ctx context.Context) (ConfigSnapshot, error) {
 	host, dbname := parseDSN(s.cfg.DatabaseURL)
+	mcpURL := resolveMCPURL()
+	mcpStatus, mcpLatency, mcpErr := probeMCP(ctx, mcpURL)
 	return ConfigSnapshot{
 		EmbeddingProvider:     s.cfg.Embeddings.Provider,
 		EmbeddingModel:        s.cfg.Embeddings.Model,
@@ -222,7 +226,60 @@ func (s *PG) Config(_ context.Context) (ConfigSnapshot, error) {
 		SummarizationModel:    s.cfg.Summarization.Model,
 		DBHost:                host,
 		DBName:                dbname,
+		MCPURL:                mcpURL,
+		MCPStatus:             mcpStatus,
+		MCPLatency:            mcpLatency,
+		MCPError:              mcpErr,
 	}, nil
+}
+
+// resolveMCPURL builds the MCP server URL from env (PROJECTLENS_MCP_URL > MCP_PORT >
+// PROJECTLENS_MCP_PORT > default 8484). Path is /mcp to match the streamable-http
+// transport configured in claude/mcp-config.json.
+func resolveMCPURL() string {
+	if v := os.Getenv("PROJECTLENS_MCP_URL"); v != "" {
+		return v
+	}
+	port := "8484"
+	if v := os.Getenv("MCP_PORT"); v != "" {
+		port = v
+	} else if v := os.Getenv("PROJECTLENS_MCP_PORT"); v != "" {
+		port = v
+	}
+	return fmt.Sprintf("http://localhost:%s/mcp", port)
+}
+
+// probeMCP issues a short HTTP GET against the MCP endpoint to determine
+// reachability. Streamable-http accepts POST for JSON-RPC, so a GET typically
+// returns 405 — that still proves the daemon is up. Connection refused or
+// timeout means down. Returns ("up"|"down", latency, errMsg).
+func probeMCP(ctx context.Context, rawURL string) (string, time.Duration, string) {
+	probeCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "down", 0, err.Error()
+	}
+	client := &http.Client{Timeout: 750 * time.Millisecond}
+	start := time.Now()
+	resp, err := client.Do(req)
+	latency := time.Since(start)
+	if err != nil {
+		return "down", latency, errMsg(err)
+	}
+	resp.Body.Close()
+	return "up", latency, ""
+}
+
+func errMsg(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if i := strings.LastIndex(msg, ": "); i >= 0 && i < len(msg)-2 {
+		return msg[i+2:]
+	}
+	return msg
 }
 
 func parseDSN(dsn string) (host, dbname string) {

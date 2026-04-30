@@ -260,6 +260,7 @@ summarization:
 | `PROJECTLENS_DB_PORT` | Docker Compose: host port for Postgres | No (default: 5433) |
 | `PROJECTLENS_MCP_PORT` | Docker Compose: host port for MCP | No (default: 8484) |
 | `MCP_PORT` | MCP server port (non-Docker) | No (default: 8484) |
+| `PROJECTLENS_MCP_URL` | Full MCP URL the TUI Config section probes (overrides `MCP_PORT`) | No (default `http://localhost:<MCP_PORT>/mcp`) |
 | `CONFIG_PATH` | Path to index.yaml | No (default: configs/index.yaml) |
 | `PROJECTLENS_TUI_LOG_FILE` | TUI log file path (default `/tmp/projectlens-tui.log`) | No |
 

@@ -83,4 +83,8 @@ type ConfigSnapshot struct {
 	SummarizationModel    string
 	DBHost                string
 	DBName                string
+	MCPURL                string
+	MCPStatus             string
+	MCPLatency            time.Duration
+	MCPError              string
 }
