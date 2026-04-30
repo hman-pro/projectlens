@@ -14,6 +14,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/tui/app"
 	"github.com/hman-pro/projectlens/internal/tui/sections"
+	cfgsec "github.com/hman-pro/projectlens/internal/tui/sections/config"
 	"github.com/hman-pro/projectlens/internal/tui/sections/health"
 	"github.com/hman-pro/projectlens/internal/tui/sections/pipeline"
 	"github.com/hman-pro/projectlens/internal/tui/sections/runs"
@@ -54,7 +55,7 @@ func run() error {
 		pipeline.New(ctx, s),
 		storage.New(ctx, s),
 		runs.New(ctx, s),
-		// config section plugs in here as it lands.
+		cfgsec.New(ctx, s),
 	}
 
 	m := app.New(ctx, secs)
