@@ -11,16 +11,15 @@ import (
 )
 
 type Model struct {
-	store    store.Store
-	appCtx   context.Context
-	snap     store.ConfigSnapshot
-	err      error
-	status   sections.Status
-	gen      uint64
-	lastSeen uint64
-	last     time.Time
-	focused  bool
-	w, h     int
+	store   store.Store
+	appCtx  context.Context
+	snap    store.ConfigSnapshot
+	err     error
+	status  sections.Status
+	gen     uint64
+	last    time.Time
+	focused bool
+	w, h    int
 }
 
 func New(appCtx context.Context, s store.Store) *Model {

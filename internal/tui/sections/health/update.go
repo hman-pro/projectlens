@@ -11,10 +11,9 @@ import (
 func (m *Model) Update(msg tea.Msg) (sections.Section, tea.Cmd) {
 	switch msg := msg.(type) {
 	case RefreshedMsg:
-		if msg.Gen < m.lastSeen {
-			return m, nil // stale; drop
+		if msg.Gen != m.gen {
+			return m, nil // not the latest issued; drop
 		}
-		m.lastSeen = msg.Gen
 		m.last = time.Now()
 		if msg.Err != nil {
 			m.err = msg.Err

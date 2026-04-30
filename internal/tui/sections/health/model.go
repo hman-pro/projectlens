@@ -14,14 +14,13 @@ type Model struct {
 	store  store.Store
 	appCtx context.Context
 
-	snap     store.HealthSnapshot
-	err      error
-	status   sections.Status
-	gen      uint64 // last issued generation
-	lastSeen uint64 // generation of last absorbed result
-	last     time.Time
-	w, h     int
-	focused  bool
+	snap    store.HealthSnapshot
+	err     error
+	status  sections.Status
+	gen     uint64 // last issued generation
+	last    time.Time
+	w, h    int
+	focused bool
 }
 
 func New(appCtx context.Context, s store.Store) *Model {

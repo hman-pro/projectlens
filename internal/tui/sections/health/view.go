@@ -16,6 +16,9 @@ func (m *Model) View() string {
 	if m.status == sections.StatusIdle {
 		return theme.MutedStyle().Render("(loading…)")
 	}
+	if m.snap.StartedAt.IsZero() {
+		return theme.MutedStyle().Render("no runs yet — run \"projectlens bootstrap\"")
+	}
 
 	s := m.snap
 	commit := shortCommit(s.CommitSHA)

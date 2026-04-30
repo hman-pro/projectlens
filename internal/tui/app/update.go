@@ -66,17 +66,25 @@ func (m Model) handleSidebarKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Up), key.Matches(msg, m.keys.Down),
 		key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.ShiftTab):
 		var cmd tea.Cmd
-		m.sidebar, cmd = m.sidebar.Update(msg)
+		switch {
+		case key.Matches(msg, m.keys.Tab):
+			m.sidebar.CursorDown()
+		case key.Matches(msg, m.keys.ShiftTab):
+			m.sidebar.CursorUp()
+		default:
+			m.sidebar, cmd = m.sidebar.Update(msg)
+		}
 		newIdx := m.sidebar.Index()
 		var refresh tea.Cmd
 		if newIdx != m.focused {
 			m.focused = newIdx
-			if m.since() > focusRefreshThreshold {
-				refresh = m.sections[m.focused].Refresh()
+			sec := m.sections[m.focused]
+			if sec.LastRefresh().IsZero() || m.since() > focusRefreshThreshold {
+				refresh = sec.Refresh()
 			}
 			dw, dh := m.detailSize()
-			id := m.sections[m.focused].ID()
-			next, sizeCmd := m.sections[m.focused].Update(sections.SizeMsg{SectionID: id, W: dw, H: dh})
+			id := sec.ID()
+			next, sizeCmd := sec.Update(sections.SizeMsg{SectionID: id, W: dw, H: dh})
 			m.sections[m.focused] = next
 			return m, tea.Batch(cmd, sizeCmd, refresh)
 		}

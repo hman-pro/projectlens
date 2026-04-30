@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -17,7 +18,7 @@ import (
 func newApp(t *testing.T) (tea.Model, *store.Fake) {
 	t.Helper()
 	f := store.NewFake()
-	f.SetHealth(store.HealthSnapshot{Stage: "embed", Status: "ok"})
+	f.SetHealth(store.HealthSnapshot{StartedAt: time.Now(), Stage: "embed", Status: "ok"})
 	secs := []sections.Section{health.New(context.Background(), f)}
 	return app.New(context.Background(), secs), f
 }
@@ -45,7 +46,7 @@ func TestApp_QuitsOnQ(t *testing.T) {
 
 func TestApp_TickRearmsRefresh(t *testing.T) {
 	f := store.NewFake()
-	f.SetHealth(store.HealthSnapshot{Stage: "embed", Status: "ok"})
+	f.SetHealth(store.HealthSnapshot{StartedAt: time.Now(), Stage: "embed", Status: "ok"})
 	secs := []sections.Section{health.New(context.Background(), f)}
 	var m tea.Model = app.New(context.Background(), secs)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -81,7 +82,7 @@ func TestApp_DBUnreachableThenRecovers(t *testing.T) {
 	}
 
 	f.SetErr("Health", nil)
-	f.SetHealth(store.HealthSnapshot{Stage: "embed", Status: "ok"})
+	f.SetHealth(store.HealthSnapshot{StartedAt: time.Now(), Stage: "embed", Status: "ok"})
 	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = m.Update(cmd())
 	if strings.Contains(m.View(), "connection refused") {

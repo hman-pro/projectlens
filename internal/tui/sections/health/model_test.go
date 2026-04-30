@@ -41,7 +41,7 @@ func TestHealth_AbsorbsSnapshot(t *testing.T) {
 
 func TestHealth_DropsStaleGeneration(t *testing.T) {
 	f := store.NewFake()
-	f.SetHealth(store.HealthSnapshot{Stage: "first"})
+	f.SetHealth(store.HealthSnapshot{StartedAt: time.Now(), Stage: "first"})
 	m := health.New(context.Background(), f)
 
 	gen1 := m.Refresh()() // gen=1
