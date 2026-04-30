@@ -3,15 +3,15 @@ package app
 import "github.com/charmbracelet/bubbles/key"
 
 type keyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Enter   key.Binding
-	Esc     key.Binding
-	Tab     key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Enter    key.Binding
+	Esc      key.Binding
+	Tab      key.Binding
 	ShiftTab key.Binding
-	Refresh key.Binding
-	Help    key.Binding
-	Quit    key.Binding
+	Refresh  key.Binding
+	Help     key.Binding
+	Quit     key.Binding
 }
 
 func defaultKeys() keyMap {
