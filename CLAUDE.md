@@ -25,6 +25,7 @@ projectlens/
   cmd/
     projectlens/              # CLI entrypoint (7 commands)
     projectlens-mcp/          # MCP server entrypoint
+    projectlens-tui/          # TUI dashboard entrypoint (Phase 1: read-only ops view)
   internal/
     census/                  # file discovery and classification
     classifier/              # handwritten vs generated vs test detection
@@ -121,6 +122,20 @@ go run ./cmd/projectlens/ inspect-package "service/graphql" --db "..."
 go run ./cmd/projectlens/ query "how does inventory reservation work" --db "..."
 go run ./cmd/projectlens/ query "ReserveInventory" --mode lexical --db "..."
 ```
+
+## TUI dashboard
+
+Read-only Bubbletea dashboard surfacing index health, pipeline state,
+storage stats, recent runs, and provider config.
+
+```bash
+go run ./cmd/projectlens-tui/
+```
+
+Reads `.env` automatically (DATABASE_URL, REPO_PATH). Logs to
+`PROJECTLENS_TUI_LOG_FILE` (default `/tmp/projectlens-tui.log`).
+
+Keys: ↑/↓ navigate · enter focus · esc back · r refresh · ? help · q quit.
 
 ## Docker Compose
 
@@ -246,6 +261,7 @@ summarization:
 | `PROJECTLENS_MCP_PORT` | Docker Compose: host port for MCP | No (default: 8484) |
 | `MCP_PORT` | MCP server port (non-Docker) | No (default: 8484) |
 | `CONFIG_PATH` | Path to index.yaml | No (default: configs/index.yaml) |
+| `PROJECTLENS_TUI_LOG_FILE` | TUI log file path (default `/tmp/projectlens-tui.log`) | No |
 
 ## Design decisions
 
