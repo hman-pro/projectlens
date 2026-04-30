@@ -22,8 +22,10 @@ func TestRuns_TableAndDetail(t *testing.T) {
 	m := runs.New(context.Background(), f)
 	msg := m.Refresh()()
 	next, _ := m.Update(msg)
-	if !strings.Contains(next.View(), "abcdef0") {
-		t.Fatalf("commit absent\n%s", next.View())
+	for _, want := range []string{"7", "embed", "ok", "4150"} {
+		if !strings.Contains(next.View(), want) {
+			t.Fatalf("table view missing %q\n%s", want, next.View())
+		}
 	}
 
 	// Focus → detail panel renders.

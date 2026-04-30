@@ -23,10 +23,12 @@ func (m *Model) View() string {
 
 	var b strings.Builder
 	b.WriteString(m.tbl.View())
-	idx := m.tbl.Cursor()
-	if idx >= 0 && idx < len(m.snap.Runs) {
-		b.WriteString("\n")
-		b.WriteString(detailPanel(m.snap.Runs[idx]))
+	if m.focused {
+		idx := m.tbl.Cursor()
+		if idx >= 0 && idx < len(m.snap.Runs) {
+			b.WriteString("\n")
+			b.WriteString(detailPanel(m.snap.Runs[idx]))
+		}
 	}
 	return b.String()
 }
