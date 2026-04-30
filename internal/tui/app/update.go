@@ -58,6 +58,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleSidebarKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case key.Matches(msg, m.keys.Help):
+		m.showHelp = !m.showHelp
+		return m, nil
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Up), key.Matches(msg, m.keys.Down),
@@ -92,6 +95,9 @@ func (m Model) handleSidebarKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case key.Matches(msg, m.keys.Help):
+		m.showHelp = !m.showHelp
+		return m, nil
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Esc):
@@ -103,7 +109,6 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Refresh):
 		return m, m.sections[m.focused].Refresh()
 	}
-	// Forward all other keys to the focused section.
 	next, cmd := m.sections[m.focused].Update(msg)
 	m.sections[m.focused] = next
 	return m, cmd

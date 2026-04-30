@@ -31,6 +31,7 @@ type Model struct {
 	sidebar list.Model
 
 	tooSmall bool
+	showHelp bool
 }
 
 const minW, minH = 80, 20

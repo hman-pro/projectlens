@@ -59,6 +59,7 @@ func run() error {
 	}
 
 	m := app.New(ctx, secs)
+	app.InitLogger()
 	prog := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err = prog.Run()
 	return err

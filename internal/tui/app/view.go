@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -29,6 +30,20 @@ func (m Model) View() string {
 	detail := components.Panel(m.sections[m.focused].Title(), body, dw+2, dh+2)
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, detail)
+	if m.showHelp {
+		overlay := theme.MutedStyle().Render(strings.Join([]string{
+			"  ↑/k     up",
+			"  ↓/j     down",
+			"  enter   focus detail",
+			"  esc/h   back to sidebar",
+			"  tab     next section",
+			"  s+tab   previous section",
+			"  r       refresh focused",
+			"  ?       toggle help",
+			"  q/^C    quit",
+		}, "\n"))
+		return lipgloss.JoinVertical(lipgloss.Left, header, overlay, footer)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, row, footer)
 }
 
