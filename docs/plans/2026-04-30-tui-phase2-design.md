@@ -79,8 +79,8 @@ a structured error the TUI maps to a "another writer holds the lock"
 toast with the holder's PID/host/started-at (recorded in a small
 `index_locks` row when the lock is taken).
 
-This prerequisite is filed as `docs/plans/2026-05-01-indexer-writer-lock-design.md`
-(to be written) and must merge before the Phase 2 implementation begins.
+This prerequisite is filed as `docs/plans/2026-04-30-indexer-writer-lock-design.md`
+and must merge before the Phase 2 implementation begins.
 Phase 2 itself depends on the lock semantics being in place; the TUI
 displays the lock-busy state but does not invent it.
 

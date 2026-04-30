@@ -32,8 +32,8 @@ Postgres schema. No new dependencies.
 ## Prerequisites
 
 The spec lists a cross-process writer lock as a prerequisite that must merge
-before Phase 2 implementation begins (`docs/plans/2026-05-01-indexer-writer-lock-design.md`,
-not yet written). This implementation plan is independent of that work in the
+before Phase 2 implementation begins (`docs/plans/2026-04-30-indexer-writer-lock-design.md`).
+This implementation plan is independent of that work in the
 sense that it can be **written and reviewed** today; it cannot be **executed**
 until the lock design is implemented and merged. Task 0 verifies the
 prerequisite is in place before any code lands.
@@ -101,7 +101,7 @@ grep -rn "pg_try_advisory_lock\|pg_advisory_lock" internal/
 
 Expected: at least one matching commit and `pg_advisory_lock` calls in
 `internal/storage/` or `internal/indexer/`. If neither exists, **stop** —
-write `docs/plans/2026-05-01-indexer-writer-lock-design.md` and a separate
+consult `docs/plans/2026-04-30-indexer-writer-lock-design.md` and a separate
 implementation plan for it before continuing this plan.
 
 ---
