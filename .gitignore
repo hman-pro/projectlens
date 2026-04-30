@@ -34,6 +34,10 @@ vendor/
 # Claude Code local state
 .claude/
 
+# Database backups / dumps
+*.dump
+*.sql.gz
+
 # OS
 .DS_Store
 Thumbs.db
