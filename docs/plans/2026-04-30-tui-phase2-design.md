@@ -16,16 +16,37 @@ state.
 Five actions, surfaced as global hotkeys and rendered in the Pipeline section's
 new "Controls" block:
 
-| Key | Name              | Underlying CLI            | Confirmation        | Refresh on success      |
-|-----|-------------------|---------------------------|---------------------|-------------------------|
-| `R` | reindex           | `projectlens reindex`      | none (single key)   | pipeline, runs, storage |
-| `F` | reindex --full    | `projectlens reindex --full` | typed (`reindex`) | pipeline, runs, storage |
-| `E` | index-embed       | `projectlens index-embed`  | none                | pipeline, runs          |
-| `S` | index-summarize   | `projectlens index-summarize` | none             | pipeline, runs          |
-| `H` | index-history     | `projectlens index-history` | none               | pipeline, runs          |
+| Key | Name              | Underlying CLI            | Confirmation               | Refresh on success      |
+|-----|-------------------|---------------------------|----------------------------|-------------------------|
+| `R` | reindex           | `projectlens reindex`      | y/N preflight              | pipeline, runs, storage |
+| `F` | reindex --full    | `projectlens reindex --full` | typed (`reindex`)        | pipeline, runs, storage |
+| `E` | index-embed       | `projectlens index-embed`  | y/N preflight              | pipeline, runs          |
+| `S` | index-summarize   | `projectlens index-summarize` | y/N preflight           | pipeline, runs          |
+| `H` | index-history     | `projectlens index-history` | y/N preflight             | pipeline, runs          |
 
-`--db` and `--repo` flags injected by the runner from existing TUI config
-(DATABASE_URL + REPO_PATH, already loaded by the Phase 1 store layer).
+**Explicit targeting (no env-only injection).** The runner constructs every
+command line with explicit `--config <path> --db <url> --repo <path>` flags
+resolved from the TUI's loaded `config.Config` + `DATABASE_URL` +
+`REPO_PATH`. Subprocesses must never silently fall back to a different
+config or DSN than what the TUI is rendering. A unit test
+(`runner_command_test.go`) asserts each Spec's built `*exec.Cmd.Args`
+contains those three flags with values matching the TUI's resolved config.
+
+**Preflight before confirm.** Every action runs a fast read-only preflight
+against the DB before opening its confirm modal:
+
+| Action | Preflight query | Modal headline |
+|--------|-----------------|----------------|
+| reindex | files modified since last run | "reindex 124 changed files? [y/N]" |
+| reindex --full | total files in scope | "RE-INDEX 2913 files (~8 min, rewrites embeddings) — type 'reindex' to confirm" |
+| index-embed | chunks where `embedding IS NULL` | "embed 412 chunks via openai? [y/N]" |
+| index-summarize | packages where `summary IS NULL` | "summarize 17 packages via anthropic? [y/N]" |
+| index-history | commits since last `file_history.author_date` | "ingest 227 commits since 2026-04-29? [y/N]" |
+
+Modal shows count + provider/cost driver before the user commits. y/N for
+single-key confirms, typed phrase for `reindex --full`. Esc cancels at any
+stage. Preflight queries use the existing `tui/store` read interface (each
+gets a new method like `EmbedPending(ctx) (int, error)`).
 
 ### Out of scope
 
@@ -37,6 +58,31 @@ new "Controls" block:
 - `index_runs.error` column (a separate migration; not blocking Phase 2).
 - Run history scrollback beyond the current session (drawer keeps only the
   last completion).
+- **Cross-process writer lock** (see Prerequisites below). Phase 2 ships with
+  a single-process slot only. A DB advisory lock that excludes concurrent
+  CLI writers is a separate prerequisite design touching the indexer + CLI
+  side, not just the TUI.
+
+## Prerequisites (must land before Phase 2)
+
+**Cross-process writer lock.** The indexer's mutating commands (`bootstrap`,
+`reindex`, `index-embed`, `index-summarize`, `index-history`) currently
+have no inter-process serialization. Two CLI invocations or a CLI + TUI
+trigger overlapping today; the existing delete-then-insert flows for
+symbols and `co_changes` edges can produce duplicates or stale rows under
+concurrent writers. This is latent in the CLI but Phase 2 makes it easier
+to hit.
+
+The fix is a Postgres advisory lock acquired at the start of every
+mutating command, released on completion. Failure-to-acquire surfaces as
+a structured error the TUI maps to a "another writer holds the lock"
+toast with the holder's PID/host/started-at (recorded in a small
+`index_locks` row when the lock is taken).
+
+This prerequisite is filed as `docs/plans/2026-05-01-indexer-writer-lock-design.md`
+(to be written) and must merge before the Phase 2 implementation begins.
+Phase 2 itself depends on the lock semantics being in place; the TUI
+displays the lock-busy state but does not invent it.
 
 ## Foundation reuse
 
@@ -73,14 +119,22 @@ Three responsibilities:
 2. **`Spec`** — descriptor:
    ```go
    type Spec struct {
-       Key        rune          // 'R', 'F', 'E', 'S', 'H'
-       Name       string        // "reindex", "reindex --full", ...
-       Args       []string      // ["reindex", "--full"]
-       Confirm    ConfirmKind   // ConfirmNone | ConfirmTyped
-       Phrase     string        // for ConfirmTyped, e.g. "reindex"
-       RefreshOn  []string      // section IDs to refresh on success
+       Key       rune          // 'R', 'F', 'E', 'S', 'H'
+       Name      string        // "reindex", "reindex --full", ...
+       Args      []string      // ["reindex"] or ["reindex", "--full"] (no --db/--repo/--config; runner injects)
+       Confirm   ConfirmKind   // ConfirmYesNo | ConfirmTyped
+       Phrase    string        // for ConfirmTyped, e.g. "reindex"
+       RefreshOn []string      // section IDs to refresh on success
+       Preflight Preflight     // returns (count int, cost string, err error)
+       Headline  HeadlineFn    // formats modal headline given preflight result
    }
+
+   type Preflight func(ctx context.Context, store store.Store) (count int, cost string, err error)
    ```
+
+   `Preflight` is a function the registry attaches per Spec. The Store
+   interface gains read-only methods to back them: `EmbedPending`,
+   `SummarizePending`, `HistoryNewCommits`, `ChangedFilesSinceLastRun`.
 
 3. **`Registry`** — a `[]Spec` exported as a constant. Pipeline section reads
    it for the Controls block; app keymap reads it for routing.
@@ -174,29 +228,63 @@ with their action names. Other sections unchanged.
 
 1. User presses an action key (e.g. `R`). App keymap matches against the
    registry.
-2. If `Spec.Confirm == ConfirmTyped`, app pushes `confirmmodal` overlay.
-   User types phrase + enter → emits `RunSpecMsg{spec}`. Esc cancels with
-   no dispatch.
-3. If `Spec.Confirm == ConfirmNone`, single keypress emits `RunSpecMsg{spec}`
-   directly.
+2. App dispatches `PreflightMsg{spec}` → spec's preflight method runs the
+   read-only count query against the TUI's existing pgxpool (200ms budget;
+   on error, surface "preflight failed: <err>" toast and abort).
+3. App opens the appropriate confirm modal:
+   - `Spec.Confirm == ConfirmYesNo` → `[y/N]` modal with the preflight
+     headline (count + provider). `y` emits `RunSpecMsg{spec}`. Anything
+     else cancels.
+   - `Spec.Confirm == ConfirmTyped` → typed-phrase modal showing preflight
+     count + cost driver. Enter dispatches only if typed text equals
+     `Spec.Phrase`. Esc cancels.
 4. App handler calls `runner.Start(spec)`. If the runner is busy, it returns
    `ErrJobInFlight` and the app emits `JobBusyMsg` → toast
-   `reindex already running, c to cancel`.
+   `reindex already running, c to cancel`. If the cross-process writer
+   lock (see Prerequisites) is held by another process, the subprocess
+   exits early with a known exit code and the drawer shows
+   `another writer holds the lock: <holder>` from the captured stderr.
 
 ### Run path
 
-1. `runner.Start` builds `exec.CommandContext(ctx, binaryPath, spec.Args...)`,
-   sets `cmd.Env = os.Environ()` (TUI already has DATABASE_URL,
-   ANTHROPIC_API_KEY, etc. loaded), opens log file
-   `~/.projectlens/tui-runs/<RFC3339-ts>-<spec.Name>.log`, starts the process.
-2. Two goroutines (`scanStream(stdout)`, `scanStream(stderr)`) read line by
+1. `runner.Start(spec)` resolves the command line via `BuildArgs(spec, target)`
+   where `target` is the `RunnerTarget` the runner was constructed with:
+
+   ```go
+   type RunnerTarget struct {
+       BinaryPath string // resolved projectlens binary
+       ConfigPath string // path to configs/index.yaml as loaded by the TUI
+       DatabaseURL string // exact DSN the TUI's pgxpool is using
+       RepoPath   string // exact REPO_PATH the TUI is rendering
+   }
+
+   func BuildArgs(spec Spec, t RunnerTarget) []string {
+       out := append([]string{}, spec.Args...)
+       out = append(out,
+           "--config", t.ConfigPath,
+           "--db", t.DatabaseURL,
+           "--repo", t.RepoPath,
+       )
+       return out
+   }
+   ```
+
+   The runner then calls `exec.CommandContext(ctx, t.BinaryPath, BuildArgs(spec, t)...)`
+   and sets `cmd.Env = os.Environ()` for ancillary credentials
+   (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OLLAMA_ENDPOINT`). The
+   targeted DSN/repo/config are NOT relied on via env — they are
+   command-line flags so a misaligned env can never silently retarget.
+2. Opens log file `~/.projectlens/tui-runs/<RFC3339-ts>-<spec.Name>.log`,
+   starts the process.
+3. Two goroutines (`scanStream(stdout)`, `scanStream(stderr)`) read line by
    line. Each line: append to tail ring buffer (drop oldest at 200), write
    to file, send `JobLineMsg{line, stream}` to the program.
-3. A tick goroutine sends `JobTickMsg` every 500ms so elapsed time animates
+4. A tick goroutine sends `JobTickMsg` every 500ms so elapsed time animates
    even when the process is silent.
-4. When `cmd.Wait()` returns, send `JobCompletedMsg{spec, exitCode, duration,
-   logPath, tailSnapshot}` and close the log file. Status transitions to
-   `succeeded`, `failed`, or `cancelled`.
+5. When `cmd.Wait()` returns, the runner closes the log file (flush +
+   close in deferred order), then sends `JobCompletedMsg{spec, exitCode,
+   duration, logPath, tailSnapshot}`. Status transitions to `succeeded`,
+   `failed`, or `cancelled` — the message is sent exactly once.
 
 ### Cancel path
 
@@ -221,13 +309,31 @@ with their action names. Other sections unchanged.
 
 ### Lifecycle on TUI quit
 
-- If a job is running and the user presses `q`: prompt
-  `job in flight, quit anyway? [y/N]` (reuses confirmmodal pattern with
-  single-character phrase).
-- `y` → `runner.Cancel()` then immediate `tea.Quit` without waiting for
-  `cmd.Wait`. The subprocess becomes orphaned but its log file is already
-  on disk, so no data is lost.
-- `n` (or any other key) → cancel the quit, return to dashboard.
+A mutating subprocess must never be orphaned mid-write. The quit path is:
+
+- If `runner.State()` is `idle | succeeded | failed | cancelled`: `q` quits
+  immediately.
+- If a job is running, `q` does NOT quit. Instead it triggers
+  `runner.Cancel()` (SIGTERM, then SIGKILL after 5s as in the Cancel path)
+  and shows a "draining: <spec.Name>… press q again to force-quit (will
+  detach mutating subprocess)" banner in the drawer.
+- The TUI stays alive in `cancelling` state. When `cmd.Wait()` returns and
+  the log file is flushed + closed, the runner emits `JobCompletedMsg` and
+  the app sees status `cancelled`. At that point a second `q` (or the
+  initial `q`, if pressed after the drain finishes) calls `tea.Quit`
+  cleanly.
+- **Force-quit escape hatch.** A second `q` while still draining
+  (i.e. before `Wait` returns) opens a typed-confirm modal:
+  `Type 'detach' to quit before subprocess exits. The job will continue
+  writing to the database without TUI supervision.` Only `detach`
+  proceeds. This path explicitly acknowledges the danger; the log file
+  is fsync'd before `tea.Quit` and the subprocess is left running with
+  its stdout/stderr redirected to the log file (handed off via
+  `os/exec.Cmd.ExtraFiles` or by re-`dup2`ing onto the open log fd
+  before quit — implementation choice deferred, both achieve the goal).
+- **No silent orphan.** The plain `q` path can never produce an orphan
+  process; only the explicit typed-confirm `detach` path can, and the
+  user has been told.
 
 ## Keymap precedence
 
@@ -271,7 +377,9 @@ directory if it grows. Document the path in the TUI README.
 | Huge output (25k lines) | Tail ring drops oldest; file logger gets full output. No memory growth. |
 | Subprocess hangs silent | Tick goroutine still drives elapsed redraw. User can cancel with `c`. |
 | Subprocess killed externally (OOM, external `kill -9`) | `cmd.Wait` returns non-zero; normal `JobCompletedMsg{failed}` fires. |
-| TUI crashes mid-run | Child inherits stdout/stderr pipes; pipes close on TUI death; child likely SIGPIPE on next write and exits. Not bulletproof. Documented in README. |
+| TUI crashes mid-run | Child inherits stdout/stderr pipes; pipes close on TUI death; child likely SIGPIPE on next write and exits. Not bulletproof. Documented in README. The cross-process writer lock (Prerequisites) is the durable safety net here — even a hung orphan releases the lock when its connection drops. |
+| Concurrent CLI run grabs the writer lock | Subprocess exits early with non-zero exit code and stderr `another writer holds the lock: <holder>`; drawer surfaces the message. TUI does not retry. |
+| Preflight count is stale (rows change between count and run) | Acceptable; preflight is informational, not a contract. Worst case the user sees "embed 412 chunks" and the actual run does 415 because new chunks landed. Not a correctness issue. |
 | Esc during typed-confirm | Modal closes, no dispatch, focus returns to prior view. |
 | Multiple sections refresh post-success | Phase 1 already runs each section's refresh as an independent `tea.Cmd`; no new coupling needed. |
 
@@ -285,13 +393,24 @@ directory if it grows. Document the path in the TUI README.
   - tail buffer ring eviction at capacity
   - file write happens line by line
   - cancel emits SIGTERM then SIGKILL after 5s
+  - log file is flushed and closed *before* `JobCompletedMsg` is emitted
+- `internal/tui/jobs/runner_command_test.go` — for every Spec in the
+  registry, `BuildArgs(spec, target)` produces an argv that contains
+  `--config <ConfigPath>`, `--db <DatabaseURL>`, `--repo <RepoPath>` with
+  values matching the test's `RunnerTarget`. Failure mode: any Spec that
+  forgets to thread the explicit flags is caught at test time.
 - `internal/tui/jobs/registry_test.go` — assert no key collisions among Specs;
-  every Spec has non-empty Name and Args; ConfirmTyped specs have non-empty
-  Phrase.
+  every Spec has non-empty Name, Args, and Preflight; ConfirmTyped specs
+  have non-empty Phrase.
 - `internal/tui/components/confirmmodal/confirmmodal_test.go` — typed-confirm
-  matches phrase exactly (case-sensitive); esc cancels; partial match no-op.
+  matches phrase exactly (case-sensitive); esc cancels; partial match no-op;
+  y/N modal accepts only `y`/`Y` as confirm.
 - `internal/tui/components/jobdrawer/jobdrawer_test.go` — `lipgloss`-rendered
-  snapshots for states {idle, running, success, failed, cancelled}.
+  snapshots for states {idle, running, success, failed, cancelled, draining}.
+- `internal/tui/app/quit_test.go` — quit path: pressing `q` with a running
+  job triggers Cancel and stays alive; `JobCompletedMsg{cancelled}` then
+  permits clean quit; second `q` during drain opens detach modal; only
+  literal `detach` proceeds.
 
 ### Integration (`//go:build integration`)
 
@@ -318,10 +437,12 @@ directory if it grows. Document the path in the TUI README.
 | Risk | Mitigation |
 |------|------------|
 | Subprocess output volume DoSes the Bubbletea message channel | `JobLineMsg` send uses non-blocking `Program.Send` and Bubbletea coalesces; tail buffer is fixed-size; file write is the durable record. If observed in practice, batch lines (e.g. emit every 50 lines or 100ms) — defer until measured. |
-| Users accidentally trigger long ops | Tiered confirm (typed for `--full`); single-key for cheap ops mirrors the cost of those ops (incremental reindex on Ingest = ~2s). |
+| Users accidentally trigger long ops | Every action runs a preflight count + `[y/N]` (or typed-`reindex` for `--full`) before kicking off. A stray uppercase keypress lands on a modal, never on a running subprocess. |
 | Binary version skew (TUI ships with one `projectlens`, user has newer on PATH) | `PROJECTLENS_BINARY` env override gives an explicit pin; `os.Executable` sibling lookup makes co-located binaries Just Work. |
 | Cancel races with normal completion | Status enum disambiguates; both paths funnel through the same `cmd.Wait` and `JobCompletedMsg` is sent exactly once. |
 | Log file dir grows unbounded | Documented; manual cleanup by user. Add rotation later if it bites. |
+| TUI launched against a different config/repo than the user expects | Explicit `--config --db --repo` flags on every command, asserted by `runner_command_test.go`. Drawer header shows the resolved DB host + repo path so the user can sanity-check before triggering. |
+| Cross-process writers race on the same DB | Out-of-band: addressed by the Prerequisites writer-lock design, not by the runner. Phase 2 surfaces the failure mode but does not invent the lock. |
 
 ## Open questions deferred to implementation
 
@@ -336,16 +457,29 @@ directory if it grows. Document the path in the TUI README.
 
 ## Success criteria
 
-1. From a running TUI, pressing `R` triggers an incremental reindex,
-   shows the bottom drawer with live log lines, and the Pipeline + Runs +
-   Storage sections refresh automatically on success.
-2. Pressing `F` requires typing `reindex` to confirm, then runs
-   `reindex --full`. Cancelling mid-run via `c` cleanly terminates the child
-   and shows `cancelled` status.
-3. Failed runs (e.g. embed stage hits a rate-limit) display
+1. From a running TUI, pressing `R` runs a preflight ("reindex N changed
+   files? [y/N]"), and on `y` triggers an incremental reindex with
+   explicit `--config --db --repo` flags matching the TUI's loaded config.
+   The bottom drawer streams log lines; Pipeline + Runs + Storage refresh
+   on success.
+2. Pressing `F` runs a preflight, then requires typing `reindex` to
+   confirm, then runs `reindex --full`. Cancelling mid-run via `c` cleanly
+   terminates the child and shows `cancelled` status.
+3. Pressing `E`, `S`, or `H` runs a preflight that names the count and
+   provider (`embed 412 chunks via openai? [y/N]`). A stray uppercase
+   keypress cannot start an API-billable run without that confirmation.
+4. Failed runs (e.g. embed stage hits a rate-limit) display
    `FAILED exit <n> · log: <path>` and the user can read the full log from
    another terminal.
-4. Phase 1 sections (Health, Storage, Runs, Config) continue to function
+5. If another writer (CLI from another shell) holds the writer lock, the
+   subprocess exits early and the drawer shows the holder identity from
+   stderr.
+6. Phase 1 sections (Health, Storage, Runs, Config) continue to function
    unchanged. Their tests still pass with no modifications.
-5. Quitting the TUI mid-run prompts for confirmation; on confirm, the TUI
-   exits cleanly without orphaning a zombie.
+7. Pressing `q` mid-run does NOT silently quit. It triggers Cancel + drain,
+   keeps the TUI alive until `cmd.Wait` returns, and only then exits. A
+   second `q` during drain opens a typed `detach` confirm; only that path
+   can produce an orphan, and the user has been told.
+8. `runner_command_test.go` asserts every registered Spec produces an
+   argv with `--config`, `--db`, and `--repo` flags equal to the test's
+   `RunnerTarget`.
