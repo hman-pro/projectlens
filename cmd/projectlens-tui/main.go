@@ -16,6 +16,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/tui/sections"
 	"github.com/hman-pro/projectlens/internal/tui/sections/health"
 	"github.com/hman-pro/projectlens/internal/tui/sections/pipeline"
+	"github.com/hman-pro/projectlens/internal/tui/sections/storage"
 	"github.com/hman-pro/projectlens/internal/tui/store"
 )
 
@@ -50,7 +51,8 @@ func run() error {
 	secs := []sections.Section{
 		health.New(ctx, s),
 		pipeline.New(ctx, s),
-		// storage / runs / config sections plug in here as they land.
+		storage.New(ctx, s),
+		// runs / config sections plug in here as they land.
 	}
 
 	m := app.New(ctx, secs)
