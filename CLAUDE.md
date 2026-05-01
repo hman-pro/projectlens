@@ -74,53 +74,48 @@ projectlens/
 
 ## Build and test
 
+The Makefile is the supported entrypoint. It builds binaries into
+`./bin/` and runs them from there — `go run` is no longer the default
+because the TUI shells out to a real `projectlens` binary (it looks for
+a sibling next to `projectlens-tui`).
+
 ```bash
-# Build everything
-go build ./...
+make help            # list all targets
+make build           # build all binaries → ./bin/
+make build-cli       # just ./bin/projectlens
+make build-tui       # just ./bin/projectlens-tui
+make build-mcp       # just ./bin/projectlens-mcp
+make install         # go install ./cmd/... into $GOBIN
+make clean           # rm -rf ./bin + clear test cache
+make test            # go test ./...
+make test-int        # integration tests (build tag: integration)
+make fmt vet         # formatting / static checks
 
-# Run all tests
-go test ./...
-
-# Run tests with verbose output
-go test ./... -v
-
-# Run a specific package's tests
-go test ./internal/parser/ -v
-
-# Run live Anthropic API test (requires ANTHROPIC_API_KEY)
+# Live Anthropic API test (requires ANTHROPIC_API_KEY)
 go test ./internal/providers/anthropic/ -v -run TestLive
 ```
 
 ## CLI commands
 
+Set `REPO=/path/to/target/repo` (or export `REPO_PATH`) and override
+`DB_URL` if needed; defaults match the docker-compose Postgres.
+
 ```bash
-# Scan repo and report file classification
-go run ./cmd/projectlens/ census --repo /path/to/target/repo
+make bootstrap       # init DB + full index
+make reindex         # incremental reindex
+make reindex-full    # full reindex (rewrites embeddings)
+make reindex-dry     # dry-run reindex
+make status          # show index status
+make index-all       # run all stages
+make index-history   # git history + coupling
+make index-datastore # migrations + SQL
+make index-embed     # embed missing chunks
+make index-summarize # summarize missing packages
 
-# Initialize database + run full index
-go run ./cmd/projectlens/ bootstrap --repo /path/to/repo --db "postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable"
-
-# Incremental reindex (changed files only)
-go run ./cmd/projectlens/ reindex --repo /path/to/repo --db "..."
-
-# Full reindex
-go run ./cmd/projectlens/ reindex --full --repo /path/to/repo --db "..."
-
-# Dry run (show what would change)
-go run ./cmd/projectlens/ reindex --dry-run --repo /path/to/repo --db "..."
-
-# Show index status
-go run ./cmd/projectlens/ status --db "..."
-
-# Look up a symbol
-go run ./cmd/projectlens/ inspect-symbol ReserveInventory --db "..."
-
-# Show package summary
-go run ./cmd/projectlens/ inspect-package "service/graphql" --db "..."
-
-# Query the retrieval pipeline
-go run ./cmd/projectlens/ query "how does inventory reservation work" --db "..."
-go run ./cmd/projectlens/ query "ReserveInventory" --mode lexical --db "..."
+# Free-form CLI invocations through the same binary
+make cli ARGS="inspect-symbol ReserveInventory"
+make cli ARGS="inspect-package service/graphql"
+make query ARGS='"how does inventory reservation work"'
 ```
 
 ## TUI dashboard
@@ -130,7 +125,7 @@ stats, recent runs, provider config, and triggering indexer
 operations.
 
 ```bash
-go run ./cmd/projectlens-tui/
+make tui   # builds ./bin/projectlens + ./bin/projectlens-tui then runs the TUI
 ```
 
 Reads `.env` automatically (DATABASE_URL, REPO_PATH). Logs to
@@ -165,17 +160,12 @@ writer lock above; a busy lock surfaces in the drawer's tail.
 cp .env.example .env
 # Set: PROJECTLENS_REPO_PATH, ANTHROPIC_API_KEY (and optionally OPENAI_API_KEY)
 
-# Start Postgres and MCP server
-cd docker && docker compose up -d
-
-# Run indexer (on demand)
-docker compose --profile index run projectlens-indexer
-
-# Stop everything
-docker compose down
-
-# Stop and remove data
-docker compose down -v
+make docker-up       # start Postgres + MCP server
+make docker-logs     # tail logs
+make docker-down     # stop containers (keeps volumes)
+make docker-rebuild  # rebuild images + restart
+make docker-clean    # stop AND delete volumes (destructive)
+make docker-index    # one-shot indexer profile container
 ```
 
 **Ports:**
