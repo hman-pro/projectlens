@@ -293,3 +293,80 @@ func parseDSN(dsn string) (host, dbname string) {
 	}
 	return host, dbname
 }
+
+// EmbedPending counts chunks with no embedding row yet.
+func (s *PG) EmbedPending(ctx context.Context) (int, error) {
+	const q = `
+		SELECT COUNT(*) FROM chunks c
+		WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.chunk_id = c.id)
+	`
+	var n int
+	if err := s.pool.QueryRow(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: embed pending: %w", err)
+	}
+	return n, nil
+}
+
+// SummarizePending counts packages without a summary row. Uses
+// summaries.package_name and files.package_name (the actual columns;
+// see migrations/001).
+func (s *PG) SummarizePending(ctx context.Context) (int, error) {
+	const q = `
+		SELECT COUNT(DISTINCT f.package_name)
+		FROM files f
+		WHERE f.package_name <> ''
+		  AND NOT EXISTS (
+		      SELECT 1 FROM summaries s WHERE s.package_name = f.package_name
+		  )
+	`
+	var n int
+	if err := s.pool.QueryRow(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: summarize pending: %w", err)
+	}
+	return n, nil
+}
+
+// HistoryNewCommits estimates how many commits would be ingested by
+// the next index-history run. Uses file_history.committed_at as the
+// reference timestamp; falls back to 0 when repoPath is empty.
+func (s *PG) HistoryNewCommits(ctx context.Context) (int, error) {
+	if s.repoPath == "" {
+		return 0, nil
+	}
+	var since time.Time
+	const q = `SELECT COALESCE(MAX(committed_at), '1970-01-01'::timestamptz) FROM file_history`
+	if err := s.pool.QueryRow(ctx, q).Scan(&since); err != nil {
+		return 0, fmt.Errorf("store: latest file_history: %w", err)
+	}
+	args := []string{"-C", s.repoPath, "rev-list", "--count",
+		"--since=" + since.Add(-5*time.Minute).Format(time.RFC3339), "HEAD"}
+	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	if err != nil {
+		return 0, fmt.Errorf("store: git rev-list: %w", err)
+	}
+	n := 0
+	for _, c := range strings.TrimSpace(string(out)) {
+		if c < '0' || c > '9' {
+			continue
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, nil
+}
+
+// ChangedFilesSinceLastRun returns the number of files whose persisted
+// index timestamp is older than the most recent successful index run.
+// Uses files.indexed_at (the actual column; see migrations/001:14).
+func (s *PG) ChangedFilesSinceLastRun(ctx context.Context) (int, error) {
+	const refQ = `SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamptz) FROM index_runs WHERE status = 'completed'`
+	var ref time.Time
+	if err := s.pool.QueryRow(ctx, refQ).Scan(&ref); err != nil {
+		return 0, fmt.Errorf("store: last run: %w", err)
+	}
+	const q = `SELECT COUNT(*) FROM files WHERE indexed_at IS NULL OR indexed_at < $1`
+	var n int
+	if err := s.pool.QueryRow(ctx, q, ref).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: changed files: %w", err)
+	}
+	return n, nil
+}
