@@ -23,6 +23,7 @@ type Fake struct {
 	summarizePending int
 	historyCommits   int
 	changedFiles     int
+	datastoreTables  int
 	latency          time.Duration
 	errs             map[string]error
 }
@@ -42,6 +43,7 @@ func (f *Fake) SetEmbedPending(n int)     { f.mu.Lock(); f.embedPending = n; f.m
 func (f *Fake) SetSummarizePending(n int) { f.mu.Lock(); f.summarizePending = n; f.mu.Unlock() }
 func (f *Fake) SetHistoryCommits(n int)   { f.mu.Lock(); f.historyCommits = n; f.mu.Unlock() }
 func (f *Fake) SetChangedFiles(n int)     { f.mu.Lock(); f.changedFiles = n; f.mu.Unlock() }
+func (f *Fake) SetDatastoreTables(n int)  { f.mu.Lock(); f.datastoreTables = n; f.mu.Unlock() }
 func (f *Fake) SetErr(method string, err error) {
 	f.mu.Lock()
 	f.errs[method] = err
@@ -145,4 +147,13 @@ func (f *Fake) ChangedFilesSinceLastRun(ctx context.Context) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.changedFiles, nil
+}
+
+func (f *Fake) DatastoreTableCount(ctx context.Context) (int, error) {
+	if err := f.wait(ctx, "DatastoreTableCount"); err != nil {
+		return 0, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.datastoreTables, nil
 }

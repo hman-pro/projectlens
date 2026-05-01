@@ -16,4 +16,5 @@ type Store interface {
 	SummarizePending(ctx context.Context) (int, error)
 	HistoryNewCommits(ctx context.Context) (int, error)
 	ChangedFilesSinceLastRun(ctx context.Context) (int, error)
+	DatastoreTableCount(ctx context.Context) (int, error)
 }

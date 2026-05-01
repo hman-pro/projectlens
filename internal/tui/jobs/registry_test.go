@@ -43,6 +43,7 @@ func TestRegistry_PreflightUsesStore(t *testing.T) {
 	f.SetSummarizePending(3)
 	f.SetHistoryCommits(42)
 	f.SetChangedFiles(11)
+	f.SetDatastoreTables(5)
 
 	wants := map[string]int{
 		"reindex":         11,
@@ -50,6 +51,7 @@ func TestRegistry_PreflightUsesStore(t *testing.T) {
 		"index-embed":     7,
 		"index-summarize": 3,
 		"index-history":   42,
+		"index-datastore": 5,
 	}
 	for _, s := range jobs.DefaultRegistry(testCfg()) {
 		want, ok := wants[s.Name]

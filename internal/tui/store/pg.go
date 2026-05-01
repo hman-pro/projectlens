@@ -388,3 +388,16 @@ func (s *PG) ChangedFilesSinceLastRun(ctx context.Context) (int, error) {
 	}
 	return n, nil
 }
+
+// DatastoreTableCount returns the count of currently indexed
+// datastore_tables rows. Used as the preflight headline number for the
+// `index-datastore` action: it says "currently N tables indexed" rather
+// than predicting work — the scan itself is fast and idempotent.
+func (s *PG) DatastoreTableCount(ctx context.Context) (int, error) {
+	const q = `SELECT COUNT(*) FROM datastore_tables`
+	var n int
+	if err := s.pool.QueryRow(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: datastore table count: %w", err)
+	}
+	return n, nil
+}

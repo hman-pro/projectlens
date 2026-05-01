@@ -65,6 +65,15 @@ func DefaultRegistry(cfg *config.Config) []Spec {
 				return fmt.Sprintf("ingest %d new commit(s)? [y/N]", n)
 			},
 		},
+		{
+			Key: 'D', Name: "index-datastore", Args: []string{"index-datastore"},
+			Confirm:   ConfirmYesNo,
+			RefreshOn: []string{"pipeline", "runs", "storage"},
+			Preflight: datastoreTablesPreflight,
+			Headline: func(n int, _ string) string {
+				return fmt.Sprintf("rescan datastore (currently %d table(s) indexed)? [y/N]", n)
+			},
+		},
 	}
 }
 
@@ -89,5 +98,10 @@ func summarizePendingPreflight(cost string) Preflight {
 
 func historyCommitsPreflight(ctx context.Context, s store.Store) (int, string, error) {
 	n, err := s.HistoryNewCommits(ctx)
+	return n, "", err
+}
+
+func datastoreTablesPreflight(ctx context.Context, s store.Store) (int, string, error) {
+	n, err := s.DatastoreTableCount(ctx)
 	return n, "", err
 }

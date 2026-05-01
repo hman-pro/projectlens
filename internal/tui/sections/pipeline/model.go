@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/hman-pro/projectlens/internal/tui/sections"
@@ -15,26 +15,25 @@ type Model struct {
 	store  store.Store
 	appCtx context.Context
 
-	snap    store.PipelineSnapshot
-	err     error
-	status  sections.Status
-	gen     uint64
-	last    time.Time
-	w, h    int
-	focused bool
-	tbl     table.Model
+	snap     store.PipelineSnapshot
+	err      error
+	status   sections.Status
+	gen      uint64
+	last     time.Time
+	w, h     int
+	focused  bool
+	selected int
+	vp       viewport.Model
 }
 
 func New(appCtx context.Context, s store.Store) *Model {
-	cols := []table.Column{
-		{Title: "Stage", Width: 14},
-		{Title: "Started", Width: 22},
-		{Title: "Status", Width: 10},
-		{Title: "Files", Width: 8},
-		{Title: "Duration", Width: 10},
+	vp := viewport.New(0, 0)
+	return &Model{
+		store:  s,
+		appCtx: appCtx,
+		status: sections.StatusIdle,
+		vp:     vp,
 	}
-	tbl := table.New(table.WithColumns(cols), table.WithFocused(false))
-	return &Model{store: s, appCtx: appCtx, tbl: tbl, status: sections.StatusIdle}
 }
 
 func (m *Model) ID() string              { return ID }
@@ -43,6 +42,8 @@ func (m *Model) Init() tea.Cmd           { return nil }
 func (m *Model) Status() sections.Status { return m.status }
 func (m *Model) LastRefresh() time.Time  { return m.last }
 
+// Actions are still surfaced for global hotkey registration. R/F are
+// section-level (full pipeline), E/S/H map to per-stage cards.
 func (m *Model) Actions() []sections.ActionDescriptor {
 	return []sections.ActionDescriptor{
 		{Key: 'R', Label: "reindex", Description: "incremental"},
