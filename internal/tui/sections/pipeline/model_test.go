@@ -50,7 +50,7 @@ func TestPipeline_RendersFooterHints(t *testing.T) {
 	msg := next.Refresh()()
 	next, _ = next.Update(msg)
 	v := next.View()
-	for _, want := range []string{"R reindex", "F reindex --full", "↑/↓"} {
+	for _, want := range []string{"R reindex", "F reindex --full", "A index-all", "↑/↓"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("footer missing %q\n%s", want, v)
 		}

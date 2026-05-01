@@ -23,5 +23,5 @@ func (m *Model) View() string {
 }
 
 func footerHints() string {
-	return "↑/↓ select · R reindex · F reindex --full · c cancel · j drawer"
+	return "↑/↓ select · A index-all · R reindex · F reindex --full · c cancel · j drawer"
 }

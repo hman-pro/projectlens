@@ -52,6 +52,7 @@ func TestRegistry_PreflightUsesStore(t *testing.T) {
 		"index-summarize": 3,
 		"index-history":   42,
 		"index-datastore": 5,
+		"index-all":       11,
 	}
 	for _, s := range jobs.DefaultRegistry(testCfg()) {
 		want, ok := wants[s.Name]

@@ -148,6 +148,7 @@ Reads `.env` automatically (DATABASE_URL, REPO_PATH). Logs to
 | `S` | index-summarize   | y/N preflight      |
 | `H` | index-history     | y/N preflight      |
 | `D` | index-datastore   | y/N preflight      |
+| `A` | index-all         | typed `all`        |
 | `c` | cancel running    | -                  |
 | `j` | toggle drawer     | -                  |
 

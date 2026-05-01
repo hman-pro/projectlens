@@ -74,6 +74,15 @@ func DefaultRegistry(cfg *config.Config) []Spec {
 				return fmt.Sprintf("rescan datastore (currently %d table(s) indexed)? [y/N]", n)
 			},
 		},
+		{
+			Key: 'A', Name: "index-all", Args: []string{"index-all"},
+			Confirm: ConfirmTyped, Phrase: "all",
+			RefreshOn: []string{"pipeline", "runs", "storage"},
+			Preflight: changedFilesPreflight,
+			Headline: func(n int, _ string) string {
+				return fmt.Sprintf("run ALL stages (code+datastore+history+summarize+embed) on %d changed file(s)\nType 'all' to confirm", n)
+			},
+		},
 	}
 }
 
