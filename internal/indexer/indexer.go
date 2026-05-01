@@ -424,6 +424,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	// ── Step 8: Summarize packages ──────────────────────────────────────
 	logger.Step("Step 8: Summarize packages")
 	stepStart = time.Now()
+	summarizeStart := stepStart
 	if idx.summarizer != nil {
 		pkgSymMap := make(map[string][]parser.Symbol)
 		for _, fr := range filteredFiles {
@@ -460,6 +461,9 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		}
 		stats.PackagesSummarized = len(pkgSummaries)
 		logger.Info("summarized packages", "count", stats.PackagesSummarized, "elapsed", time.Since(stepStart).Round(time.Millisecond))
+		if err := idx.db.RecordStageRun(ctx, commitSHA, "summarize", "completed", summarizeStart, time.Now(), stats.PackagesSummarized); err != nil {
+			logger.Warn("record summarize stage run failed", "err", err)
+		}
 	} else {
 		logger.Warn("skipping package summarization (no summarizer configured)")
 	}
@@ -467,6 +471,7 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 	// ── Step 9: Embed ───────────────────────────────────────────────────
 	logger.Step("Step 9: Embed")
 	stepStart = time.Now()
+	embedStart := stepStart
 	if idx.embedder != nil && len(allChunks) > 0 {
 		logger.Info("embedding chunks...", "count", len(allChunks))
 		contents := make([]string, len(allChunks))
@@ -495,6 +500,9 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		}
 		stats.ChunksEmbedded = len(embResults)
 		logger.Info("embedded chunks", "count", stats.ChunksEmbedded, "elapsed", time.Since(stepStart).Round(time.Millisecond))
+		if err := idx.db.RecordStageRun(ctx, commitSHA, "embed", "completed", embedStart, time.Now(), stats.ChunksEmbedded); err != nil {
+			logger.Warn("record embed stage run failed", "err", err)
+		}
 	} else if idx.embedder == nil {
 		logger.Warn("skipping embedding (no embedder configured)")
 	}

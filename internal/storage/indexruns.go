@@ -62,6 +62,23 @@ func (db *DB) CompleteRun(ctx context.Context, runID int64, filesProcessed, symb
 	return nil
 }
 
+// RecordStageRun inserts an already-finished run row for one stage of
+// the pipeline (summarize, embed, history, datastore, etc.). Used when
+// a stage runs to completion without going through Start/Complete —
+// e.g., sub-stages of indexer.Run, or short standalone commands that
+// don't need a "running" row visible while they execute.
+func (db *DB) RecordStageRun(ctx context.Context, commitSHA, stage, status string, started, completed time.Time, filesProcessed int) error {
+	const query = `
+		INSERT INTO index_runs
+			(commit_sha, started_at, completed_at, stage, status, files_processed)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`
+	if _, err := db.Pool.Exec(ctx, query, commitSHA, started, completed, stage, status, filesProcessed); err != nil {
+		return fmt.Errorf("storage: record stage run: %w", err)
+	}
+	return nil
+}
+
 // FailRun marks a run as failed.
 func (db *DB) FailRun(ctx context.Context, runID int64) error {
 	const query = `
