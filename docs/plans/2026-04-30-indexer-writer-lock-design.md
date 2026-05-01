@@ -1,8 +1,24 @@
 # Indexer Cross-Process Writer Lock Design
 
-**Status:** Draft
+**Status:** Draft (rev 2 — review feedback applied 2026-05-01)
 **Date:** 2026-04-30
 **Drives:** TUI Phase 2 (`docs/plans/2026-04-30-tui-phase2-design.md`) — Phase 2 implementation cannot begin until this lock lands.
+
+## Revision 2 — review responses
+
+The 2026-04-30 implementation review surfaced findings that change the
+shape of the lock table and `ForceUnlock`. Summary of resolutions
+applied below; deltas are inlined in their respective sections.
+
+| Review finding | Resolution |
+|----------------|------------|
+| `ForceUnlock` cannot release another session's advisory lock | Recorded the holder's Postgres backend PID alongside the client PID; `ForceUnlock` calls `pg_terminate_backend(backend_pid)` to drop the holder's session, which releases the advisory lock; falls back to row deletion only when no live backend is found. |
+| Stale-row cleanup compared client PID to backend PID | `index_locks` now has both `client_pid` (cosmetic, from `os.Getpid()`) and `backend_pid` (from `pg_backend_pid()`); reap joins on `backend_pid`, identity messages display `client_pid`. |
+| Wrapping `bootstrap` blocked fresh-DB setup | `bootstrap` runs migrations BEFORE `Acquire`. Implementation handles this by wrapping bootstrap with a "migrate-first" variant that calls `db.Migrate` before `withWriteLock`. |
+| `withWriteLock` dropped command context | Helper now wraps `func(*cobra.Command, []string, *storage.DB, *config.Config, string) error`, passing `cmd`, `cfg`, and resolved `repoPath`. |
+| `knowledge delete` left unwrapped | Documented invariant: deletion mutates `knowledge_entries` rows + paired chunks/embeddings only; does NOT race the indexer because `index-embed` reads `chunks WHERE embedding IS NULL` and a deleted chunk simply disappears from the candidate set. Test added. |
+| CLI contention test nondeterministic | Test introduces a `--test-hold-lock` hidden flag that holds the lock for a fixed duration; both racers attach to it. |
+| `pg_locks` smoke query wrong for bigint advisory lock | Query rewritten using the bigint-split (`classid`, `objid`) representation. |
 
 ## Problem
 
@@ -158,9 +174,13 @@ func Acquire(ctx context.Context, db *storage.DB, cmdName string) (*Lock, error)
     }()
 
     // 1. Reap stale rows.
+    //
+    // Reap by Postgres backend PID, not client PID. pg_stat_activity.pid is
+    // the backend's PID and is comparable only to pg_backend_pid()
+    // (which we stored as backend_pid at INSERT time).
     if _, err := conn.Exec(ctx, `
         DELETE FROM index_locks
-        WHERE pid NOT IN (SELECT pid FROM pg_stat_activity WHERE pid IS NOT NULL)
+        WHERE backend_pid NOT IN (SELECT pid FROM pg_stat_activity WHERE pid IS NOT NULL)
     `); err != nil {
         return nil, fmt.Errorf("writelock: reap stale: %w", err)
     }
@@ -177,21 +197,27 @@ func Acquire(ctx context.Context, db *storage.DB, cmdName string) (*Lock, error)
         // with zero fields so the caller still sees the right error
         // type.
         _ = conn.QueryRow(ctx, `
-            SELECT pid, hostname, cmd, started_at FROM index_locks
+            SELECT client_pid, hostname, cmd, started_at FROM index_locks
             WHERE lock_id = $1`, LockID).
             Scan(&b.HolderPID, &b.HolderHost, &b.HolderCmd, &b.HolderStartedAt)
         return nil, b
     }
 
     // 3. Insert holder row.
-    pid := os.Getpid()
+    //
+    // We record TWO pids:
+    //   client_pid  = os.Getpid()  (cosmetic; what the operator sees in `ps`)
+    //   backend_pid = pg_backend_pid() (used for liveness reaping +
+    //                                   force-unlock; comparable to
+    //                                   pg_stat_activity.pid)
+    clientPID := os.Getpid()
     host, _ := os.Hostname()
     var rowID int64
     if err := conn.QueryRow(ctx, `
-        INSERT INTO index_locks (lock_id, pid, hostname, cmd)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO index_locks (lock_id, client_pid, backend_pid, hostname, cmd)
+        VALUES ($1, $2, pg_backend_pid(), $3, $4)
         RETURNING id
-    `, LockID, pid, host, cmdName).Scan(&rowID); err != nil {
+    `, LockID, clientPID, host, cmdName).Scan(&rowID); err != nil {
         // Race lost between try_advisory_lock and INSERT — release the
         // advisory lock so we don't strand the row.
         _, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, LockID)
@@ -231,6 +257,14 @@ func (l *Lock) Release(ctx context.Context) error {
 
 ### ForceUnlock
 
+> **Critical correction (rev 2):** Postgres session advisory locks can
+> only be released by the session that holds them.
+> `pg_advisory_unlock_all()` on a *different* connection releases only
+> that other connection's locks — it cannot evict the original holder.
+> The escape hatch therefore terminates the holder's backend session,
+> which Postgres treats as a connection drop and auto-releases the
+> advisory lock for us.
+
 ```go
 func ForceUnlock(ctx context.Context, db *storage.DB) error {
     conn, err := db.Pool.Acquire(ctx)
@@ -239,32 +273,57 @@ func ForceUnlock(ctx context.Context, db *storage.DB) error {
     }
     defer conn.Release()
 
-    // Log the holder we're about to evict so the override is auditable.
-    var pid int
+    // Read holder identity (client + backend pids) for the audit log
+    // and the termination call.
+    var clientPID, backendPID int
     var host, cmd string
     var started time.Time
     err = conn.QueryRow(ctx, `
-        SELECT pid, hostname, cmd, started_at FROM index_locks
-        WHERE lock_id = $1`, LockID).Scan(&pid, &host, &cmd, &started)
+        SELECT client_pid, backend_pid, hostname, cmd, started_at
+        FROM index_locks
+        WHERE lock_id = $1`, LockID).
+        Scan(&clientPID, &backendPID, &host, &cmd, &started)
     switch {
     case err == nil:
-        log.Printf("writelock: force-unlocking holder pid=%d host=%s cmd=%q started=%s",
-            pid, host, cmd, started.Format(time.RFC3339))
+        log.Printf("writelock: force-unlocking holder client_pid=%d backend_pid=%d host=%s cmd=%q started=%s",
+            clientPID, backendPID, host, cmd, started.Format(time.RFC3339))
+        // Terminate the holder's backend session. Postgres releases the
+        // advisory lock automatically on session drop. We do NOT call
+        // pg_advisory_unlock_all on this connection — that would only
+        // release locks held by THIS session, not the holder's.
+        if backendPID > 0 {
+            var killed bool
+            if err := conn.QueryRow(ctx,
+                `SELECT pg_terminate_backend($1)`, backendPID).Scan(&killed); err != nil {
+                return fmt.Errorf("writelock: terminate backend %d: %w", backendPID, err)
+            }
+            if !killed {
+                log.Printf("writelock: pg_terminate_backend(%d) returned false (backend already gone); proceeding with row cleanup", backendPID)
+            }
+        }
     case errors.Is(err, pgx.ErrNoRows):
         log.Printf("writelock: no active holder; running unlock anyway")
     default:
         return err
     }
 
+    // Delete the bookkeeping row last. If we've terminated the backend
+    // above, the row may already be gone via the autoreap on the next
+    // Acquire — DELETE here is idempotent.
     if _, err := conn.Exec(ctx, `DELETE FROM index_locks WHERE lock_id = $1`, LockID); err != nil {
-        return err
-    }
-    if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock_all()`); err != nil {
         return err
     }
     return nil
 }
 ```
+
+**Why not `pg_advisory_unlock_all` on a fresh connection?** It only
+releases locks held by that fresh connection (which has none). The
+holder's session is unaffected, so a subsequent `Acquire` would still
+see `pg_try_advisory_lock` return false. Terminating the backend is the
+only mechanism short of `pg_cancel_backend` + connection close that
+forces a holder to relinquish a session-scoped advisory lock from
+outside its own session.
 
 ### Migration: `migrations/005_writer_lock.up.sql`
 
@@ -272,19 +331,21 @@ func ForceUnlock(ctx context.Context, db *storage.DB) error {
 CREATE TABLE index_locks (
     id          SERIAL PRIMARY KEY,
     lock_id     BIGINT NOT NULL,
-    pid         INTEGER NOT NULL,
+    client_pid  INTEGER NOT NULL,   -- os.Getpid() of the operator-visible process
+    backend_pid INTEGER NOT NULL,   -- pg_backend_pid() — used for liveness reaping
     hostname    TEXT NOT NULL,
     cmd         TEXT NOT NULL,
     started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (lock_id)
 );
 
-CREATE INDEX idx_index_locks_pid ON index_locks(pid);
-
-INSERT INTO schema_migrations (version, applied_at)
-VALUES ('005_writer_lock', NOW())
-ON CONFLICT DO NOTHING;
+CREATE INDEX idx_index_locks_backend_pid ON index_locks(backend_pid);
 ```
+
+> **Migrator note:** the existing migrator records applied migrations in
+> `schema_migrations` automatically. The `.up.sql` file does NOT
+> hand-insert into `schema_migrations` (rev 1 had a stray `INSERT` —
+> removed in rev 2 to match the migrator contract).
 
 The `UNIQUE (lock_id)` constraint guarantees at most one row per
 `LockID`; combined with the advisory lock it forms a belt-and-braces
@@ -292,20 +353,29 @@ serialization point.
 
 ### CLI integration
 
-A single shared helper in `cmd/projectlens/main.go`:
+A single shared helper in `cmd/projectlens/main.go`. The helper has to
+hand the wrapped command body everything it could otherwise have
+loaded for itself (`cmd`, `cfg`, `repoPath`, `db`) — otherwise the
+refactor cannot be mechanical for commands that depend on flags
+beyond `--db`.
 
 ```go
+// LockedCmd is the body shape produced by the wrap. It receives the
+// already-opened DB plus the loaded config and resolved repo path so
+// the call site does not duplicate config loading inside its body.
+type LockedCmd func(ctx context.Context, cmd *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error
+
 // withWriteLock wraps a mutating command's RunE so it acquires the
 // writer lock on entry and releases it on exit. ErrBusy results in
 // exit code 75 (sysexits.h EX_TEMPFAIL).
-func withWriteLock(cmdName string, run func(ctx context.Context, db *storage.DB) error) func(*cobra.Command, []string) error {
+func withWriteLock(cmdName string, run LockedCmd) func(*cobra.Command, []string) error {
     return func(cmd *cobra.Command, _ []string) error {
-        cfg, _, err := loadCmdConfig(cmd)
+        cfg, repoPath, err := loadCmdConfig(cmd)
         if err != nil {
             return err
         }
         ctx := cmd.Context()
-        db, err := storage.Open(ctx, cfg.DatabaseURL)
+        db, err := storage.Connect(ctx, cfg.DatabaseURL)
         if err != nil {
             return err
         }
@@ -321,28 +391,72 @@ func withWriteLock(cmdName string, run func(ctx context.Context, db *storage.DB)
         }
         defer func() { _ = lock.Release(context.Background()) }()
 
-        return run(ctx, db)
+        return run(ctx, cmd, db, cfg, repoPath)
+    }
+}
+
+// withWriteLockAfterMigrate is the bootstrap variant. bootstrap is the
+// command that *creates* the index_locks table, so it must run
+// migrations BEFORE attempting Acquire. After migrations succeed, the
+// remainder runs under the writer lock. This is the only command that
+// uses this variant.
+func withWriteLockAfterMigrate(cmdName string, migrationsDir string, run LockedCmd) func(*cobra.Command, []string) error {
+    return func(cmd *cobra.Command, _ []string) error {
+        cfg, repoPath, err := loadCmdConfig(cmd)
+        if err != nil {
+            return err
+        }
+        ctx := cmd.Context()
+        db, err := storage.Connect(ctx, cfg.DatabaseURL)
+        if err != nil {
+            return err
+        }
+        defer db.Close()
+        if err := db.Migrate(ctx, migrationsDir); err != nil {
+            return fmt.Errorf("bootstrap migrate: %w", err)
+        }
+        lock, err := writelock.Acquire(ctx, db, cmdName)
+        if err != nil {
+            if be, ok := err.(writelock.ErrBusy); ok {
+                fmt.Fprintln(os.Stderr, be.Error())
+                os.Exit(75)
+            }
+            return err
+        }
+        defer func() { _ = lock.Release(context.Background()) }()
+        return run(ctx, cmd, db, cfg, repoPath)
     }
 }
 ```
 
 Wrapped commands:
 
-| Command            | cmdName argument |
-|--------------------|------------------|
-| `bootstrap`        | `"bootstrap"`    |
-| `reindex`          | `"reindex"`      |
-| `index-datastore`  | `"index-datastore"` |
-| `index-history`    | `"index-history"` |
-| `index-embed`      | `"index-embed"`  |
-| `index-summarize`  | `"index-summarize"` |
-| `index-all`        | `"index-all"`    |
+| Command            | cmdName argument | Wrapper variant |
+|--------------------|------------------|-----------------|
+| `bootstrap`        | `"bootstrap"`    | `withWriteLockAfterMigrate` |
+| `reindex`          | `"reindex"`      | `withWriteLock` |
+| `index-datastore`  | `"index-datastore"` | `withWriteLock` |
+| `index-history`    | `"index-history"` | `withWriteLock` |
+| `index-embed`      | `"index-embed"`  | `withWriteLock` |
+| `index-summarize`  | `"index-summarize"` | `withWriteLock` |
+| `index-all`        | `"index-all"`    | `withWriteLock` |
 
 Unwrapped (read-only):
 
 - `census`, `status`, `query`, `inspect-symbol`, `inspect-package`
-- `knowledge list`, `knowledge show`, `knowledge search`, `knowledge delete`
+- `knowledge list`, `knowledge show`, `knowledge search`
+- `knowledge delete` — see invariant below.
 - All MCP server tools (the MCP daemon never enters this code path).
+
+**`knowledge delete` invariant.** The command deletes a single
+`knowledge_entries` row plus its paired chunk/embedding/edge rows, all
+keyed by knowledge id. The indexer's writer pipeline never reads or
+writes `knowledge_entries` rows; `index-embed` reads
+`chunks WHERE embedding IS NULL` and a deleted chunk simply leaves the
+candidate set. There is no read-modify-write race against indexer
+writes, so the delete is safe outside the writer lock. This invariant
+is asserted by `internal/storage/writelock/knowledge_race_test.go`
+(Task 11.5 in the implementation plan).
 
 The bodies of the wrapped RunE functions move into a `func(ctx context.Context, db *storage.DB) error` shape; today most already accept `(ctx, *storage.DB)` after some local plumbing, so the change is mechanical.
 
@@ -445,14 +559,34 @@ test harness in `internal/storage/`.
     on connection C succeeds. Connection A's `Release` is harmless
     (advisory unlock fails silently; row already gone).
 - `cli_integration_test.go`:
-  - Spawn two `projectlens reindex` subprocesses against the test DB.
-    One exits 0; the other exits 75 with the `another writer holds the
-    lock` text on stderr.
+  - Spawn two CLI invocations of a hidden `projectlens debug-hold-lock
+    --hold 3s` subcommand. The first acquires the writer lock and
+    sleeps; the second must observe `ErrBusy` deterministically. One
+    exits 0, the other exits 75 with the `another writer holds the
+    lock` text on stderr. Using a dedicated test command instead of
+    `index-embed` avoids the nondeterministic "both finished before
+    they overlapped" outcome on an empty queue. The hidden command is
+    gated by an env var (`PROJECTLENS_DEBUG_HOLD_LOCK=1`) so it cannot be
+    invoked in a production binary by accident.
 
 ### Manual smoke
 
-- `psql ... -c "SELECT * FROM pg_locks WHERE locktype = 'advisory' AND objid = 9876543210"`
-  while a `bootstrap` runs → exactly one row.
+- The 1-arg bigint advisory lock splits across `classid` and `objid`
+  in `pg_locks` as the high/low int32 of the bigint. Use the bigint
+  cast helper (Postgres ≥ 9.0):
+
+  ```sql
+  SELECT * FROM pg_locks
+  WHERE locktype = 'advisory'
+    AND ((classid::bigint << 32) | (objid::bigint & 4294967295)) = 9876543210;
+  ```
+
+  while a `bootstrap` runs → exactly one row. (The naive
+  `objid = 9876543210` query in rev 1 is incorrect because `objid` only
+  holds the low 32 bits.)
+- Alternative: open a second psql session and run
+  `SELECT pg_try_advisory_lock(9876543210);` — it must return `f` while
+  a holder is active.
 - `projectlens unlock --force` while idle → exits 0, logs
   `no active holder`.
 

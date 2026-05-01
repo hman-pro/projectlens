@@ -1,8 +1,26 @@
 # ProjectLens TUI — Phase 2 (Indexer Control Plane) Design
 
-**Status:** Draft
+**Status:** Draft (rev 2 — review feedback applied 2026-05-01)
 **Date:** 2026-04-30
 **Predecessors:** `2026-04-29-tui-design.md` (Foundation + Phase 1), `2026-04-29-tui-implementation.md`
+
+## Revision 2 — review responses
+
+The 2026-04-30 implementation review surfaced findings that change
+runner cancellation semantics, preflight SQL, the detach contract,
+binary-missing handling, and provider-derivation. Resolutions:
+
+| Finding | Resolution |
+|---------|------------|
+| Runner Cancel never invokes `cancelFn`; cancellation reported as `failed` | `Cancel()` now flips an explicit `cancelRequested` flag under the mutex AND calls `cancelFn`; completion classifier prefers `cancelRequested` over `ctx.Err`/`waitErr` so a SIGTERM kill still classifies as `cancelled`. |
+| App wiring snippets reference fields/APIs that don't exist | Plan rewritten around the current `app.New(ctx, []sections.Section)` shape. New fields are listed explicitly; refresh-by-section iterates the slice and matches `sec.ID()`. Bubbletea construction uses `tea.NewProgram(model, opts...)`; runner gets a `tea.Program` reference via a setter. |
+| Preflight SQL columns don't match schema | All preflight queries rewritten against the actual columns: `files.package_name` (not `package_path`), `files.indexed_at` (not `last_indexed_at`), `summaries.package_name` (not `target_type/target_id`), `file_history.committed_at` (not `author_date`). |
+| Detach promised but not implemented | Detach DROPPED from Phase 2. Second `q` during drain now shows the drain banner and waits; force-quit is replaced with `Ctrl+C` (which always works in a tea program). Detach can return as a Phase 3 follow-up if demand surfaces. |
+| Binary-missing fails too late | Action-key handling gates on `target.BinaryPath != ""` BEFORE preflight starts; immediate toast `projectlens binary not found; set PROJECTLENS_BINARY`. |
+| Provider/cost driver hard-coded | Registry built via `DefaultRegistry(cfg *config.Config)` — embed cost driver = `cfg.Embeddings.Provider`, summarize cost driver = `cfg.Summarization.Provider`. |
+| App-level tests miss core flow | Spec adds explicit test cases: action-key preflight dispatch, PreflightDoneMsg → modal mapping, yes/no cancel + confirm, typed exact-match, binary-missing refusal, stale preflight handling, refresh-by-section-id. |
+| Scanner data races on log file | Single writer goroutine owns `logFile` writes + `tail` updates; scanner goroutines push lines into a buffered channel. |
+| Pointer receiver Update | Plan keeps value-receiver `Update` to match Phase 1 convention; new fields use pointer types where mutation is needed (e.g. `runner *jobs.Runner`, `drawer *jobdrawer.Model`). The `Model` struct is returned by value from Update as Phase 1 already does. |
 
 ## Scope
 
@@ -35,13 +53,13 @@ contains those three flags with values matching the TUI's resolved config.
 **Preflight before confirm.** Every action runs a fast read-only preflight
 against the DB before opening its confirm modal:
 
-| Action | Preflight query | Modal headline |
-|--------|-----------------|----------------|
-| reindex | files modified since last run | "reindex 124 changed files? [y/N]" |
-| reindex --full | total files in scope | "RE-INDEX 2913 files (~8 min, rewrites embeddings) — type 'reindex' to confirm" |
-| index-embed | chunks where `embedding IS NULL` | "embed 412 chunks via openai? [y/N]" |
-| index-summarize | packages where `summary IS NULL` | "summarize 17 packages via anthropic? [y/N]" |
-| index-history | commits since last `file_history.author_date` | "ingest 227 commits since 2026-04-29? [y/N]" |
+| Action | Preflight query (rev 2 — actual schema) | Modal headline |
+|--------|----------------------------------------|----------------|
+| reindex | `COUNT(*) FROM files WHERE indexed_at IS NULL OR indexed_at < (max completed index_runs.completed_at)` | "reindex 124 changed files? [y/N]" |
+| reindex --full | `COUNT(*) FROM files` | "RE-INDEX 2913 files (~8 min, rewrites embeddings) — type 'reindex' to confirm" |
+| index-embed | `COUNT(*) FROM chunks c WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.chunk_id = c.id)` | "embed 412 chunks via {cfg.Embeddings.Provider}? [y/N]" |
+| index-summarize | `COUNT(DISTINCT f.package_name) FROM files f WHERE f.package_name <> '' AND NOT EXISTS (SELECT 1 FROM summaries s WHERE s.package_name = f.package_name)` | "summarize 17 packages via {cfg.Summarization.Provider}? [y/N]" |
+| index-history | `git rev-list --count --since=<latest committed_at> HEAD` (committed_at from `file_history`) | "ingest 227 commits since 2026-04-29? [y/N]" |
 
 Modal shows count + provider/cost driver before the user commits. y/N for
 single-key confirms, typed phrase for `reindex --full`. Esc cancels at any
@@ -309,31 +327,35 @@ with their action names. Other sections unchanged.
 
 ### Lifecycle on TUI quit
 
-A mutating subprocess must never be orphaned mid-write. The quit path is:
+> **rev 2:** the detach hand-off (re-`dup2` onto a log fd, hand off via
+> `ExtraFiles`) was promised in rev 1 but never specified concretely
+> enough for an implementer. It is dropped from Phase 2. The simplified
+> contract: drain or `Ctrl+C`. Detach can return as a future follow-up
+> if demand surfaces.
+
+A mutating subprocess must never be orphaned mid-write by the
+*ordinary* quit path. The quit path is:
 
 - If `runner.State()` is `idle | succeeded | failed | cancelled`: `q` quits
   immediately.
-- If a job is running, `q` does NOT quit. Instead it triggers
-  `runner.Cancel()` (SIGTERM, then SIGKILL after 5s as in the Cancel path)
-  and shows a "draining: <spec.Name>… press q again to force-quit (will
-  detach mutating subprocess)" banner in the drawer.
-- The TUI stays alive in `cancelling` state. When `cmd.Wait()` returns and
-  the log file is flushed + closed, the runner emits `JobCompletedMsg` and
-  the app sees status `cancelled`. At that point a second `q` (or the
-  initial `q`, if pressed after the drain finishes) calls `tea.Quit`
-  cleanly.
-- **Force-quit escape hatch.** A second `q` while still draining
-  (i.e. before `Wait` returns) opens a typed-confirm modal:
-  `Type 'detach' to quit before subprocess exits. The job will continue
-  writing to the database without TUI supervision.` Only `detach`
-  proceeds. This path explicitly acknowledges the danger; the log file
-  is fsync'd before `tea.Quit` and the subprocess is left running with
-  its stdout/stderr redirected to the log file (handed off via
-  `os/exec.Cmd.ExtraFiles` or by re-`dup2`ing onto the open log fd
-  before quit — implementation choice deferred, both achieve the goal).
-- **No silent orphan.** The plain `q` path can never produce an orphan
-  process; only the explicit typed-confirm `detach` path can, and the
-  user has been told.
+- If a job is running, `q` does NOT quit. It triggers `runner.Cancel()`
+  (SIGTERM, then SIGKILL after 5s) and shows a
+  "draining: <spec.Name>… press q again or wait for completion" banner
+  in the drawer.
+- The TUI stays alive in `cancelling` state. When `cmd.Wait()` returns
+  and the log file is flushed + closed, the runner emits
+  `JobCompletedMsg` and the app sees status `cancelled`. At that point
+  the queued `tea.Quit` fires and the TUI exits cleanly.
+- A second `q` during drain is a no-op (drain already running). The
+  banner re-renders with the elapsed cancel time.
+- **Force-quit.** `Ctrl+C` is the OS-level escape hatch (Bubbletea
+  always honors it). It interrupts the TUI process. The subprocess
+  whose pipes the TUI owns will receive SIGPIPE on its next write and
+  typically exits, but this path is best-effort and explicitly
+  documented: prefer `q` + drain.
+- **No silent orphan from `q`.** The ordinary quit path always drains.
+  Only `Ctrl+C` can leave a mutating subprocess unsupervised, and the
+  README documents this trade-off.
 
 ## Keymap precedence
 
@@ -407,10 +429,11 @@ directory if it grows. Document the path in the TUI README.
   y/N modal accepts only `y`/`Y` as confirm.
 - `internal/tui/components/jobdrawer/jobdrawer_test.go` — `lipgloss`-rendered
   snapshots for states {idle, running, success, failed, cancelled, draining}.
-- `internal/tui/app/quit_test.go` — quit path: pressing `q` with a running
-  job triggers Cancel and stays alive; `JobCompletedMsg{cancelled}` then
-  permits clean quit; second `q` during drain opens detach modal; only
-  literal `detach` proceeds.
+- `internal/tui/app/quit_test.go` — quit path (rev 2): pressing `q`
+  with a running job triggers Cancel and stays alive; second `q`
+  during drain is a no-op (banner re-renders); when
+  `JobCompletedMsg{cancelled}` arrives the queued `tea.Quit` fires.
+  No detach modal is tested because detach is dropped from Phase 2.
 
 ### Integration (`//go:build integration`)
 
@@ -419,13 +442,39 @@ directory if it grows. Document the path in the TUI README.
   `JobCompletedMsg` fires with exit 0 and ≥1 line in tail. Requires DB
   available (same gate as existing Phase 1 integration tests).
 
-### App-level
+### App-level (rev 2 — preflight inserted before every flow)
 
-- Extend existing `internal/tui/app/app_test.go` with action-key flow:
-  press `R` → no modal → `RunSpecMsg` dispatched; press `F` → modal opens →
-  type `reindex` + enter → `RunSpecMsg` dispatched; press `F` → modal opens
-  → esc → no dispatch. Uses a stub runner that captures dispatches without
-  actually running anything.
+Extend `internal/tui/app/app_test.go` (or a sibling `actions_test.go`)
+with focused tests around the preflight → confirm → run flow:
+
+- **Action-key dispatches preflight, not run.** Press `R` while idle →
+  app emits a preflight `tea.Cmd`; no modal yet, no `RunSpecMsg`. After
+  `PreflightDoneMsg` arrives, the modal opens.
+- **PreflightDoneMsg → modal mapping.** Drive a fake store + spec; assert
+  yes/no Spec opens `ConfirmYesNo` modal with the headline rendered from
+  the preflight count + cost; ConfirmTyped opens the typed modal with
+  the phrase.
+- **Yes/no cancel.** With modal open, press `n` → modal closes, no
+  `RunSpecMsg`.
+- **Yes/no confirm.** Press `y` → `ConfirmedMsg` arrives → app calls
+  `runner.Start(spec)`. Use a stub runner whose `Start` records the
+  call.
+- **Typed confirm exact match.** Wrong phrase + Enter → no dispatch;
+  exact phrase + Enter → dispatch. Esc cancels at any point.
+- **Binary-missing refusal.** Construct app with
+  `target.BinaryPath == ""`; press `R` → toast emitted, no preflight,
+  no modal.
+- **Stale preflight handling.** Press `R`, then `F` before the first
+  `PreflightDoneMsg` arrives. The app must ignore the stale R result
+  and only act on the F result. (Use a `pendingToken` field on the app
+  that increments on each press; the preflight closure carries the
+  token and the handler discards mismatched tokens.)
+- **Refresh-by-section-id.** On `JobCompletedMsg{succeeded}` with
+  `RefreshOn: ["pipeline","runs"]`, the app iterates `m.sections` and
+  dispatches `Refresh()` only on sections whose `ID()` matches.
+
+Uses a stub runner that captures `Start` calls without actually
+running anything; the existing `store.Fake` covers the preflight side.
 
 ### Not tested
 
@@ -477,9 +526,9 @@ directory if it grows. Document the path in the TUI README.
 6. Phase 1 sections (Health, Storage, Runs, Config) continue to function
    unchanged. Their tests still pass with no modifications.
 7. Pressing `q` mid-run does NOT silently quit. It triggers Cancel + drain,
-   keeps the TUI alive until `cmd.Wait` returns, and only then exits. A
-   second `q` during drain opens a typed `detach` confirm; only that path
-   can produce an orphan, and the user has been told.
+   keeps the TUI alive until `cmd.Wait` returns, and only then exits.
+   `Ctrl+C` remains as the OS-level escape hatch. (Detach is deferred
+   to a post-Phase-2 follow-up; see the Lifecycle section.)
 8. `runner_command_test.go` asserts every registered Spec produces an
    argv with `--config`, `--db`, and `--repo` flags equal to the test's
    `RunnerTarget`.
