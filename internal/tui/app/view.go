@@ -30,6 +30,20 @@ func (m Model) View() string {
 	detail := components.Panel(m.sections[m.focused].Title(), body, dw+2, dh+2)
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, detail)
+
+	// Phase 2 overlays.
+	var overlays []string
+	if m.confirm != nil {
+		overlays = append(overlays, m.confirm.View())
+	}
+	if m.drawer != nil {
+		if v := m.drawer.View(); v != "" {
+			overlays = append(overlays, v)
+		}
+	}
+	if m.toastMsg != "" {
+		overlays = append(overlays, theme.MutedStyle().Render(m.toastMsg))
+	}
 	if m.showHelp {
 		overlay := theme.MutedStyle().Render(strings.Join([]string{
 			"  ↑/k     up",
@@ -44,7 +58,10 @@ func (m Model) View() string {
 		}, "\n"))
 		return lipgloss.JoinVertical(lipgloss.Left, header, overlay, footer)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, header, row, footer)
+	parts := []string{header, row}
+	parts = append(parts, overlays...)
+	parts = append(parts, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m Model) renderHeader() string {

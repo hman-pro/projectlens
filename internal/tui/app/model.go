@@ -8,8 +8,20 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/hman-pro/projectlens/internal/tui/components/confirmmodal"
+	"github.com/hman-pro/projectlens/internal/tui/components/jobdrawer"
+	"github.com/hman-pro/projectlens/internal/tui/jobs"
 	"github.com/hman-pro/projectlens/internal/tui/sections"
+	"github.com/hman-pro/projectlens/internal/tui/store"
 )
+
+// Runner is the interface the app needs from a job runner. *jobs.Runner
+// satisfies this; tests can stub.
+type Runner interface {
+	Start(spec jobs.Spec) error
+	Cancel()
+	State() jobs.Snapshot
+}
 
 type Mode int
 
@@ -32,6 +44,18 @@ type Model struct {
 
 	tooSmall bool
 	showHelp bool
+
+	// Phase 2 (optional — nil when not wired):
+	store         store.Store
+	runner        Runner
+	registry      []jobs.Spec
+	target        jobs.RunnerTarget
+	drawer        *jobdrawer.Model
+	confirm       *confirmmodal.Model
+	pendingToken  uint64
+	pendingSpec   jobs.Spec
+	quitRequested bool
+	toastMsg      string
 }
 
 const minW, minH = 80, 20
@@ -94,3 +118,32 @@ func (m Model) since() time.Duration {
 	}
 	return 0
 }
+
+// WithJobs returns a copy of m wired with a store, runner, registry,
+// and runner target. Phase 2 action keys (R/F/E/S/H/c/j) and the
+// drawer become active. Without WithJobs, the app behaves exactly
+// like Phase 1.
+func (m Model) WithJobs(st store.Store, runner Runner, registry []jobs.Spec, target jobs.RunnerTarget) Model {
+	m.store = st
+	m.runner = runner
+	m.registry = registry
+	m.target = target
+	m.drawer = jobdrawer.New()
+	return m
+}
+
+// RunnerStatus is a small accessor used by tests.
+func (m Model) RunnerStatus() string {
+	if m.runner == nil {
+		return ""
+	}
+	return m.runner.State().Status
+}
+
+// HasConfirmModal reports whether a confirm modal is open. Used by
+// tests.
+func (m Model) HasConfirmModal() bool { return m.confirm != nil }
+
+// PendingToken exposes the pendingToken counter for tests asserting
+// stale-preflight behaviour.
+func (m Model) PendingToken() uint64 { return m.pendingToken }
