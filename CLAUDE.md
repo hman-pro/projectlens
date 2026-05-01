@@ -163,7 +163,7 @@ docker compose down -v
 
 ## Database
 
-**13 tables:** files, symbols, chunks, embeddings, summaries, edges, index_runs, git_refs, datastore_tables, documents, symbol_history, file_history, knowledge_entries, schema_migrations
+**14 tables:** files, symbols, chunks, embeddings, summaries, edges, index_runs, git_refs, datastore_tables, documents, symbol_history, file_history, knowledge_entries, index_locks, schema_migrations
 
 ```bash
 # Connect to database
@@ -174,6 +174,7 @@ psql "..." -f migrations/001_initial_schema.up.sql
 psql "..." -f migrations/002_intelligence_platform.up.sql
 psql "..." -f migrations/003_vector_dimensions.up.sql
 psql "..." -f migrations/004_knowledge_layer.up.sql
+psql "..." -f migrations/005_writer_lock.up.sql
 
 # Check table sizes
 SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC;
@@ -185,6 +186,36 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC;
 - **SCIP-style symbol IDs** — `symbols.scip_symbol` with hierarchical naming: `go . internal/indexer . Indexer.Run()`
 - **Universal chunks** — `chunks.source_type` discriminator: `code`, `confluence`, `jira`, `migration`, `knowledge`. All types share the same embedding vector space.
 - **Schema migrations tracker** — `schema_migrations` table prevents re-applying migrations.
+
+### Writer lock
+
+Mutating indexer commands (`bootstrap`, `reindex`, `index-datastore`,
+`index-history`, `index-embed`, `index-summarize`, `index-all`) acquire
+a single Postgres advisory lock (`LockID = 9876543210`) at the start
+of each invocation. Holder identity (client_pid, backend_pid, hostname,
+cmd, started_at) is recorded in `index_locks`. Read-only commands
+(`status`, `query`, `inspect-*`, `census`, `knowledge`) and the MCP
+server bypass the lock.
+
+When the lock is held by another process, a second writer exits with
+code **75** (sysexits `EX_TEMPFAIL`) and a stderr line of the form:
+
+```
+another writer holds the lock: pid=<n> host=<h> cmd="<c>" started=<RFC3339>
+```
+
+**Auto-recovery:** if a holder is killed (kill -9, OOM, panic), its
+DB session drops, Postgres auto-releases the advisory lock, and the
+next `Acquire` reaps the orphaned `index_locks` row via a
+`pg_stat_activity` join on `backend_pid`.
+
+**Escape hatch:** `projectlens unlock --force` reads the holder's
+backend pid from `index_locks`, calls `pg_terminate_backend(pid)` to
+drop the holder's session (which auto-releases the advisory lock),
+then deletes the bookkeeping row. Use only when auto-recovery has
+failed (e.g. a recycled client PID makes the row look live). Logs the
+previous holder identity for audit. Note: this kills the holder's DB
+session — any in-flight transactions in that process roll back.
 
 ## MCP tools (10)
 

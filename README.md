@@ -151,6 +151,23 @@ Add to your Claude Code MCP configuration:
 | `index-embed` | Embed all chunks missing embeddings |
 | `index-summarize` | Generate summaries for packages missing one |
 | `index-all [--full]` | Run all indexing stages in sequence |
+| `unlock --force` | Force-release a stuck writer lock (auto-recovery escape hatch) |
+
+### Writer lock
+
+Mutating commands serialize via a Postgres advisory lock. A second
+writer fails fast with exit code **75** and prints the holder's
+identity to stderr:
+
+```
+another writer holds the lock: pid=12345 host=laptop cmd="reindex" started=2026-04-30T12:00:00Z
+```
+
+Crashed holders are auto-recovered on the next `Acquire`. If
+auto-recovery fails (e.g. a recycled client PID makes the row look
+live), use `projectlens unlock --force` to terminate the holder's
+backend and clear the bookkeeping row. This kills any in-flight
+transaction in the holder process — use sparingly.
 
 ## Configuration
 
