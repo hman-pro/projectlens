@@ -52,7 +52,12 @@ func main() {
 		newIndexEmbedCmd(),
 		newIndexSummarizeCmd(),
 		newIndexAllCmd(),
+		newUnlockCmd(),
 	)
+
+	if os.Getenv("PROJECTLENS_DEBUG_HOLD_LOCK") == "1" {
+		rootCmd.AddCommand(newDebugHoldLockCmd())
+	}
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -99,28 +104,12 @@ func newCensusCmd() *cobra.Command {
 }
 
 func newBootstrapCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "bootstrap",
 		Short: "Bootstrap the database schema and run a full index",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-
-			cfg, repoPath, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
-
-			// Run migrations.
-			migrationsDir := findMigrationsDir()
-			if err := db.Migrate(ctx, migrationsDir); err != nil {
-				return fmt.Errorf("running migrations: %w", err)
-			}
+	}
+	cmd.RunE = withWriteLockAfterMigrate("bootstrap",
+		func(ctx context.Context, _ *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error {
 			logger.Info("migrations applied successfully")
 
 			embedder, summarizer, err := buildProviders(cfg)
@@ -136,28 +125,19 @@ func newBootstrapCmd() *cobra.Command {
 
 			printStats(stats)
 			return nil
-		},
-	}
+		})
+	return cmd
 }
 
 func newReindexCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reindex",
 		Short: "Reindex the repository",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-
-			cfg, repoPath, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
-
+	}
+	cmd.Flags().Bool("full", false, "perform a full reindex")
+	cmd.Flags().Bool("dry-run", false, "show what would be reindexed without making changes")
+	cmd.RunE = withWriteLock("reindex",
+		func(ctx context.Context, c *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error {
 			embedder, summarizer, err := buildProviders(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing providers: %w", err)
@@ -165,12 +145,12 @@ func newReindexCmd() *cobra.Command {
 
 			idx := indexer.New(db, embedder, summarizer, repoPath, classifier.DefaultConfig())
 
-			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			dryRun, _ := c.Flags().GetBool("dry-run")
 			if dryRun {
 				return idx.DryRun(ctx)
 			}
 
-			full, _ := cmd.Flags().GetBool("full")
+			full, _ := c.Flags().GetBool("full")
 			stats, err := idx.Run(ctx, full)
 			if err != nil {
 				return fmt.Errorf("reindex: %w", err)
@@ -178,10 +158,7 @@ func newReindexCmd() *cobra.Command {
 
 			printStats(stats)
 			return nil
-		},
-	}
-	cmd.Flags().Bool("full", false, "perform a full reindex")
-	cmd.Flags().Bool("dry-run", false, "show what would be reindexed without making changes")
+		})
 	return cmd
 }
 
@@ -482,21 +459,12 @@ func newQueryCmd() *cobra.Command {
 }
 
 func newIndexDatastoreCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "index-datastore",
 		Short: "Index database schemas and SQL queries",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			cfg, repoPath, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
-
+	}
+	cmd.RunE = withWriteLock("index-datastore",
+		func(ctx context.Context, _ *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error {
 			dsCfg := datastore.Config{
 				SQLScanPaths: cfg.Datastore.SQLScanPaths,
 			}
@@ -508,8 +476,8 @@ func newIndexDatastoreCmd() *cobra.Command {
 			}
 
 			return datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
-		},
-	}
+		})
+	return cmd
 }
 
 func newIndexHistoryCmd() *cobra.Command {
@@ -517,18 +485,10 @@ func newIndexHistoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "index-history",
 		Short: "Index git change history and compute co-change coupling (incremental by default)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			cfg, repoPath, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
-
+	}
+	cmd.Flags().BoolVar(&full, "full", false, "Reparse the entire history window instead of incremental since last run")
+	cmd.RunE = withWriteLock("index-history",
+		func(ctx context.Context, _ *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error {
 			return history.IndexHistory(ctx, db, repoPath, history.Config{
 				WindowMonths:         cfg.History.WindowMonths,
 				MinCommitsPerFile:    cfg.History.MinCommitsPerFile,
@@ -536,82 +496,51 @@ func newIndexHistoryCmd() *cobra.Command {
 				CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
 				FullReindex:          full,
 			})
-		},
-	}
-	cmd.Flags().BoolVar(&full, "full", false, "Reparse the entire history window instead of incremental since last run")
+		})
 	return cmd
 }
 
 func newIndexEmbedCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "index-embed",
 		Short: "Embed all chunks that are missing embeddings",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			cfg, _, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
-
+	}
+	cmd.RunE = withWriteLock("index-embed",
+		func(ctx context.Context, _ *cobra.Command, db *storage.DB, cfg *config.Config, _ string) error {
 			embedder, _, err := buildProviders(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing providers: %w", err)
 			}
-
 			return embed.EmbedMissing(ctx, db, embedder)
-		},
-	}
+		})
+	return cmd
 }
 
 func newIndexSummarizeCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "index-summarize",
 		Short: "Generate summaries for packages that don't have one",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			cfg, _, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
-
+	}
+	cmd.RunE = withWriteLock("index-summarize",
+		func(ctx context.Context, _ *cobra.Command, db *storage.DB, cfg *config.Config, _ string) error {
 			_, summarizer, err := buildProviders(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing providers: %w", err)
 			}
-
 			return summarize.SummarizeMissing(ctx, db, summarizer)
-		},
-	}
+		})
+	return cmd
 }
 
 func newIndexAllCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "index-all",
 		Short: "Run all indexing stages: code, datastore, history, summarize, embed",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
+	}
+	cmd.Flags().Bool("full", false, "perform a full code reindex (other stages are always full)")
+	cmd.RunE = withWriteLock("index-all",
+		func(ctx context.Context, c *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error {
 			startTime := time.Now()
-
-			cfg, repoPath, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
 
 			embedder, summarizer, err := buildProviders(cfg)
 			if err != nil {
@@ -622,7 +551,7 @@ func newIndexAllCmd() *cobra.Command {
 
 			// Stage 1: Code
 			logger.Stage("Stage 1: Code")
-			full, _ := cmd.Flags().GetBool("full")
+			full, _ := c.Flags().GetBool("full")
 			idx := indexer.New(db, nil, nil, repoPath, classifier.DefaultConfig())
 			if _, err := idx.Run(ctx, full); err != nil {
 				return fmt.Errorf("code indexing: %w", err)
@@ -672,9 +601,7 @@ func newIndexAllCmd() *cobra.Command {
 
 			logger.Info("all stages complete", "total_time", time.Since(startTime).Round(time.Millisecond))
 			return nil
-		},
-	}
-	cmd.Flags().Bool("full", false, "perform a full code reindex (other stages are always full)")
+		})
 	return cmd
 }
 
