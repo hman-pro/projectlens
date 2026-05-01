@@ -55,6 +55,7 @@ func main() {
 		newIndexSummarizeCmd(),
 		newIndexAllCmd(),
 		newUnlockCmd(),
+		newMigrateCmd(),
 	)
 
 	if os.Getenv("PROJECTLENS_DEBUG_HOLD_LOCK") == "1" {
@@ -162,6 +163,36 @@ func newReindexCmd() *cobra.Command {
 			return nil
 		})
 	return cmd
+}
+
+// newMigrateCmd applies any unapplied SQL migrations against the
+// configured database. Bootstrap also auto-migrates; this lets you
+// catch up an existing DB without re-indexing.
+func newMigrateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "migrate",
+		Short: "Apply pending SQL migrations against the configured database",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, _, err := loadCmdConfig(cmd)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			db, err := storage.Connect(ctx, cfg.DatabaseURL)
+			if err != nil {
+				return fmt.Errorf("connecting to database: %w", err)
+			}
+			defer db.Close()
+			if err := db.Migrate(ctx, findMigrationsDir()); err != nil {
+				return fmt.Errorf("running migrations: %w", err)
+			}
+			fmt.Println("migrations up to date")
+			return nil
+		},
+	}
 }
 
 func newStatusCmd() *cobra.Command {

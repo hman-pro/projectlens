@@ -144,8 +144,5 @@ docker-index: ## Run indexer profile container on demand
 # ────────────────────────────────────────────────────────────────────
 .PHONY: migrate
 
-migrate: ## Apply all SQL migrations against $$DB_URL
-	@for f in migrations/*.up.sql; do \
-		echo "→ applying $$f"; \
-		psql "$(DB_URL)" -f "$$f" || exit 1; \
-	done
+migrate: build-cli ## Apply pending SQL migrations (uses projectlens migrate)
+	./$(CLI) migrate --db "$(DB_URL)"
