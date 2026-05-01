@@ -43,6 +43,16 @@ func (m *Model) Init() tea.Cmd           { return nil }
 func (m *Model) Status() sections.Status { return m.status }
 func (m *Model) LastRefresh() time.Time  { return m.last }
 
+func (m *Model) Actions() []sections.ActionDescriptor {
+	return []sections.ActionDescriptor{
+		{Key: 'R', Label: "reindex", Description: "incremental"},
+		{Key: 'F', Label: "reindex --full", Description: "full"},
+		{Key: 'E', Label: "embed", Description: "missing chunks"},
+		{Key: 'S', Label: "summarize", Description: "missing packages"},
+		{Key: 'H', Label: "history", Description: "new commits"},
+	}
+}
+
 func (m *Model) Refresh() tea.Cmd {
 	m.gen++
 	gen := m.gen

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hman-pro/projectlens/internal/tui/sections"
 	"github.com/hman-pro/projectlens/internal/tui/sections/pipeline"
 	"github.com/hman-pro/projectlens/internal/tui/store"
 )
@@ -25,4 +26,21 @@ func TestPipeline_RendersStages(t *testing.T) {
 			t.Errorf("view missing %q\n%s", want, v)
 		}
 	}
+}
+
+func TestPipeline_RendersControlsBlock(t *testing.T) {
+	f := store.NewFake()
+	m := pipeline.New(context.Background(), f)
+	msg := m.Refresh()()
+	next, _ := m.Update(msg)
+	v := next.View()
+	for _, want := range []string{"Controls", "R reindex", "F reindex --full", "E embed", "S summarize", "H history"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("controls block missing %q\n%s", want, v)
+		}
+	}
+}
+
+func TestPipeline_ImplementsActionableSection(t *testing.T) {
+	var _ sections.ActionableSection = pipeline.New(context.Background(), store.NewFake())
 }

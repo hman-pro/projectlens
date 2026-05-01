@@ -56,3 +56,21 @@ type Section interface {
 	Status() Status
 	LastRefresh() time.Time
 }
+
+// ActionableSection is the optional sibling interface for sections
+// that can trigger actions. The app reads Actions() to render hotkey
+// hints; the global jobs registry is the source of truth for actual
+// dispatch.
+type ActionableSection interface {
+	Section
+	Actions() []ActionDescriptor
+}
+
+// ActionDescriptor is the section-facing summary of a triggerable
+// action. Intentionally avoids importing the jobs package (which
+// depends on store) so sections stay decoupled.
+type ActionDescriptor struct {
+	Key         rune
+	Label       string
+	Description string
+}
