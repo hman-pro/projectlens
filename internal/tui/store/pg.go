@@ -129,26 +129,44 @@ func (s *PG) Pipeline(ctx context.Context) (PipelineSnapshot, error) {
 }
 
 func (s *PG) Storage(ctx context.Context) (StorageSnapshot, error) {
-	const tableQ = `
-		SELECT relname, n_live_tup, pg_total_relation_size(relid)
-		FROM pg_stat_user_tables WHERE relname = ANY($1)
+	// Sizes from pg_class. Row counts via count(*) per table — pg_stat_user_tables.n_live_tup
+	// stays 0 until ANALYZE runs, which doesn't happen reliably after bulk inserts.
+	const sizeQ = `
+		SELECT c.relname, pg_total_relation_size(c.oid)
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'public' AND c.relname = ANY($1)
 	`
-	rows, err := s.pool.Query(ctx, tableQ, knownTables)
+	sizeRows, err := s.pool.Query(ctx, sizeQ, knownTables)
 	if err != nil {
-		return StorageSnapshot{}, fmt.Errorf("store: storage tables: %w", err)
+		return StorageSnapshot{}, fmt.Errorf("store: storage sizes: %w", err)
 	}
-	tables := make([]TableStat, 0, len(knownTables))
-	for rows.Next() {
-		var t TableStat
-		if err := rows.Scan(&t.Name, &t.EstRows, &t.Bytes); err != nil {
-			rows.Close()
-			return StorageSnapshot{}, fmt.Errorf("store: storage scan: %w", err)
+	sizes := make(map[string]int64, len(knownTables))
+	for sizeRows.Next() {
+		var name string
+		var bytes int64
+		if err := sizeRows.Scan(&name, &bytes); err != nil {
+			sizeRows.Close()
+			return StorageSnapshot{}, fmt.Errorf("store: storage size scan: %w", err)
 		}
-		tables = append(tables, t)
+		sizes[name] = bytes
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return StorageSnapshot{}, fmt.Errorf("store: storage rows: %w", err)
+	sizeRows.Close()
+	if err := sizeRows.Err(); err != nil {
+		return StorageSnapshot{}, fmt.Errorf("store: storage size rows: %w", err)
+	}
+
+	tables := make([]TableStat, 0, len(knownTables))
+	for _, name := range knownTables {
+		if _, ok := sizes[name]; !ok {
+			continue
+		}
+		// Safe: name comes from hardcoded knownTables list, not user input.
+		var rowCount int64
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{name}.Sanitize()).Scan(&rowCount); err != nil {
+			return StorageSnapshot{}, fmt.Errorf("store: storage count %s: %w", name, err)
+		}
+		tables = append(tables, TableStat{Name: name, EstRows: rowCount, Bytes: sizes[name]})
 	}
 
 	const chunkQ = `
