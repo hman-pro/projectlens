@@ -25,7 +25,7 @@ projectlens/
   cmd/
     projectlens/              # CLI entrypoint (7 commands)
     projectlens-mcp/          # MCP server entrypoint
-    projectlens-tui/          # TUI dashboard entrypoint (Phase 1: read-only ops view)
+    projectlens-tui/          # TUI dashboard entrypoint (read-only ops + Phase 2 action triggers)
   internal/
     census/                  # file discovery and classification
     classifier/              # handwritten vs generated vs test detection
@@ -125,8 +125,9 @@ go run ./cmd/projectlens/ query "ReserveInventory" --mode lexical --db "..."
 
 ## TUI dashboard
 
-Read-only Bubbletea dashboard surfacing index health, pipeline state,
-storage stats, recent runs, and provider config.
+Bubbletea dashboard surfacing index health, pipeline state, storage
+stats, recent runs, provider config, and triggering indexer
+operations.
 
 ```bash
 go run ./cmd/projectlens-tui/
@@ -135,7 +136,25 @@ go run ./cmd/projectlens-tui/
 Reads `.env` automatically (DATABASE_URL, REPO_PATH). Logs to
 `PROJECTLENS_TUI_LOG_FILE` (default `/tmp/projectlens-tui.log`).
 
-Keys: ↑/↓ navigate · enter focus · esc back · r refresh · ? help · q quit.
+**Phase 1 keys:** ↑/↓ navigate · enter focus · esc back · r refresh · ? help · q quit.
+
+**Phase 2 actions** (run projectlens subcommands as subprocesses):
+
+| Key | Action            | Confirmation       |
+|-----|-------------------|--------------------|
+| `R` | reindex           | y/N preflight      |
+| `F` | reindex --full    | typed `reindex`    |
+| `E` | index-embed       | y/N preflight      |
+| `S` | index-summarize   | y/N preflight      |
+| `H` | index-history     | y/N preflight      |
+| `c` | cancel running    | -                  |
+| `j` | toggle drawer     | -                  |
+
+Subprocesses log to `~/.projectlens/tui-runs/<RFC3339>-<action>.log`.
+Binary resolution: `PROJECTLENS_BINARY` env var > sibling of `projectlens-tui`
+> `PATH`. q during a running job triggers Cancel + drain (no detach;
+Ctrl+C is the OS escape hatch). Action subprocesses serialize via the
+writer lock above; a busy lock surfaces in the drawer's tail.
 
 ## Docker Compose
 
@@ -294,6 +313,8 @@ summarization:
 | `PROJECTLENS_MCP_URL` | Full MCP URL the TUI Config section probes (overrides `MCP_PORT`) | No (default `http://localhost:<MCP_PORT>/mcp`) |
 | `CONFIG_PATH` | Path to index.yaml | No (default: configs/index.yaml) |
 | `PROJECTLENS_TUI_LOG_FILE` | TUI log file path (default `/tmp/projectlens-tui.log`) | No |
+| `PROJECTLENS_BINARY` | Explicit path to the `projectlens` binary the TUI invokes (overrides sibling/PATH lookup) | No |
+| `PROJECTLENS_TUI_RUNS_DIR` | Override directory for TUI subprocess log files (default `~/.projectlens/tui-runs`) | No |
 
 ## Design decisions
 

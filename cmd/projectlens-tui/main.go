@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/tui/app"
+	"github.com/hman-pro/projectlens/internal/tui/jobs"
 	"github.com/hman-pro/projectlens/internal/tui/sections"
 	cfgsec "github.com/hman-pro/projectlens/internal/tui/sections/config"
 	"github.com/hman-pro/projectlens/internal/tui/sections/health"
@@ -58,9 +60,28 @@ func run() error {
 		cfgsec.New(ctx, s),
 	}
 
-	m := app.New(ctx, secs)
+	// Resolve projectlens binary for the runner. Empty path is fine —
+	// the app shows a toast on action keys when the binary is missing.
+	binPath, berr := jobs.ResolveBinary()
+	if berr != nil {
+		log.Printf("projectlens binary not resolvable: %v", berr)
+	}
+	target := jobs.RunnerTarget{
+		BinaryPath:  binPath,
+		ConfigPath:  cfgPath,
+		DatabaseURL: cfg.DatabaseURL,
+		RepoPath:    cfg.RepoPath,
+	}
+	runner := jobs.NewRunner(target, nil)
+	registry := jobs.DefaultRegistry(cfg)
+
+	m := app.New(ctx, secs).WithJobs(s, runner, registry, target)
 	app.InitLogger()
 	prog := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	// Wire program Send into the runner now that prog exists. Order
+	// is fine: no jobs message dispatched until prog.Run() executes.
+	runner.SetSend(prog.Send)
+
 	_, err = prog.Run()
 	return err
 }
