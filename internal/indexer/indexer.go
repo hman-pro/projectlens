@@ -152,11 +152,16 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		return nil, fmt.Errorf("indexer: start run: %w", err)
 	}
 	logger.Info("git state", "branch", branch, "commit", commitSHA, "elapsed", time.Since(stepStart).Round(time.Millisecond))
-	// On failure, mark the run as failed.
+	// On failure, mark the run as failed. Use a background context
+	// here so cancellation/signal teardown can't prevent the UPDATE
+	// from reaching the database — otherwise rows stay "running"
+	// forever after Ctrl+C or a TUI quit.
 	var runCompleted bool
 	defer func() {
 		if !runCompleted {
-			_ = idx.db.FailRun(ctx, runID)
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = idx.db.FailRun(cleanup, runID)
 		}
 	}()
 

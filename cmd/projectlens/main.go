@@ -509,7 +509,7 @@ func repoCommitSHA(repoPath string) string {
 // stage capturing start/end, completed/failed status, and the count of
 // items processed. The fn's error is propagated unchanged; recording
 // failures are logged only.
-func recordStageRun(ctx context.Context, db *storage.DB, repoPath, stage string, fn func() (int, error)) error {
+func recordStageRun(_ context.Context, db *storage.DB, repoPath, stage string, fn func() (int, error)) error {
 	start := time.Now()
 	commit := repoCommitSHA(repoPath)
 	count, runErr := fn()
@@ -517,7 +517,12 @@ func recordStageRun(ctx context.Context, db *storage.DB, repoPath, stage string,
 	if runErr != nil {
 		status = "failed"
 	}
-	if err := db.RecordStageRun(ctx, commit, stage, status, start, time.Now(), count); err != nil {
+	// Use a background context for the bookkeeping write: if fn was
+	// cancelled by Ctrl+C or a parent timeout, ctx is already done
+	// and a "failed" row would never reach the database.
+	bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.RecordStageRun(bg, commit, stage, status, start, time.Now(), count); err != nil {
 		logger.Warn("record stage run failed", "stage", stage, "err", err)
 	}
 	return runErr
