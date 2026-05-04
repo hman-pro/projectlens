@@ -25,9 +25,10 @@ type Model struct {
 	w, h    int
 	focused bool
 
-	tbl     table.Model
-	preview viewport.Model
+	tbl        table.Model
+	preview    viewport.Model
 	currentLog string
+	cachedTail []string
 }
 
 func New(appCtx context.Context) *Model {

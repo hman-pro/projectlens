@@ -33,5 +33,10 @@ func previewHeader(m *Model) string {
 		return "─ Log preview ─"
 	}
 	r := m.runs[idx]
-	return fmt.Sprintf("─ Log preview · %s ─", r.LogPath)
+	// Show only the filename — full paths overflow the panel.
+	name := r.LogPath
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	return fmt.Sprintf("─ Log preview · %s ─", name)
 }

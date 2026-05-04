@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hman-pro/projectlens/internal/tui/sections"
 )
@@ -67,23 +68,21 @@ func (m *Model) applyLayout() {
 	if m.h <= 0 {
 		return
 	}
-	tableH := (m.h - 2) * 6 / 10
-	if tableH < 3 {
-		tableH = 3
-	}
-	previewH := m.h - 2 - tableH - 1
-	if previewH < 2 {
-		previewH = 2
-	}
+	tableH := max(3, (m.h-2)*6/10)
+	previewH := max(2, m.h-2-tableH-1)
 	m.tbl.SetHeight(tableH)
-	m.preview.Width = m.w
+	// Reserve one column so wrapped lines never collide with the panel
+	// border when bubbletea adds its own padding.
+	m.preview.Width = max(20, m.w-1)
 	m.preview.Height = previewH
+	m.refreshPreviewContent()
 }
 
 func (m *Model) syncPreview() {
 	idx := m.tbl.Cursor()
 	if idx < 0 || idx >= len(m.runs) {
 		m.currentLog = ""
+		m.cachedTail = nil
 		m.preview.SetContent("")
 		return
 	}
@@ -94,11 +93,41 @@ func (m *Model) syncPreview() {
 	m.currentLog = run.LogPath
 	tail, err := ReadTail(run.LogPath, previewLines)
 	if err != nil {
-		m.preview.SetContent(fmt.Sprintf("error reading log: %v", err))
+		m.cachedTail = []string{fmt.Sprintf("error reading log: %v", err)}
+		m.refreshPreviewContent()
 		return
 	}
-	m.preview.SetContent(strings.Join(tail, "\n"))
+	m.cachedTail = tail
+	m.refreshPreviewContent()
 	m.preview.GotoTop()
+}
+
+// refreshPreviewContent re-applies wrapping to the cached tail at the
+// current viewport width. Called both on new selection and on resize.
+func (m *Model) refreshPreviewContent() {
+	if len(m.cachedTail) == 0 {
+		m.preview.SetContent("")
+		return
+	}
+	w := max(10, m.preview.Width)
+	style := lipgloss.NewStyle().Width(w)
+	cleaned := make([]string, 0, len(m.cachedTail))
+	for _, ln := range m.cachedTail {
+		cleaned = append(cleaned, style.Render(stripStreamPrefix(ln)))
+	}
+	m.preview.SetContent(strings.Join(cleaned, "\n"))
+}
+
+// stripStreamPrefix removes the leading "stdout\t" / "stderr\t" tag
+// the runner writes, so the preview shows the raw command output.
+func stripStreamPrefix(s string) string {
+	if rest, ok := strings.CutPrefix(s, "stdout\t"); ok {
+		return rest
+	}
+	if rest, ok := strings.CutPrefix(s, "stderr\t"); ok {
+		return rest
+	}
+	return s
 }
 
 func rowsFromRuns(runs []JobRun) []table.Row {
