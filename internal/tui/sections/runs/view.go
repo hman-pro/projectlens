@@ -45,9 +45,7 @@ func detailPanel(r store.IndexRun) string {
 		fmt.Fprintf(&b, "Completed: —\n")
 	}
 	commit := r.CommitSHA
-	if len(commit) > 7 {
-		commit = commit[:7]
-	}
+	commit = commit[:min(len(commit), 7)]
 	fmt.Fprintf(&b, "Commit:    %s   Stage: %s   Status: %s\n", commit, r.Stage, r.Status)
 	fmt.Fprintf(&b, "Files: %d   Symbols: %d   Edges: %d\n", r.FilesProcessed, r.SymbolsExtracted, r.EdgesCreated)
 	return b.String()

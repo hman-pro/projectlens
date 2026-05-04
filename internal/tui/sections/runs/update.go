@@ -38,9 +38,7 @@ func (m *Model) Update(msg tea.Msg) (sections.Section, tea.Cmd) {
 		if m.focused {
 			h -= 8
 		}
-		if h < 3 {
-			h = 3
-		}
+		h = max(h, 3)
 		m.tbl.SetHeight(h)
 		return m, nil
 	case sections.FocusMsg:
