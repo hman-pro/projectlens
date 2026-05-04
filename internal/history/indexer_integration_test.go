@@ -264,7 +264,7 @@ func TestIndexHistory_IncrementalSkipsOldCommits(t *testing.T) {
 	}
 
 	// --- Baseline run (full).
-	if err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
+	if _, err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
 		t.Fatalf("IndexHistory baseline: %v", err)
 	}
 
@@ -276,7 +276,7 @@ func TestIndexHistory_IncrementalSkipsOldCommits(t *testing.T) {
 
 	// --- Idempotency check: a second run with no new commits must be stable.
 	cfg.FullReindex = false
-	if err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
+	if _, err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
 		t.Fatalf("IndexHistory second run (no new commits): %v", err)
 	}
 	stableRows := countFileHistoryForHashes(t, db, fixtureHashes)
@@ -313,7 +313,7 @@ func TestIndexHistory_IncrementalSkipsOldCommits(t *testing.T) {
 	}
 
 	// --- Incremental run.
-	if err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
+	if _, err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
 		t.Fatalf("IndexHistory incremental: %v", err)
 	}
 
@@ -325,7 +325,7 @@ func TestIndexHistory_IncrementalSkipsOldCommits(t *testing.T) {
 	}
 
 	// --- Second incremental run — nothing new; must be stable again.
-	if err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
+	if _, err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
 		t.Fatalf("IndexHistory second incremental: %v", err)
 	}
 	finalRows := countFileHistoryForHashes(t, db, fixtureHashes)
@@ -354,7 +354,7 @@ func TestIndexHistory_IncrementalSkipsOldCommits(t *testing.T) {
 
 	// --- Duplicate-free coupling: running again must not double the count.
 	// The clear-before-insert step is what guarantees this.
-	if err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
+	if _, err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
 		t.Fatalf("IndexHistory third incremental: %v", err)
 	}
 	var coEdgesAfter int
@@ -465,7 +465,7 @@ func TestIndexHistory_IncrementalHonorsSince(t *testing.T) {
 		FullReindex:          false, // incremental path is the point of the test
 	}
 
-	if err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
+	if _, err := IndexHistory(ctx, db, repoPath, cfg); err != nil {
 		t.Fatalf("IndexHistory incremental on fresh fixture: %v", err)
 	}
 

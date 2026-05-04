@@ -11,18 +11,19 @@ import (
 )
 
 // SummarizeMissing finds packages without summaries and generates them.
-func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.PackageSummarizer) error {
+// Returns the number of packages successfully summarized (heuristic + LLM).
+func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.PackageSummarizer) (int, error) {
 	startTime := time.Now()
 	logger.Step("Summarize missing packages")
 
 	allPackages, err := db.GetDistinctPackageNames(ctx)
 	if err != nil {
-		return fmt.Errorf("summarize: get packages: %w", err)
+		return 0, fmt.Errorf("summarize: get packages: %w", err)
 	}
 
 	existing, err := db.GetAllSummaryPackageNames(ctx)
 	if err != nil {
-		return fmt.Errorf("summarize: get existing summaries: %w", err)
+		return 0, fmt.Errorf("summarize: get existing summaries: %w", err)
 	}
 
 	existingSet := make(map[string]bool, len(existing))
@@ -39,11 +40,12 @@ func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.
 
 	if len(missing) == 0 {
 		logger.Info("all packages already have summaries — nothing to do")
-		return nil
+		return 0, nil
 	}
 
 	logger.Info("found packages missing summaries", "count", len(missing))
 
+	summarized := 0
 	for i, pkgName := range missing {
 		logger.Progress("summarizing packages", i+1, len(missing), "package", pkgName)
 
@@ -70,7 +72,9 @@ func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.
 				SummaryText:  "Package has no exported symbols.",
 				ModelVersion: "heuristic",
 			}
-			_ = db.UpsertSummary(ctx, rec)
+			if err := db.UpsertSummary(ctx, rec); err == nil {
+				summarized++
+			}
 			continue
 		}
 
@@ -87,9 +91,11 @@ func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.
 		}
 		if err := db.UpsertSummary(ctx, rec); err != nil {
 			logger.Warn("could not store summary", "package", pkgName, "err", err)
+			continue
 		}
+		summarized++
 	}
 
-	logger.Info("summarized packages", "count", len(missing), "elapsed", time.Since(startTime).Round(time.Millisecond))
-	return nil
+	logger.Info("summarized packages", "count", summarized, "elapsed", time.Since(startTime).Round(time.Millisecond))
+	return summarized, nil
 }
