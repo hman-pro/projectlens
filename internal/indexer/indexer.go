@@ -132,6 +132,14 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 
 	if len(work) == 0 {
 		logger.Info("nothing to do — index is up to date")
+		// Record a zero-work completed run so the Pipeline view
+		// reflects the just-confirmed up-to-date state instead of
+		// keeping a stale failed row as latest.
+		commitSHA, _ := gitOutput(idx.repo, "rev-parse", "HEAD")
+		now := time.Now()
+		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = idx.db.RecordStageRun(bg, commitSHA, "code", "completed", now, now, 0)
 		return stats, nil
 	}
 
