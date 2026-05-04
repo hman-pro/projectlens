@@ -14,6 +14,15 @@ import (
 
 func (m *Model) Update(msg tea.Msg) (sections.Section, tea.Cmd) {
 	switch msg := msg.(type) {
+	case LiveStateMsg:
+		live := msg
+		m.live = &live
+		m.applyLayout()
+		return m, nil
+	case LiveClearMsg:
+		m.live = nil
+		m.applyLayout()
+		return m, nil
 	case RefreshedMsg:
 		if msg.Gen != m.gen {
 			return m, nil
@@ -68,12 +77,20 @@ func (m *Model) applyLayout() {
 	if m.h <= 0 {
 		return
 	}
-	tableH := max(3, (m.h-2)*6/10)
-	previewH := max(2, m.h-2-tableH-1)
-	m.tbl.SetHeight(tableH)
 	// Reserve one column so wrapped lines never collide with the panel
 	// border when bubbletea adds its own padding.
 	m.preview.Width = max(20, m.w-1)
+	if m.live != nil {
+		// Live mode: the running/just-completed job owns the pane.
+		// Reserve 2 lines for the live header.
+		m.preview.Height = max(3, m.h-2)
+		m.tbl.SetHeight(0)
+		m.refreshPreviewContent()
+		return
+	}
+	tableH := max(3, (m.h-2)*6/10)
+	previewH := max(2, m.h-2-tableH-1)
+	m.tbl.SetHeight(tableH)
 	m.preview.Height = previewH
 	m.refreshPreviewContent()
 }
@@ -102,20 +119,30 @@ func (m *Model) syncPreview() {
 	m.preview.GotoTop()
 }
 
-// refreshPreviewContent re-applies wrapping to the cached tail at the
-// current viewport width. Called both on new selection and on resize.
+// refreshPreviewContent re-applies wrapping to either the live tail
+// (when a job is running) or the cached selected-row tail. Called on
+// new selection, live update, and resize.
 func (m *Model) refreshPreviewContent() {
-	if len(m.cachedTail) == 0 {
+	src := m.cachedTail
+	gotoBottom := false
+	if m.live != nil {
+		src = m.live.Tail
+		gotoBottom = true
+	}
+	if len(src) == 0 {
 		m.preview.SetContent("")
 		return
 	}
 	w := max(10, m.preview.Width)
 	style := lipgloss.NewStyle().Width(w)
-	cleaned := make([]string, 0, len(m.cachedTail))
-	for _, ln := range m.cachedTail {
+	cleaned := make([]string, 0, len(src))
+	for _, ln := range src {
 		cleaned = append(cleaned, style.Render(stripStreamPrefix(ln)))
 	}
 	m.preview.SetContent(strings.Join(cleaned, "\n"))
+	if gotoBottom {
+		m.preview.GotoBottom()
+	}
 }
 
 // stripStreamPrefix removes the leading "stdout\t" / "stderr\t" tag

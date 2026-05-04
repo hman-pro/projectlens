@@ -39,11 +39,6 @@ func (m Model) View() string {
 	if m.confirm != nil {
 		overlays = append(overlays, m.confirm.View())
 	}
-	if m.drawer != nil {
-		if v := m.drawer.View(); v != "" {
-			overlays = append(overlays, v)
-		}
-	}
 	if m.toastMsg != "" {
 		overlays = append(overlays, theme.MutedStyle().Render(m.toastMsg))
 	}

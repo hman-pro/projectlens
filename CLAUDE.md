@@ -145,7 +145,7 @@ Reads `.env` automatically (DATABASE_URL, REPO_PATH). Logs to
 | `D` | index-datastore   | y/N preflight      |
 | `A` | index-all         | typed `all`        |
 | `c` | cancel running    | -                  |
-| `j` | toggle drawer     | -                  |
+| `J` | jump to Jobs      | -                  |
 
 Subprocesses log to `~/.projectlens/tui-runs/<RFC3339>-<action>.log`.
 Binary resolution: `PROJECTLENS_BINARY` env var > sibling of `projectlens-tui`

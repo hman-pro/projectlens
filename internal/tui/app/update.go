@@ -10,9 +10,9 @@ import (
 
 	"github.com/hman-pro/projectlens/internal/tui/components/confirmmodal"
 	"github.com/hman-pro/projectlens/internal/tui/components/errormodal"
-	"github.com/hman-pro/projectlens/internal/tui/components/jobdrawer"
 	"github.com/hman-pro/projectlens/internal/tui/jobs"
 	"github.com/hman-pro/projectlens/internal/tui/sections"
+	jobssec "github.com/hman-pro/projectlens/internal/tui/sections/jobs"
 	"github.com/hman-pro/projectlens/internal/tui/store"
 )
 
@@ -88,12 +88,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.runner.Cancel()
 					return m, nil
 				}
-			case "j":
-				if m.drawer != nil {
-					m.drawer.Toggle()
-					m, cmd := m.resyncDetailSize()
-					return m, cmd
-				}
+			case "J":
+				next, cmd := m.focusSection(jobssec.ID)
+				return next, cmd
 			case "q":
 				return m.handleQuit()
 			}
@@ -257,27 +254,35 @@ func (m Model) handleConfirmed(msg confirmmodal.ConfirmedMsg) (tea.Model, tea.Cm
 	return m, nil
 }
 
-func (m Model) handleJobMsg(_ tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) handleJobMsg(raw tea.Msg) (tea.Model, tea.Cmd) {
 	if m.runner == nil {
 		return m, nil
 	}
 	snap := m.runner.State()
-	if m.drawer != nil {
-		m.drawer.SetState(jobdrawer.State{
-			Status:  snap.Status,
-			Spec:    snap.Current.Name,
-			Started: snap.StartedAt,
-			Tail:    snap.Tail,
-			LogPath: snap.LogPath,
-		}, m.w, 8)
+	live := jobssec.LiveStateMsg{
+		Status:  snap.Status,
+		Spec:    snap.Current.Name,
+		Started: snap.StartedAt,
+		Tail:    snap.Tail,
+		LogPath: snap.LogPath,
 	}
-	m, cmd := m.resyncDetailSize()
-	return m, cmd
+	cmds := []tea.Cmd{m.broadcastToJobs(live)}
+	// On the first event of a fresh run (a JobStartedMsg), pull the
+	// user into the Jobs section so they see the live tail without
+	// having to navigate.
+	if _, ok := raw.(jobs.JobStartedMsg); ok {
+		next, focusCmd := m.focusSection(jobssec.ID)
+		m = next
+		if focusCmd != nil {
+			cmds = append(cmds, focusCmd)
+		}
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // resyncDetailSize re-issues a SizeMsg to the focused section so it
-// can lay out against the newly available space (drawer might have
-// just appeared or grown). Returns the model and any size cmd.
+// can lay out against current dimensions. Returns the model and any
+// size cmd.
 func (m Model) resyncDetailSize() (Model, tea.Cmd) {
 	if m.tooSmall || len(m.sections) == 0 {
 		return m, nil
@@ -289,26 +294,59 @@ func (m Model) resyncDetailSize() (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// broadcastToJobs delivers a message to the Jobs section by ID match
+// instead of the running-section route. Used to feed live-job state
+// without requiring the user to focus Jobs first.
+func (m Model) broadcastToJobs(msg tea.Msg) tea.Cmd {
+	for i, s := range m.sections {
+		if s.ID() != jobssec.ID {
+			continue
+		}
+		next, cmd := s.Update(msg)
+		m.sections[i] = next
+		return cmd
+	}
+	return nil
+}
+
+// focusSection switches the focused section to the one with the given
+// ID. Returns the updated model and any size cmd from the new
+// focused section.
+func (m Model) focusSection(id string) (Model, tea.Cmd) {
+	for i, s := range m.sections {
+		if s.ID() != id {
+			continue
+		}
+		if i == m.focused {
+			return m, nil
+		}
+		// Blur the current section.
+		curID := m.sections[m.focused].ID()
+		blurred, _ := m.sections[m.focused].Update(sections.FocusMsg{SectionID: curID, Focused: false})
+		m.sections[m.focused] = blurred
+		m.focused = i
+		m.sidebar.Select(i)
+		// Focus + size new section.
+		focused, _ := s.Update(sections.FocusMsg{SectionID: id, Focused: true})
+		m.sections[i] = focused
+		next, cmd := m.resyncDetailSize()
+		return next, cmd
+	}
+	return m, nil
+}
+
 func (m Model) handleJobCompleted(msg jobs.JobCompletedMsg) (tea.Model, tea.Cmd) {
 	if m.runner == nil {
 		return m, nil
 	}
-	snap := m.runner.State()
-	if m.drawer != nil {
-		m.drawer.SetState(jobdrawer.State{
-			Status:   snap.Status,
-			Spec:     msg.Spec.Name,
-			Duration: msg.Duration,
-			Tail:     msg.Tail,
-			LogPath:  msg.LogPath,
-		}, m.w, 8)
+	live := jobssec.LiveStateMsg{
+		Status:   msg.Status,
+		Spec:     msg.Spec.Name,
+		Duration: msg.Duration,
+		Tail:     msg.Tail,
+		LogPath:  msg.LogPath,
 	}
-	m2, sizeCmd := m.resyncDetailSize()
-	m = m2
-	var cmds []tea.Cmd
-	if sizeCmd != nil {
-		cmds = append(cmds, sizeCmd)
-	}
+	cmds := []tea.Cmd{m.broadcastToJobs(live)}
 	if msg.Status == "succeeded" {
 		cmds = append(cmds, m.refreshSections(msg.Spec.RefreshOn))
 	}

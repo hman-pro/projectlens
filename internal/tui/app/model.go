@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/hman-pro/projectlens/internal/tui/components/confirmmodal"
 	"github.com/hman-pro/projectlens/internal/tui/components/errormodal"
-	"github.com/hman-pro/projectlens/internal/tui/components/jobdrawer"
 	"github.com/hman-pro/projectlens/internal/tui/jobs"
 	"github.com/hman-pro/projectlens/internal/tui/sections"
 	"github.com/hman-pro/projectlens/internal/tui/store"
@@ -52,7 +50,6 @@ type Model struct {
 	runner        Runner
 	registry      []jobs.Spec
 	target        jobs.RunnerTarget
-	drawer        *jobdrawer.Model
 	confirm       *confirmmodal.Model
 	errorModal    *errormodal.Model
 	pendingToken  uint64
@@ -112,21 +109,7 @@ func (m Model) sidebarWidth() int {
 }
 
 func (m Model) detailSize() (w, h int) {
-	return m.w - m.sidebarWidth() - 2, m.h - 4 - m.drawerHeight()
-}
-
-// drawerHeight returns the number of vertical rows the drawer will
-// occupy under its current state. Subtracted from the detail panel
-// height so the drawer never pushes content off-screen.
-func (m Model) drawerHeight() int {
-	if m.drawer == nil {
-		return 0
-	}
-	v := m.drawer.View()
-	if v == "" {
-		return 0
-	}
-	return strings.Count(v, "\n") + 1
+	return m.w - m.sidebarWidth() - 2, m.h - 4
 }
 
 func (m Model) since() time.Duration {
@@ -137,15 +120,13 @@ func (m Model) since() time.Duration {
 }
 
 // WithJobs returns a copy of m wired with a store, runner, registry,
-// and runner target. Phase 2 action keys (R/F/E/S/H/c/j) and the
-// drawer become active. Without WithJobs, the app behaves exactly
-// like Phase 1.
+// and runner target. Phase 2 action keys (R/F/E/S/H/D/A/c/J) become
+// active. Without WithJobs, the app behaves exactly like Phase 1.
 func (m Model) WithJobs(st store.Store, runner Runner, registry []jobs.Spec, target jobs.RunnerTarget) Model {
 	m.store = st
 	m.runner = runner
 	m.registry = registry
 	m.target = target
-	m.drawer = jobdrawer.New()
 	return m
 }
 

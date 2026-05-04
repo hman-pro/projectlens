@@ -29,6 +29,8 @@ type Model struct {
 	preview    viewport.Model
 	currentLog string
 	cachedTail []string
+
+	live *LiveStateMsg
 }
 
 func New(appCtx context.Context) *Model {
