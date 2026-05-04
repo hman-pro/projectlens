@@ -18,6 +18,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/tui/sections"
 	cfgsec "github.com/hman-pro/projectlens/internal/tui/sections/config"
 	"github.com/hman-pro/projectlens/internal/tui/sections/health"
+	jobssec "github.com/hman-pro/projectlens/internal/tui/sections/jobs"
 	"github.com/hman-pro/projectlens/internal/tui/sections/pipeline"
 	"github.com/hman-pro/projectlens/internal/tui/sections/runs"
 	"github.com/hman-pro/projectlens/internal/tui/sections/storage"
@@ -58,6 +59,7 @@ func run() error {
 		storage.New(ctx, s),
 		runs.New(ctx, s),
 		cfgsec.New(ctx, s),
+		jobssec.New(ctx),
 	}
 
 	// Resolve projectlens binary for the runner. Empty path is fine —

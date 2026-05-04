@@ -33,6 +33,9 @@ func (m Model) View() string {
 
 	// Phase 2 overlays.
 	var overlays []string
+	if m.errorModal != nil {
+		overlays = append(overlays, m.errorModal.View())
+	}
 	if m.confirm != nil {
 		overlays = append(overlays, m.confirm.View())
 	}

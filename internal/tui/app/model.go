@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/hman-pro/projectlens/internal/tui/components/confirmmodal"
+	"github.com/hman-pro/projectlens/internal/tui/components/errormodal"
 	"github.com/hman-pro/projectlens/internal/tui/components/jobdrawer"
 	"github.com/hman-pro/projectlens/internal/tui/jobs"
 	"github.com/hman-pro/projectlens/internal/tui/sections"
@@ -52,6 +53,7 @@ type Model struct {
 	target        jobs.RunnerTarget
 	drawer        *jobdrawer.Model
 	confirm       *confirmmodal.Model
+	errorModal    *errormodal.Model
 	pendingToken  uint64
 	pendingSpec   jobs.Spec
 	quitRequested bool
@@ -143,6 +145,9 @@ func (m Model) RunnerStatus() string {
 // HasConfirmModal reports whether a confirm modal is open. Used by
 // tests.
 func (m Model) HasConfirmModal() bool { return m.confirm != nil }
+
+// HasErrorModal reports whether the blocking error modal is open.
+func (m Model) HasErrorModal() bool { return m.errorModal != nil }
 
 // PendingToken exposes the pendingToken counter for tests asserting
 // stale-preflight behaviour.

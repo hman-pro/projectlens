@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/hman-pro/projectlens/internal/tui/components/confirmmodal"
+	"github.com/hman-pro/projectlens/internal/tui/components/errormodal"
 	"github.com/hman-pro/projectlens/internal/tui/components/jobdrawer"
 	"github.com/hman-pro/projectlens/internal/tui/jobs"
 	"github.com/hman-pro/projectlens/internal/tui/sections"
@@ -55,6 +56,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			return m, nil
+		}
+		// Error modal consumes keys when active. Takes precedence over
+		// confirm because we want users to acknowledge a failure before
+		// kicking off another action.
+		if m.errorModal != nil {
+			next, cmd := m.errorModal.Update(msg)
+			m.errorModal = &next
+			if next.Done() {
+				m.errorModal = nil
+			}
+			return m, cmd
 		}
 		// Confirm modal consumes keys when active.
 		if m.confirm != nil {
@@ -187,7 +199,10 @@ func (m Model) handleActionKey(key tea.KeyMsg) (Model, tea.Cmd, bool) {
 		}
 		// Binary-missing check happens BEFORE preflight.
 		if m.target.BinaryPath == "" {
-			m.toastMsg = "projectlens binary not found; set PROJECTLENS_BINARY"
+			em := errormodal.New("binary not found",
+				"projectlens binary could not be located.").
+				WithHint("set PROJECTLENS_BINARY, place a projectlens binary next to projectlens-tui, or add it to PATH")
+			m.errorModal = &em
 			return m, nil, true
 		}
 		m.pendingToken++
@@ -211,8 +226,9 @@ func (m Model) handlePreflightDone(msg jobs.PreflightDoneMsg) (tea.Model, tea.Cm
 		return m, nil
 	}
 	if msg.Err != nil {
-		log.Printf("toast: preflight failed: %v", msg.Err)
-		m.toastMsg = "preflight failed: " + msg.Err.Error()
+		log.Printf("preflight failed: %v", msg.Err)
+		em := errormodal.New("preflight failed", msg.Err.Error())
+		m.errorModal = &em
 		return m, nil
 	}
 	headline := msg.Spec.Headline(msg.Count, msg.Cost)
@@ -230,8 +246,9 @@ func (m Model) handleConfirmed(msg confirmmodal.ConfirmedMsg) (tea.Model, tea.Cm
 	for _, spec := range m.registry {
 		if spec.Name == msg.Token {
 			if err := m.runner.Start(spec); err != nil {
-				log.Printf("toast: start failed: %v", err)
-				m.toastMsg = "start failed: " + err.Error()
+				log.Printf("start failed: %v", err)
+				em := errormodal.New(spec.Name+" start failed", err.Error())
+				m.errorModal = &em
 			}
 			return m, nil
 		}
@@ -274,10 +291,31 @@ func (m Model) handleJobCompleted(msg jobs.JobCompletedMsg) (tea.Model, tea.Cmd)
 	if msg.Status == "succeeded" {
 		cmds = append(cmds, m.refreshSections(msg.Spec.RefreshOn))
 	}
+	if msg.Status == "failed" && m.errorModal == nil {
+		em := errormodal.New(msg.Spec.Name+" failed", lastErrLine(msg.Tail))
+		if msg.LogPath != "" {
+			em = em.WithHint("log: " + msg.LogPath)
+		}
+		m.errorModal = &em
+	}
+	// Jobs section reflects every terminal status, not just success.
+	cmds = append(cmds, m.refreshSections([]string{"jobs"}))
 	if m.quitRequested {
 		cmds = append(cmds, tea.Quit)
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// lastErrLine returns the trailing non-empty line from a job's tail —
+// usually the most informative failure message. Falls back to a generic
+// string when the tail is empty.
+func lastErrLine(tail []string) string {
+	for i := len(tail) - 1; i >= 0; i-- {
+		if s := tail[i]; s != "" {
+			return s
+		}
+	}
+	return "subprocess exited with non-zero status"
 }
 
 // refreshSections iterates the sections slice and dispatches Refresh()
