@@ -91,7 +91,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "j":
 				if m.drawer != nil {
 					m.drawer.Toggle()
-					return m, nil
+					m, cmd := m.resyncDetailSize()
+					return m, cmd
 				}
 			case "q":
 				return m.handleQuit()
@@ -270,7 +271,22 @@ func (m Model) handleJobMsg(_ tea.Msg) (tea.Model, tea.Cmd) {
 			LogPath: snap.LogPath,
 		}, m.w, 8)
 	}
-	return m, nil
+	m, cmd := m.resyncDetailSize()
+	return m, cmd
+}
+
+// resyncDetailSize re-issues a SizeMsg to the focused section so it
+// can lay out against the newly available space (drawer might have
+// just appeared or grown). Returns the model and any size cmd.
+func (m Model) resyncDetailSize() (Model, tea.Cmd) {
+	if m.tooSmall || len(m.sections) == 0 {
+		return m, nil
+	}
+	dw, dh := m.detailSize()
+	id := m.sections[m.focused].ID()
+	next, cmd := m.sections[m.focused].Update(sections.SizeMsg{SectionID: id, W: dw, H: dh})
+	m.sections[m.focused] = next
+	return m, cmd
 }
 
 func (m Model) handleJobCompleted(msg jobs.JobCompletedMsg) (tea.Model, tea.Cmd) {
@@ -287,7 +303,12 @@ func (m Model) handleJobCompleted(msg jobs.JobCompletedMsg) (tea.Model, tea.Cmd)
 			LogPath:  msg.LogPath,
 		}, m.w, 8)
 	}
+	m2, sizeCmd := m.resyncDetailSize()
+	m = m2
 	var cmds []tea.Cmd
+	if sizeCmd != nil {
+		cmds = append(cmds, sizeCmd)
+	}
 	if msg.Status == "succeeded" {
 		cmds = append(cmds, m.refreshSections(msg.Spec.RefreshOn))
 	}

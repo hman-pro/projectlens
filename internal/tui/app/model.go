@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -111,7 +112,21 @@ func (m Model) sidebarWidth() int {
 }
 
 func (m Model) detailSize() (w, h int) {
-	return m.w - m.sidebarWidth() - 2, m.h - 4
+	return m.w - m.sidebarWidth() - 2, m.h - 4 - m.drawerHeight()
+}
+
+// drawerHeight returns the number of vertical rows the drawer will
+// occupy under its current state. Subtracted from the detail panel
+// height so the drawer never pushes content off-screen.
+func (m Model) drawerHeight() int {
+	if m.drawer == nil {
+		return 0
+	}
+	v := m.drawer.View()
+	if v == "" {
+		return 0
+	}
+	return strings.Count(v, "\n") + 1
 }
 
 func (m Model) since() time.Duration {
