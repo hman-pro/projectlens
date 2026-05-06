@@ -1,12 +1,25 @@
 # ProjectLens
 
-A codebase intelligence platform that indexes Go code, database schemas, change history, and business documentation into a unified searchable graph. Designed for Claude Code via MCP.
+A codebase intelligence platform that indexes Go code, database schemas, change history, and business documentation into a unified searchable graph. Serves any MCP-capable agent (Claude, Cursor, Codex, ...) over Streamable HTTP MCP.
 
 ## Project overview
 
-ProjectLens indexes a Go monorepo (~4,150 files) and serves structured context to Claude Code so it doesn't need to rediscover architecture on every session. Beyond code symbols, it tracks data flows (SQL → tables), change history (git), and business context (Confluence, Jira).
+ProjectLens indexes a Go monorepo (~4,150 files) and serves structured context to AI coding assistants so they don't have to rediscover architecture on every session. Beyond code symbols, it tracks data flows (SQL → tables), change history (git), and business context (Confluence, Jira).
 
 **Target repo:** `example-org/ingest` monorepo (34 services, 71 utility packages, ~2,913 handwritten Go files)
+
+## Documentation layout
+
+Three audience-specific docs. Keep duplication to a minimum — each audience has one home.
+
+| File | Audience | Owns |
+|---|---|---|
+| [`README.md`](README.md) | Non-tech / first-time visitors | What, why, how it helps, 5-step quick start, one-line MCP tool list |
+| [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) | End users wiring an agent into their repo | Per-agent MCP config, skills install, hooks install, troubleshooting |
+| `CLAUDE.md` (this file) | Contributors and maintainers | Architecture, schema, dev workflow, code conventions, design rationale |
+| [`docs/plans/`](docs/plans/) | Maintainers | Design and implementation history (one file per phase) |
+
+When updating something user-visible (a new MCP tool, a new env var, a new skill), update the audience doc that owns it; cross-link instead of copy-pasting.
 
 ## Tech stack
 
@@ -38,7 +51,7 @@ projectlens/
     retrieval/               # lexical, semantic, graph retrieval + router
     rerank/                  # scoring and ranking
     mcpserver/               # MCP HTTP server with 10 tools
-    storage/                 # Postgres client (pgx) for all 13 tables
+    storage/                 # Postgres client (pgx) for all 14 tables
     providers/
       ollama/                # Ollama embedding client (local)
       anthropic/             # Anthropic/Claude summarization client
@@ -54,16 +67,16 @@ projectlens/
     002_intelligence_platform.up.sql
     003_vector_dimensions.up.sql
     004_knowledge_layer.up.sql
+    005_writer_lock.up.sql
   claude/
-    mcp-config.json          # Claude Code MCP configuration
-    CLAUDE.md.snippet         # guidance to add to target repo's CLAUDE.md
-    settings-snippet.json    # Stop-hook snippet to install in target repo
+    mcp-config.json          # MCP server config snippet (Claude Code format)
+    CLAUDE.md.snippet        # guidance block to merge into target repo's CLAUDE.md
+    settings-snippet.json    # PreToolUse + Stop hooks bundle (3 hooks)
     skills/
-      trace-go-flow/          # locate implementation paths
-      debug-go-test/          # investigate test behavior
-      explain-go-impact/      # estimate change impact
+      use-projectlens/         # MANDATORY MCP-first skill — trace/debug/impact/data-flow workflows
       capture-knowledge/      # detect + persist durable knowledge during sessions
   docs/
+    AGENT_SETUP.md            # end-user guide: per-agent config, skills, hooks
     plans/
       2026-04-14-projectlens-design.md
       2026-04-14-projectlens-implementation.md
@@ -244,6 +257,65 @@ session — any in-flight transactions in that process roll back.
 | `search_knowledge` | Search captured knowledge by query, category, and/or anchor |
 
 `get_symbol_context`, `get_package_summary`, and `search_go_context` automatically append a `Related knowledge` block when entries are anchored to the target — no extra call needed.
+
+## Skills and hooks (bundled in `claude/`)
+
+The `claude/` directory ships **agent integration assets** — skills and
+hooks that end users install into their target repo to make their AI
+assistant reliably reach for ProjectLens. We maintain these as part of the
+ProjectLens project; users symlink them into `.claude/` in their own repo
+(see [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) for the install path).
+
+### Skills
+
+Two skills, one role each:
+
+- **`use-projectlens`** (`claude/skills/use-projectlens/SKILL.md`) — primary
+  forcing skill. The rule: *"Before opening files, grepping, or listing
+  directories to answer a question about code structure, behavior,
+  history, data flow, or impact — call ProjectLens first."* Contains a
+  decision-flow diagram, tool-picker table, and four canonical workflows
+  (trace, debug-test, change-impact, data-flow). When adding a new MCP
+  tool, also extend the tool-picker table here.
+
+- **`capture-knowledge`** (`claude/skills/capture-knowledge/SKILL.md`) —
+  write-back skill. Defines 9 trigger signals and 6 categories
+  (`lesson`, `best_practice`, `convention`, `domain_knowledge`, `how_to`,
+  `decision`). When the agent detects a signal, it calls
+  `save_knowledge` with required `category`/`title`/`body` and an optional
+  anchor. Body format is rule + `**Why:**` + `**How to apply:**`.
+
+When you change a skill, the change reaches users on their next pull /
+symlink refresh — there's no separate publish step.
+
+### Hooks (`claude/settings-snippet.json`)
+
+Three hooks, all soft `<system-reminder>` nudges (no exit-code blocking):
+
+| Event | Matcher | Purpose |
+|---|---|---|
+| `PreToolUse` | `Edit \| Write \| MultiEdit` | Pre-edit impact-check reminder. Tells the agent: if editing an exported symbol, interface, or `migrations/*.sql`, you must have called `get_symbol_context` / `get_table_context` / `get_coupling` first. |
+| `Stop` | (any) | capture-knowledge scan: if any of the 9 signals fired this turn, call `save_knowledge` before stopping. |
+| `Stop` | (any) | use-projectlens compliance audit: flag turns that answered structural questions via Read/Grep/Glob without a prior ProjectLens call. |
+
+**Why soft (reminder) instead of blocking (exit code 2):** blocking would
+also stop legitimate edits to private/test code where the impact-check
+doesn't apply. Per-edit detection of "is this an exported symbol?" is
+expensive at the harness level. Soft nudges trade enforcement strength
+for low false-positive rate.
+
+**Editing the hooks.** Keep commands one-line `echo
+'<system-reminder>...</system-reminder>'`. The harness pipes the echo
+output back to the agent as a system-reminder block. JSON validates with
+`python3 -m json.tool claude/settings-snippet.json`.
+
+### Distribution
+
+`claude/` is the **canonical** copy. Users either symlink it into their
+target repo's `.claude/` or copy it. We don't publish to a registry — the
+repo URL is the artifact. When making a breaking change to a skill or
+hook, bump the description briefly in `docs/AGENT_SETUP.md` so users
+notice on their next pull.
 
 ## Indexer pipeline
 

@@ -1,54 +1,49 @@
 ## ProjectLens — Repository Intelligence Layer
 
-This repo has a local intelligence layer called **ProjectLens** running at `localhost:8484`.
-It indexes Go code, database schemas, and git history into a searchable graph.
+This repo has a local intelligence layer called **ProjectLens** running at
+`http://localhost:8484/mcp`. It indexes Go code, database schemas, git
+history, and saved lessons into a searchable graph that any MCP-capable
+agent (Claude, Cursor, Codex, ...) can query.
 
-### When to use ProjectLens
+### Mandatory: query ProjectLens first
 
-Call ProjectLens BEFORE opening files when answering implementation/architecture/history questions. Pick the tool by the question:
+For any question about **code structure, behavior, history, data flow, or
+impact** — call ProjectLens BEFORE Read/Grep/Glob. The full rules,
+tool-picker, and workflows live in the bundled skill:
 
-**Discovery & navigation**
-- "Where is X implemented?" → `find_symbol`
-- "How does Y work?" / "How is Z handled?" (natural language) → `search_go_context`
-- "What calls X? What does X depend on? What implements interface I?" → `get_symbol_context`
-- "What does package P do?" → `get_package_summary`
+- `claude/skills/use-projectlens/SKILL.md` — primary skill, forces MCP-first
+  lookup with workflows for trace, debug, impact, and data-flow questions.
+- `claude/skills/capture-knowledge/SKILL.md` — write-back skill: detects
+  durable lessons in a session and persists them via `save_knowledge`.
 
-**Data layer**
-- "Which Go code reads/writes table T?" / "What columns does T have?" → `get_table_context`
+### Install in your repo
 
-**Change analysis**
-- "When was X last changed? Who changes it?" → `get_change_history` (accepts a file path or symbol name)
-- "What files change together with X?" / "If I edit X, what else should I touch?" → `get_coupling`
+1. Symlink or copy the two skill directories into your repo's
+   `.claude/skills/`:
+   ```bash
+   ln -s /path/to/projectlens/claude/skills/use-projectlens  .claude/skills/use-projectlens
+   ln -s /path/to/projectlens/claude/skills/capture-knowledge .claude/skills/capture-knowledge
+   ```
+2. Merge `claude/settings-snippet.json` into your repo's
+   `.claude/settings.json`. Three hooks ship in the snippet:
+   - **PreToolUse on `Edit|Write|MultiEdit`** — pre-edit impact-check
+     reminder. Forces the agent to confirm `get_symbol_context` /
+     `get_table_context` / `get_coupling` were called before editing
+     exported symbols, interfaces, or migration files.
+   - **Stop (capture-knowledge)** — scans the turn for durable lessons
+     and persists them via `save_knowledge`.
+   - **Stop (use-projectlens compliance)** — flags turns that answered a
+     structural question via Read/Grep/Glob without a prior ProjectLens
+     call. Silent when compliance is clean.
+3. Add `claude/mcp-config.json` (or its equivalent) to your agent's MCP
+   config so it can reach `http://localhost:8484/mcp`.
 
-**Index health**
-- "Is the index up to date? When was the last reindex?" → `index_status`
-
-**Knowledge layer**
-- "Save what we just learned" / "remember that X" → `save_knowledge`
-- "What do we know about <topic>?" / "what's the lesson about Y?" → `search_knowledge`
-- Knowledge anchored to symbols/packages auto-surfaces in `get_symbol_context`,
-  `get_package_summary`, and `search_go_context` results — no extra call needed.
-
-### Install the capture loop (optional but recommended)
-
-1. Symlink or copy `claude/skills/capture-knowledge/` into your repo's `.claude/skills/`.
-2. Merge `claude/settings-snippet.json` into your repo's `.claude/settings.json`.
-
-The skill tells Claude *what* counts as a capture-worthy moment; the Stop hook
-ensures Claude actually checks every turn. Both work standalone — installing
-just one is a graceful degradation.
-
-### Preferred workflow
-
-1. Start with a ProjectLens call to locate relevant code and relationships.
-2. Read the returned symbols, summaries, and diff snippets.
-3. Only open files to verify specific details — do not explore broadly with Glob/Grep when a ProjectLens call would answer the question.
-4. If results look stale, call `index_status` and ask to rerun `index-history` / `index-all`.
+Both skills work standalone — installing only one is graceful degradation.
 
 ### What NOT to use ProjectLens for
 
-- Reading full file contents — use `Read`.
-- Editing code — use `Edit`.
-- Running commands — use `Bash`.
+- Reading **full file contents** — use `Read`.
+- **Editing** code — use `Edit` / `Write`.
+- **Running** commands or tests — use `Bash`.
 
 ProjectLens is for discovery and context, not for code manipulation.

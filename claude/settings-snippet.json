@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '<system-reminder>Pre-edit impact check (use-projectlens skill). If this edit touches an exported Go symbol, interface, or a file under migrations/, you MUST have already called the matching projectlens MCP tool: get_symbol_context for symbols/interfaces, get_table_context for migrations, plus get_coupling on the target file. If you have not, STOP, run those calls now, then proceed. If the edit is local/private/non-Go/test-only, ignore this reminder. Do not narrate this check.</system-reminder>'"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
@@ -7,6 +18,10 @@
           {
             "type": "command",
             "command": "echo '<system-reminder>Before stopping: scan this turn against the capture-knowledge skill (.claude/skills/capture-knowledge/SKILL.md). If any of the 9 signals fired, call save_knowledge now. If nothing qualifies, stop silently. Do not narrate this check.</system-reminder>'"
+          },
+          {
+            "type": "command",
+            "command": "echo '<system-reminder>use-projectlens compliance check. If this turn answered a question about code structure, behavior, history, data flow, or impact AND you used Read/Grep/Glob WITHOUT first calling a projectlens MCP tool (find_symbol, search_go_context, get_symbol_context, get_package_summary, get_table_context, get_change_history, get_coupling), note the gap and prefer ProjectLens first next time. If the question was non-structural, or you used ProjectLens correctly, stop silently. Do not narrate this check.</system-reminder>'"
           }
         ]
       }
