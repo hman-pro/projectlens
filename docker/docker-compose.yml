@@ -27,6 +27,7 @@ services:
       - ${PROJECTLENS_REPO_PATH}:/repo:ro
     environment:
       DATABASE_URL: "postgres://projectlens:${PROJECTLENS_DB_PASSWORD:-projectlens}@postgres:5432/projectlens?sslmode=disable"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       REPO_PATH: /repo
     depends_on:
@@ -44,6 +45,7 @@ services:
       - ${PROJECTLENS_REPO_PATH}:/repo:ro
     environment:
       DATABASE_URL: "postgres://projectlens:${PROJECTLENS_DB_PASSWORD:-projectlens}@postgres:5432/projectlens?sslmode=disable"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       REPO_PATH: /repo
     depends_on:

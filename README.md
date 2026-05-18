@@ -71,13 +71,13 @@ The setup has two phases: **index your repo once** (slow, but you only do it whe
 - Go 1.26+
 - PostgreSQL 16 with [pgvector](https://github.com/pgvector/pgvector) extension
 - Docker + Docker Compose (easiest way to get Postgres running)
-- API keys for an embedding provider and a summarization provider
+- An `ANTHROPIC_API_KEY` for the default summarizer (Claude Sonnet). Embeddings use local Ollama by default and need no key. An `OPENAI_API_KEY` is only required if you switch either provider to OpenAI in `configs/index.yaml`.
 
 ### 1. Start the database
 
 ```bash
 cp .env.example .env
-# Edit .env — set OPENAI_API_KEY and ANTHROPIC_API_KEY
+# Edit .env — set ANTHROPIC_API_KEY (OPENAI_API_KEY only needed if you swap providers)
 
 cd docker && docker compose up -d
 ```

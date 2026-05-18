@@ -1,3 +1,7 @@
+# repo_path defaults to /repo, which matches the bind mount used by
+# docker/docker-compose.yml. For local CLI/TUI runs outside Docker, set
+# REPO_PATH in your environment (.env or shell export) — env wins over
+# this default.
 repo_path: "/repo"
 database_url: "postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable"
 index:
