@@ -58,8 +58,36 @@ panel.
 
 ### Codex
 
-Add an MCP server entry to your Codex MCP config pointing to
-`http://localhost:8484/mcp`. Streamable HTTP transport.
+Codex spawns MCP servers as stdio subprocesses, so wrap the Streamable
+HTTP endpoint with `mcp-remote` (same bridge Claude Code uses
+implicitly).
+
+1. Install the bridge once: `npm i -g mcp-remote` — or rely on `npx -y`
+   in the config and skip the global install.
+2. Add to `~/.codex/config.toml` (see
+   [`claude/codex/config.toml.snippet`](../claude/codex/config.toml.snippet)
+   in this repo):
+
+   ```toml
+   [mcp_servers.projectlens]
+   command = "npx"
+   args = ["-y", "mcp-remote", "http://localhost:8484/mcp"]
+   ```
+
+3. Restart Codex. The 10 ProjectLens tools appear in the tool list.
+
+Codex does **not** auto-load `.claude/skills/*.md` the way Claude Code
+does. Instead, paste the contents of
+[`claude/codex/AGENTS.md.snippet`](../claude/codex/AGENTS.md.snippet)
+into your target repo's `AGENTS.md` (or the Codex system-prompt
+override). It compresses the mandatory rule, tool picker, and
+knowledge-capture instructions into the prompt body so Codex actually
+reaches for the tools. The full Codex-flavored skill lives at
+[`claude/codex/use-projectlens.md`](../claude/codex/use-projectlens.md);
+link to it from `AGENTS.md` for the longer playbook.
+
+When Codex calls `save_knowledge`, pass `source: "codex"` so the
+audit trail distinguishes agents.
 
 ### Other MCP-compatible agents
 

@@ -1,0 +1,40 @@
+# ProjectLens — Repository Intelligence Layer
+
+This repo has a local intelligence service called **ProjectLens** running at
+`http://localhost:8484/mcp`. It indexes every Go symbol, database table,
+git change, and saved lesson into a searchable graph. When the MCP server
+is connected, the following tools appear in your tool list: `find_symbol`,
+`search_go_context`, `get_symbol_context`, `get_package_summary`,
+`get_table_context`, `get_change_history`, `get_coupling`, `index_status`,
+`save_knowledge`, `search_knowledge`.
+
+## Mandatory: query ProjectLens first
+
+For any question about **code structure, behavior, history, data flow, or
+impact**, call a ProjectLens tool BEFORE grepping or reading files.
+
+| Question | Tool |
+|---|---|
+| "Where is `<name>`?" | `find_symbol` |
+| "How does X work?" | `search_go_context` |
+| "What calls X? Who implements I?" | `get_symbol_context` |
+| "What does package P do?" | `get_package_summary` |
+| "Which code reads/writes table T?" | `get_table_context` |
+| "When was X last changed?" | `get_change_history` |
+| "What changes with X?" | `get_coupling` |
+| "Is the index fresh?" | `index_status` |
+| "What do we know about Y?" | `search_knowledge` |
+
+If a ProjectLens call answers the question fully, stop. Do not also grep
+"to double-check"; the index is the source of truth for structural facts.
+
+## Save durable lessons
+
+When you hit a non-obvious lesson, convention, decision, or domain
+clarification, call `save_knowledge` with `category`, `title`, `body` (rule
++ `**Why:**` + `**How to apply:**`), an `anchors` array, and
+`source: "codex"`. Anchored entries auto-surface in `get_symbol_context`,
+`get_package_summary`, and `search_go_context` next session.
+
+The full guidance — workflows, anti-patterns, capture signals — lives at
+`claude/codex/use-projectlens.md` in the ProjectLens repo.

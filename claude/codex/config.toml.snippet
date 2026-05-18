@@ -1,0 +1,10 @@
+# Add to ~/.codex/config.toml to expose ProjectLens as an MCP server inside
+# the OpenAI Codex CLI. Codex spawns MCP servers as subprocesses over stdio,
+# so we wrap the Streamable HTTP MCP endpoint with `mcp-remote` (the same
+# bridge Claude Code uses).
+#
+# Prerequisite: `npm i -g mcp-remote` (or rely on `npx -y` as below).
+
+[mcp_servers.projectlens]
+command = "npx"
+args = ["-y", "mcp-remote", "http://localhost:8484/mcp"]
