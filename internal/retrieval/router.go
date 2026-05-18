@@ -91,9 +91,14 @@ type Router struct {
 }
 
 // QueryResult holds the classified query type and the ranked results.
+// Warnings carries non-fatal backend issues (e.g. semantic search
+// degraded to lexical-only because the embedder was unavailable). MCP
+// handlers surface these to the caller so the agent knows the result
+// is partial.
 type QueryResult struct {
 	QueryType QueryType      `json:"query_type"`
 	Results   []SearchResult `json:"results"`
+	Warnings  []string       `json:"warnings,omitempty"`
 }
 
 // NewRouter creates a Router with the given database and embedder.
@@ -168,19 +173,20 @@ func (r *Router) Query(ctx context.Context, query string, topK int) (*QueryResul
 	isTestQuery := strings.Contains(strings.ToLower(query), "test")
 
 	var results []SearchResult
+	var warnings []string
 	var err error
 
 	switch qtype {
 	case ExactSymbol:
 		results, err = r.queryExactSymbol(ctx, query, topK)
 	case ImplementationSearch:
-		results, err = r.queryImplementation(ctx, query, topK)
+		results, warnings, err = r.queryImplementation(ctx, query, topK)
 	case PackageOverview:
 		results, err = r.queryPackageOverview(ctx, query, topK)
 	case DependencyTrace:
 		results, err = r.queryDependencyTrace(ctx, query, topK)
 	default:
-		results, err = r.queryImplementation(ctx, query, topK)
+		results, warnings, err = r.queryImplementation(ctx, query, topK)
 	}
 
 	if err != nil {
@@ -196,6 +202,7 @@ func (r *Router) Query(ctx context.Context, query string, topK int) (*QueryResul
 	return &QueryResult{
 		QueryType: qtype,
 		Results:   ranked,
+		Warnings:  warnings,
 	}, nil
 }
 
@@ -204,52 +211,77 @@ func (r *Router) queryExactSymbol(ctx context.Context, query string, topK int) (
 	return LexicalSearch(ctx, r.db, query, topK)
 }
 
-// queryImplementation runs lexical and semantic search in parallel and merges.
-func (r *Router) queryImplementation(ctx context.Context, query string, topK int) ([]SearchResult, error) {
-	type result struct {
+// queryImplementation runs lexical and semantic search in parallel and
+// merges. Failure modes:
+//   - both fail: returns the lexical error (semantic is auxiliary).
+//   - lexical succeeds, semantic fails: returns lexical results with a
+//     warning describing the semantic-side error, so callers can surface
+//     "degraded to lexical-only" to the agent.
+//   - lexical fails, semantic succeeds: returns semantic results with a
+//     warning about the missing lexical hits.
+//   - no embedder configured: lexical-only, no warning (this is a
+//     deliberate config, not a degradation).
+func (r *Router) queryImplementation(ctx context.Context, query string, topK int) ([]SearchResult, []string, error) {
+	type sideResult struct {
 		results []SearchResult
 		err     error
 	}
 
-	var wg sync.WaitGroup
-	ch := make(chan result, 2)
+	var (
+		lexCh = make(chan sideResult, 1)
+		semCh chan sideResult
+		wg    sync.WaitGroup
+	)
 
-	// Lexical search.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		res, err := LexicalSearch(ctx, r.db, query, topK)
-		ch <- result{results: res, err: err}
+		lexCh <- sideResult{results: res, err: err}
 	}()
 
-	// Semantic search.
 	if r.embedder != nil {
+		semCh = make(chan sideResult, 1)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			res, err := SemanticSearch(ctx, r.db, r.embedder, query, topK)
-			ch <- result{results: res, err: err}
+			semCh <- sideResult{results: res, err: err}
 		}()
 	}
 
 	wg.Wait()
-	close(ch)
-
-	var all []SearchResult
-	for res := range ch {
-		if res.err != nil {
-			return nil, res.err
-		}
-		all = append(all, res.results...)
+	lex := <-lexCh
+	var sem sideResult
+	if semCh != nil {
+		sem = <-semCh
 	}
 
-	// Deduplicate by symbol ID, keeping the highest score.
+	switch {
+	case lex.err != nil && (semCh == nil || sem.err != nil):
+		return nil, nil, lex.err
+	case lex.err != nil:
+		merged := deduplicateBySymbolID(sem.results)
+		sort.Slice(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
+		return merged, []string{fmt.Sprintf("lexical search unavailable: %v", lex.err)}, nil
+	case semCh != nil && sem.err != nil:
+		merged := deduplicateBySymbolID(lex.results)
+		sort.Slice(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
+		return merged, []string{fmt.Sprintf("semantic search unavailable: %v", sem.err)}, nil
+	}
+
+	var all []SearchResult
+	all = append(all, lex.results...)
+	if semCh != nil {
+		all = append(all, sem.results...)
+	}
+
 	merged := deduplicateBySymbolID(all)
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].Score > merged[j].Score
 	})
 
-	return merged, nil
+	return merged, nil, nil
 }
 
 // queryPackageOverview runs lexical search for the package and includes

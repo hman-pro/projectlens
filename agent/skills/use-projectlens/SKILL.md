@@ -144,8 +144,23 @@ ProjectLens is for **discovery and context**, not for code manipulation.
 If a query returns nothing for an obviously-present symbol, or returns a
 deleted file:
 
-1. Call `index_status`.
-2. If `code_stage_age_minutes` is large or `last_run` is old, tell the user
-   the index looks stale and suggest `make reindex` (or `index-all` for a
-   full rebuild). Do not silently fall back to grep and pretend the answer
-   is authoritative.
+1. Call `index_status`. It returns a human-readable summary plus a fenced
+   ```json``` block with this shape:
+
+   ```json
+   {
+     "stages": {
+       "code":      {"stage":"code","status":"completed","age_minutes":12.3, ...},
+       "summarize": {"stage":"summarize","status":"completed","age_minutes":5.0, ...},
+       "embed":     {"stage":"embed","status":"completed","age_minutes":4.8, ...}
+     },
+     "git": {"head":"<sha>","dirty":false},
+     "embedder_healthy": true
+   }
+   ```
+
+2. If `stages.code.age_minutes` is large (e.g. > 60), or `git.dirty` is
+   `true`, or `embedder_healthy` is `false`, tell the user the index looks
+   stale/degraded and suggest `make reindex` (or `index-all` for a full
+   rebuild). Do not silently fall back to grep and pretend the answer is
+   authoritative.

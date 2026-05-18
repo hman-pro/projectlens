@@ -119,6 +119,42 @@ func (db *DB) GetLatestRun(ctx context.Context) (*IndexRunRecord, error) {
 	return r, nil
 }
 
+// GetLatestRunsByStage returns the most recent index_runs row for each
+// stage that has ever run. Stages currently emitted by the indexer:
+// 'code', 'summarize', 'embed'. Stages with no rows are absent from
+// the map. Used by index_status so agents can see per-stage freshness
+// instead of a single "latest run of any kind" timestamp.
+func (db *DB) GetLatestRunsByStage(ctx context.Context) (map[string]IndexRunRecord, error) {
+	const query = `
+		SELECT DISTINCT ON (stage)
+		       id, started_at, completed_at, commit_sha,
+		       files_processed, symbols_extracted, edges_created, status, stage
+		FROM index_runs
+		ORDER BY stage, id DESC
+	`
+	rows, err := db.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("storage: latest runs by stage: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]IndexRunRecord{}
+	for rows.Next() {
+		var r IndexRunRecord
+		if err := rows.Scan(
+			&r.ID, &r.StartedAt, &r.CompletedAt, &r.CommitSHA,
+			&r.FilesProcessed, &r.SymbolsExtracted, &r.EdgesCreated, &r.Status, &r.Stage,
+		); err != nil {
+			return nil, fmt.Errorf("storage: latest runs by stage: scan: %w", err)
+		}
+		out[r.Stage] = r
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: latest runs by stage: rows: %w", err)
+	}
+	return out, nil
+}
+
 // UpsertGitRef inserts or updates a git ref keyed by branch.
 func (db *DB) UpsertGitRef(ctx context.Context, branch, commitSHA string) error {
 	const query = `

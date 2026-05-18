@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 	"unicode"
@@ -86,10 +87,18 @@ func (s *Server) handleSearchGoContext(ctx context.Context, req mcp.CallToolRequ
 	}
 
 	if len(results) == 0 {
-		return mcp.NewToolResultText(fmt.Sprintf("No results found for query %q.", query)), nil
+		var b strings.Builder
+		fmt.Fprintf(&b, "No results found for query %q.\n", query)
+		for _, w := range qr.Warnings {
+			fmt.Fprintf(&b, "warning: %s\n", w)
+		}
+		return mcp.NewToolResultText(b.String()), nil
 	}
 
 	var b strings.Builder
+	for _, w := range qr.Warnings {
+		fmt.Fprintf(&b, "warning: %s\n", w)
+	}
 	fmt.Fprintf(&b, "Found %d result(s) for %q (query type: %s):\n", len(results), query, qr.QueryType)
 	for i, r := range results {
 		b.WriteString("\n")
@@ -347,42 +356,135 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 	return mcp.NewToolResultText(b.String()), nil
 }
 
-// handleIndexStatus handles the index_status tool call.
+// stageStatus is the per-stage block emitted in the index_status JSON.
+type stageStatus struct {
+	Stage          string  `json:"stage"`
+	Status         string  `json:"status"`
+	CommitSHA      string  `json:"commit_sha,omitempty"`
+	StartedAt      string  `json:"started_at,omitempty"`
+	CompletedAt    string  `json:"completed_at,omitempty"`
+	AgeMinutes     float64 `json:"age_minutes,omitempty"`
+	FilesProcessed int     `json:"files_processed,omitempty"`
+}
+
+// indexStatusPayload is the machine-parseable block agents can inspect
+// without text-scraping. Fields here are stable; skill SKILL.md
+// references them by name.
+type indexStatusPayload struct {
+	Stages          map[string]stageStatus `json:"stages"`
+	Git             struct {
+		Head  string `json:"head,omitempty"`
+		Dirty bool   `json:"dirty"`
+	} `json:"git"`
+	EmbedderHealthy *bool `json:"embedder_healthy"`
+}
+
+// handleIndexStatus handles the index_status tool call. Returns a
+// human-readable summary followed by a fenced JSON block listing each
+// stage's freshness, current git HEAD/dirty state, and embedder health.
 func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	run, err := s.db.GetLatestRun(ctx)
+	byStage, err := s.db.GetLatestRunsByStage(ctx)
 	if err != nil {
-		return mcp.NewToolResultErrorFromErr("index_status: failed to get latest run", err), nil
+		return mcp.NewToolResultErrorFromErr("index_status: failed to get latest runs by stage", err), nil
 	}
 
-	if run == nil {
-		return mcp.NewToolResultText("No index runs found. Run 'projectlens bootstrap' to create the initial index."), nil
+	payload := indexStatusPayload{Stages: map[string]stageStatus{}}
+	for stage, run := range byStage {
+		st := stageStatus{
+			Stage:          stage,
+			Status:         run.Status,
+			CommitSHA:      run.CommitSHA,
+			StartedAt:      run.StartedAt.Format(time.RFC3339),
+			FilesProcessed: run.FilesProcessed,
+		}
+		if run.CompletedAt != nil {
+			st.CompletedAt = run.CompletedAt.Format(time.RFC3339)
+			st.AgeMinutes = time.Since(*run.CompletedAt).Minutes()
+		}
+		payload.Stages[stage] = st
 	}
+
+	payload.Git.Head, payload.Git.Dirty = s.gitHeadAndDirty(ctx)
+	payload.EmbedderHealthy = s.embedderHealthy(ctx)
 
 	var b strings.Builder
 	b.WriteString("ProjectLens Index Status\n")
 	b.WriteString("=======================\n")
-	fmt.Fprintf(&b, "Status:            %s\n", run.Status)
-	fmt.Fprintf(&b, "Stage:             %s\n", run.Stage)
-	fmt.Fprintf(&b, "Commit SHA:        %s\n", run.CommitSHA)
-	fmt.Fprintf(&b, "Started at:        %s\n", run.StartedAt.Format(time.RFC3339))
-	if run.CompletedAt != nil {
-		fmt.Fprintf(&b, "Completed at:      %s\n", run.CompletedAt.Format(time.RFC3339))
-	}
-	fmt.Fprintf(&b, "Files processed:   %d\n", run.FilesProcessed)
-	fmt.Fprintf(&b, "Symbols extracted: %d\n", run.SymbolsExtracted)
-	fmt.Fprintf(&b, "Edges created:     %d\n", run.EdgesCreated)
-
-	// Staleness warning.
-	if run.CompletedAt != nil {
-		age := time.Since(*run.CompletedAt)
-		if age > 24*time.Hour {
-			fmt.Fprintf(&b, "\nWARNING: Index is %.0f hours old. Consider running 'projectlens reindex'.\n", age.Hours())
+	if len(payload.Stages) == 0 {
+		b.WriteString("No index runs found. Run 'projectlens bootstrap' to create the initial index.\n")
+	} else {
+		for _, stage := range []string{"code", "summarize", "embed", "history", "datastore"} {
+			st, ok := payload.Stages[stage]
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(&b, "[%s] status=%s", st.Stage, st.Status)
+			if st.CompletedAt != "" {
+				fmt.Fprintf(&b, " completed=%s age=%.0fm", st.CompletedAt, st.AgeMinutes)
+			} else if st.StartedAt != "" {
+				fmt.Fprintf(&b, " started=%s", st.StartedAt)
+			}
+			if st.FilesProcessed > 0 {
+				fmt.Fprintf(&b, " files=%d", st.FilesProcessed)
+			}
+			b.WriteString("\n")
+			if st.AgeMinutes > 24*60 && st.Status == "completed" {
+				fmt.Fprintf(&b, "  WARNING: %s stage is %.0fh old — consider reindex.\n", stage, st.AgeMinutes/60)
+			}
 		}
-	} else if run.Status == "running" {
-		b.WriteString("\nIndex is currently being built.\n")
 	}
+
+	if payload.Git.Head != "" {
+		fmt.Fprintf(&b, "Git HEAD: %s (dirty=%v)\n", payload.Git.Head, payload.Git.Dirty)
+	}
+	if payload.EmbedderHealthy != nil {
+		fmt.Fprintf(&b, "Embedder healthy: %v\n", *payload.EmbedderHealthy)
+	} else {
+		b.WriteString("Embedder healthy: unknown (no embedder configured)\n")
+	}
+
+	raw, _ := json.Marshal(payload)
+	b.WriteString("\n```json\n")
+	b.Write(raw)
+	b.WriteString("\n```\n")
 
 	return mcp.NewToolResultText(b.String()), nil
+}
+
+// gitHeadAndDirty returns the current HEAD short SHA and whether the
+// working tree has uncommitted changes. Empty SHA when no repoPath is
+// configured or git isn't reachable — agents treat that as "unknown".
+func (s *Server) gitHeadAndDirty(ctx context.Context) (string, bool) {
+	if s.repoPath == "" {
+		return "", false
+	}
+	headOut, err := exec.CommandContext(ctx, "git", "-C", s.repoPath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", false
+	}
+	head := strings.TrimSpace(string(headOut))
+	statusOut, err := exec.CommandContext(ctx, "git", "-C", s.repoPath, "status", "--porcelain").Output()
+	if err != nil {
+		return head, false
+	}
+	return head, strings.TrimSpace(string(statusOut)) != ""
+}
+
+// embedderHealthy probes the router's embedder with a one-token query.
+// Returns nil when no embedder is configured (distinguishes "not
+// configured" from "configured but broken").
+func (s *Server) embedderHealthy(ctx context.Context) *bool {
+	if s.router == nil {
+		return nil
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_, err := s.router.EmbedQuery(probeCtx, "ping")
+	healthy := err == nil
+	if err != nil && strings.Contains(err.Error(), "no embedder") {
+		return nil
+	}
+	return &healthy
 }
 
 // handleGetChangeHistory handles the get_change_history tool call.
