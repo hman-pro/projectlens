@@ -373,10 +373,14 @@ func (s *PG) HistoryNewCommits(ctx context.Context) (int, error) {
 }
 
 // ChangedFilesSinceLastRun returns the number of files whose persisted
-// index timestamp is older than the most recent successful index run.
-// Uses files.indexed_at (the actual column; see migrations/001:14).
+// index timestamp is older than the most recent successful code-stage
+// index run. Scoped to stage='code' so embed/summarize/history runs
+// (which update other tables, not files.indexed_at) don't inflate the
+// estimate. Uses files.indexed_at (the actual column; see migrations/
+// 001:14). Estimate only — the real indexer compares checksums in
+// internal/indexer/indexer.go:105.
 func (s *PG) ChangedFilesSinceLastRun(ctx context.Context) (int, error) {
-	const refQ = `SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamptz) FROM index_runs WHERE status = 'completed'`
+	const refQ = `SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamptz) FROM index_runs WHERE status = 'completed' AND stage = 'code'`
 	var ref time.Time
 	if err := s.pool.QueryRow(ctx, refQ).Scan(&ref); err != nil {
 		return 0, fmt.Errorf("store: last run: %w", err)
