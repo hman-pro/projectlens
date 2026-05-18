@@ -125,7 +125,10 @@ func (r *Runner) Cancel() {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	_ = cmd.Process.Signal(syscall.SIGTERM)
+	// Signal the whole process group so descendants (git, go/packages,
+	// provider HTTP) terminate with the parent. Falls back to the
+	// direct child on platforms without process groups.
+	_ = signalGroup(cmd.Process.Pid, syscall.SIGTERM)
 	go func() {
 		t := time.NewTimer(5 * time.Second)
 		defer t.Stop()
@@ -137,7 +140,7 @@ func (r *Runner) Cancel() {
 			if cancelFn != nil {
 				cancelFn()
 			}
-			_ = stillCmd.Process.Kill()
+			_ = signalGroup(stillCmd.Process.Pid, syscall.SIGKILL)
 		}
 	}()
 }
@@ -182,6 +185,7 @@ func (r *Runner) run(spec Spec) {
 
 	cmd := exec.CommandContext(ctx, r.target.BinaryPath, argv...)
 	cmd.Env = os.Environ()
+	setPgid(cmd)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 
