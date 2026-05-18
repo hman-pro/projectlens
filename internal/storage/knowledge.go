@@ -48,7 +48,7 @@ func (db *DB) InsertKnowledgeEntry(ctx context.Context, e *KnowledgeEntry) (entr
 		return 0, 0, fmt.Errorf("storage: knowledge: %w", err)
 	}
 	if e.Source == "" {
-		e.Source = "claude"
+		e.Source = "agent"
 	}
 	// tags column is NOT NULL DEFAULT '{}'; pgx maps a nil slice to SQL NULL,
 	// which would violate the constraint instead of taking the default.

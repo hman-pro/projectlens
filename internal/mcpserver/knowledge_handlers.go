@@ -4,13 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/pgvector/pgvector-go"
 
 	"github.com/hman-pro/projectlens/internal/storage"
 )
+
+// maxKnowledgeBodyChars caps the body length fed to the embedder. Matches the
+// project-wide oversized-chunk truncation convention.
+const maxKnowledgeBodyChars = 30000
+
+// knowledgeEmbedModelVersion is the model_version tag stored alongside
+// synchronously-written knowledge embeddings.
+const knowledgeEmbedModelVersion = "embedding-model"
 
 type saveKnowledgeResponse struct {
 	ID                int64    `json:"id"`
@@ -68,11 +78,13 @@ func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolReques
 		sessPtr = &sessionID
 	}
 
+	source := req.GetString("source", "agent")
+
 	entry := &storage.KnowledgeEntry{
 		Category: category, Title: title, Body: body,
-		Tags: tags, Source: "claude", SessionID: sessPtr,
+		Tags: tags, Source: source, SessionID: sessPtr,
 	}
-	entryID, _, err := s.db.InsertKnowledgeEntry(ctx, entry)
+	entryID, chunkID, err := s.db.InsertKnowledgeEntry(ctx, entry)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("save_knowledge: %v", err)), nil
 	}
@@ -82,9 +94,14 @@ func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolReques
 		return mcp.NewToolResultError(fmt.Sprintf("save_knowledge: anchors: %v", err)), nil
 	}
 
+	// Embed synchronously so the entry is immediately query-searchable.
+	// Failures here are non-fatal: the entry is still persisted and can be
+	// embedded later by `index-embed`. Surface the state via Embedded.
+	embedded := s.embedKnowledgeChunk(ctx, chunkID, title, body)
+
 	resp := saveKnowledgeResponse{
 		ID:       entryID,
-		Embedded: false,
+		Embedded: embedded,
 	}
 	for _, r := range resolutions {
 		if r.Resolved {
@@ -96,6 +113,37 @@ func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolReques
 	}
 	out, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+// embedKnowledgeChunk embeds the title+body via the router's embedder and
+// upserts an embeddings row keyed by chunkID. Returns true only when both the
+// embed call and the DB upsert succeed. The chunk content mirrors what
+// InsertKnowledgeEntry wrote (title + "\n\n" + body) so the embedding matches
+// what `index-embed` would produce on a later pass.
+func (s *Server) embedKnowledgeChunk(ctx context.Context, chunkID int64, title, body string) bool {
+	if s.router == nil {
+		return false
+	}
+	content := title + "\n\n" + body
+	if len(content) > maxKnowledgeBodyChars {
+		content = content[:maxKnowledgeBodyChars]
+	}
+	vec, err := s.router.EmbedQuery(ctx, content)
+	if err != nil {
+		// Covers both "no embedder configured" and live embedder failures.
+		log.Printf("save_knowledge: embed skipped (chunk=%d): %v", chunkID, err)
+		return false
+	}
+	rec := &storage.EmbeddingRecord{
+		ChunkID:      chunkID,
+		ModelVersion: knowledgeEmbedModelVersion,
+		Embedding:    pgvector.NewHalfVector(vec),
+	}
+	if err := s.db.UpsertEmbedding(ctx, rec); err != nil {
+		log.Printf("save_knowledge: upsert embedding failed (chunk=%d): %v", chunkID, err)
+		return false
+	}
+	return true
 }
 
 type knowledgeHit struct {

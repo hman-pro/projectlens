@@ -5,7 +5,7 @@ import "github.com/mark3labs/mcp-go/mcp"
 func saveKnowledgeTool() mcp.Tool {
 	return mcp.NewTool("save_knowledge",
 		mcp.WithDescription(
-			"Persist a piece of durable knowledge captured during a Claude session. "+
+			"Persist a piece of durable knowledge captured during an agent session. "+
 				"Use only when one of the 9 capture-knowledge signals fires "+
 				"(see capture-knowledge skill). Anchors are optional but greatly improve "+
 				"retrieval — prefer symbol > package > file > table > none."),
@@ -38,6 +38,9 @@ func saveKnowledgeTool() mcp.Tool {
 		),
 		mcp.WithString("session_id",
 			mcp.Description("Optional session identifier (caller-supplied)")),
+		mcp.WithString("source",
+			mcp.Description("Originating agent identifier (e.g. \"claude\", \"codex\", \"cursor\"). "+
+				"Defaults to \"agent\" when omitted. Free-form; used for filtering and audit.")),
 	)
 }
 
