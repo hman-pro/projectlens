@@ -1,8 +1,10 @@
 // Package mcpserver exposes ProjectLens's retrieval capabilities via the
-// Model Context Protocol (MCP) over Streamable HTTP. It registers 8 tools
-// that Claude Code can call to search symbols, query code semantically,
-// inspect symbol context, summarize packages, look up database table schemas,
-// check index freshness, show change history, and analyse co-change coupling.
+// Model Context Protocol (MCP) over Streamable HTTP. It registers 10
+// tools (see toolRegistry) that an agent can call to search symbols,
+// query code semantically, inspect symbol context, summarize packages,
+// look up database table schemas, check index freshness, show change
+// history, analyse co-change coupling, and save/search captured
+// knowledge.
 package mcpserver
 
 import (
@@ -44,17 +46,9 @@ func (s *Server) Start(ctx context.Context) error {
 		server.WithHooks(s.loggingHooks()),
 	)
 
-	// Register all tools.
-	mcpServer.AddTool(findSymbolTool(), s.handleFindSymbol)
-	mcpServer.AddTool(searchGoContextTool(), s.handleSearchGoContext)
-	mcpServer.AddTool(getSymbolContextTool(), s.handleGetSymbolContext)
-	mcpServer.AddTool(getPackageSummaryTool(), s.handleGetPackageSummary)
-	mcpServer.AddTool(getTableContextTool(), s.handleGetTableContext)
-	mcpServer.AddTool(indexStatusTool(), s.handleIndexStatus)
-	mcpServer.AddTool(getChangeHistoryTool(), s.handleGetChangeHistory)
-	mcpServer.AddTool(getCouplingTool(), s.handleGetCoupling)
-	mcpServer.AddTool(saveKnowledgeTool(), s.handleSaveKnowledge)
-	mcpServer.AddTool(searchKnowledgeTool(), s.handleSearchKnowledge)
+	for _, r := range s.toolRegistry() {
+		mcpServer.AddTool(r.tool, r.handler)
+	}
 
 	httpServer := server.NewStreamableHTTPServer(mcpServer)
 
@@ -118,15 +112,8 @@ func (s *Server) loggingHooks() *server.Hooks {
 // It creates a new server with all tools registered but does not start HTTP.
 func (s *Server) MCPServer() *server.MCPServer {
 	mcpServer := server.NewMCPServer("projectlens", "1.0.0")
-	mcpServer.AddTool(findSymbolTool(), s.handleFindSymbol)
-	mcpServer.AddTool(searchGoContextTool(), s.handleSearchGoContext)
-	mcpServer.AddTool(getSymbolContextTool(), s.handleGetSymbolContext)
-	mcpServer.AddTool(getPackageSummaryTool(), s.handleGetPackageSummary)
-	mcpServer.AddTool(getTableContextTool(), s.handleGetTableContext)
-	mcpServer.AddTool(indexStatusTool(), s.handleIndexStatus)
-	mcpServer.AddTool(getChangeHistoryTool(), s.handleGetChangeHistory)
-	mcpServer.AddTool(getCouplingTool(), s.handleGetCoupling)
-	mcpServer.AddTool(saveKnowledgeTool(), s.handleSaveKnowledge)
-	mcpServer.AddTool(searchKnowledgeTool(), s.handleSearchKnowledge)
+	for _, r := range s.toolRegistry() {
+		mcpServer.AddTool(r.tool, r.handler)
+	}
 	return mcpServer
 }

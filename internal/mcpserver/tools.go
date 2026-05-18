@@ -2,19 +2,32 @@ package mcpserver
 
 import (
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
-// toolDefs returns the 8 MCP tool definitions for ProjectLens.
-func toolDefs() []mcp.Tool {
-	return []mcp.Tool{
-		findSymbolTool(),
-		searchGoContextTool(),
-		getSymbolContextTool(),
-		getPackageSummaryTool(),
-		getTableContextTool(),
-		indexStatusTool(),
-		getChangeHistoryTool(),
-		getCouplingTool(),
+// toolRegistration pairs an MCP tool definition with its handler. The
+// registry below is the single source of truth — both Start() and
+// MCPServer() iterate it, so a new tool only needs to be added in one
+// place.
+type toolRegistration struct {
+	tool    mcp.Tool
+	handler server.ToolHandlerFunc
+}
+
+// toolRegistry returns every MCP tool the server exposes, paired with
+// its handler. Order is preserved for deterministic registration.
+func (s *Server) toolRegistry() []toolRegistration {
+	return []toolRegistration{
+		{findSymbolTool(), s.handleFindSymbol},
+		{searchGoContextTool(), s.handleSearchGoContext},
+		{getSymbolContextTool(), s.handleGetSymbolContext},
+		{getPackageSummaryTool(), s.handleGetPackageSummary},
+		{getTableContextTool(), s.handleGetTableContext},
+		{indexStatusTool(), s.handleIndexStatus},
+		{getChangeHistoryTool(), s.handleGetChangeHistory},
+		{getCouplingTool(), s.handleGetCoupling},
+		{saveKnowledgeTool(), s.handleSaveKnowledge},
+		{searchKnowledgeTool(), s.handleSearchKnowledge},
 	}
 }
 
@@ -99,7 +112,7 @@ func getTableContextTool() mcp.Tool {
 // indexStatusTool defines the index_status tool.
 func indexStatusTool() mcp.Tool {
 	return mcp.NewTool("index_status",
-		mcp.WithDescription("Check the freshness and status of the ProjectLens index."),
+		mcp.WithDescription("Check per-stage freshness, current git HEAD/dirty state, and embedder health for the ProjectLens index. Returns a human-readable summary plus a fenced ```json``` block with fields stages.<stage>.{status, age_minutes, completed_at, files_processed}, git.{head, dirty}, embedder_healthy."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 	)

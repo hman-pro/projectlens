@@ -5,14 +5,20 @@ import (
 	"testing"
 )
 
-func TestToolDefsCount(t *testing.T) {
-	defs := toolDefs()
-	if got := len(defs); got != 8 {
-		t.Fatalf("expected 8 tool definitions, got %d", got)
+// registryTools returns the canonical tool list via the live registry —
+// the same list Start() and MCPServer() iterate.
+func registryTools() []toolRegistration {
+	return New(nil, nil, 8484, "").toolRegistry()
+}
+
+func TestRegistryCount(t *testing.T) {
+	regs := registryTools()
+	if got := len(regs); got != 10 {
+		t.Fatalf("expected 10 tool registrations, got %d", got)
 	}
 }
 
-func TestToolDefsNames(t *testing.T) {
+func TestRegistryNames(t *testing.T) {
 	expected := []string{
 		"find_symbol",
 		"get_change_history",
@@ -21,13 +27,15 @@ func TestToolDefsNames(t *testing.T) {
 		"get_symbol_context",
 		"get_table_context",
 		"index_status",
+		"save_knowledge",
 		"search_go_context",
+		"search_knowledge",
 	}
 
-	defs := toolDefs()
-	names := make([]string, len(defs))
-	for i, d := range defs {
-		names[i] = d.Name
+	regs := registryTools()
+	names := make([]string, len(regs))
+	for i, r := range regs {
+		names[i] = r.tool.Name
 	}
 	sort.Strings(names)
 
@@ -38,11 +46,13 @@ func TestToolDefsNames(t *testing.T) {
 	}
 }
 
-func TestToolDefsDescriptions(t *testing.T) {
-	defs := toolDefs()
-	for _, d := range defs {
-		if d.Description == "" {
-			t.Errorf("tool %q has empty description", d.Name)
+func TestRegistryDescriptions(t *testing.T) {
+	for _, r := range registryTools() {
+		if r.tool.Description == "" {
+			t.Errorf("tool %q has empty description", r.tool.Name)
+		}
+		if r.handler == nil {
+			t.Errorf("tool %q has nil handler", r.tool.Name)
 		}
 	}
 }
@@ -184,14 +194,26 @@ func TestServerRegistersAllTools(t *testing.T) {
 	}
 }
 
-func TestAllToolsReadOnly(t *testing.T) {
-	defs := toolDefs()
-	for _, d := range defs {
-		if d.Annotations.ReadOnlyHint == nil || !*d.Annotations.ReadOnlyHint {
-			t.Errorf("tool %q should be marked read-only", d.Name)
+// writingTools enumerates tools that mutate state — they must not carry
+// ReadOnlyHint=true. Everything else in the registry is read-only.
+var writingTools = map[string]bool{
+	"save_knowledge": true,
+}
+
+func TestToolReadOnlyHints(t *testing.T) {
+	for _, r := range registryTools() {
+		ro := r.tool.Annotations.ReadOnlyHint
+		if writingTools[r.tool.Name] {
+			if ro != nil && *ro {
+				t.Errorf("tool %q writes state but is marked read-only", r.tool.Name)
+			}
+			continue
 		}
-		if d.Annotations.DestructiveHint == nil || *d.Annotations.DestructiveHint {
-			t.Errorf("tool %q should not be marked destructive", d.Name)
+		if ro == nil || !*ro {
+			t.Errorf("tool %q should be marked read-only", r.tool.Name)
+		}
+		if r.tool.Annotations.DestructiveHint == nil || *r.tool.Annotations.DestructiveHint {
+			t.Errorf("tool %q should not be marked destructive", r.tool.Name)
 		}
 	}
 }
@@ -211,6 +233,31 @@ func TestGetChangeHistorySchema(t *testing.T) {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("missing %q property", prop)
 		}
+	}
+}
+
+func TestSaveKnowledgeSchema(t *testing.T) {
+	tool := saveKnowledgeTool()
+
+	if tool.Name != "save_knowledge" {
+		t.Fatalf("expected name save_knowledge, got %s", tool.Name)
+	}
+
+	// category, title, body are required; source is optional and vendor-neutral.
+	requiredSet := map[string]bool{}
+	for _, r := range tool.InputSchema.Required {
+		requiredSet[r] = true
+	}
+	for _, want := range []string{"category", "title", "body"} {
+		if !requiredSet[want] {
+			t.Errorf("expected %q to be required, got required=%v", want, tool.InputSchema.Required)
+		}
+	}
+	if requiredSet["source"] {
+		t.Errorf("source must be optional, found in required=%v", tool.InputSchema.Required)
+	}
+	if _, ok := tool.InputSchema.Properties["source"]; !ok {
+		t.Error("missing 'source' property — agents need a way to declare their identity")
 	}
 }
 
