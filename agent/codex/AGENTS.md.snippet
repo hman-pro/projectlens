@@ -36,5 +36,17 @@ clarification, call `save_knowledge` with `category`, `title`, `body` (rule
 `source: "codex"`. Anchored entries auto-surface in `get_symbol_context`,
 `get_package_summary`, and `search_go_context` next session.
 
-The full guidance — workflows, anti-patterns, capture signals — lives at
-`claude/codex/use-projectlens.md` in the ProjectLens repo.
+## Saved-entry source field
+
+Pass `source: "codex"` to `save_knowledge` so the audit trail can
+distinguish entries from different agents.
+
+## Full playbook
+
+Workflows, anti-patterns, capture signals, structured-content fields,
+stale-index handling, and writer-lock awareness all live in the
+canonical skill files. Codex does **not** auto-load these — read them
+directly when you need the longer playbook:
+
+- `agent/skills/use-projectlens/SKILL.md`
+- `agent/skills/capture-knowledge/SKILL.md`

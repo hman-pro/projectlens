@@ -42,9 +42,28 @@ record it.
 - Exploratory wandering — only after a clear signal, not "just in case".
 - Duplicates within the same session — one capture per insight.
 
+## Dedup first — search before saving
+
+Before calling `save_knowledge`, call `search_knowledge` with a tight query
+on the title or the rule's keywords (and the same `anchor` if you have one).
+
+- If a matching entry already exists, **leave it alone**. Do not call
+  `save_knowledge` again — the handler inserts unconditionally, so a
+  re-save produces a duplicate `knowledge_entries` row and a duplicate
+  `knowledge:<id>` chunk. There is no upsert path today.
+- If the search returns near-misses on a different facet (same symbol, but
+  a different rule), save the new one — they coexist.
+- If the existing entry is genuinely wrong or outdated, surface that to
+  the user. Mutating an existing entry needs a DB-level fix (or a future
+  `update_knowledge` tool) — it is not something the agent can do via
+  `save_knowledge`.
+
+Skipping this step leads to 5 sessions = 5 near-duplicate entries on the
+same convention. Don't pollute the knowledge layer.
+
 ## How to call `save_knowledge`
 
-Required: `category`, `title`, `body`. Optional but strongly preferred: `anchors`, `tags`.
+Required: `category`, `title`, `body`. Optional but strongly preferred: `anchors`, `tags`, `source`.
 
 **Anchor selection** (most specific that applies):
 - `symbol` — about a specific function/type. `ref` = full SCIP symbol (e.g., `go . internal/storage . DB.UpsertChunk()`).
@@ -55,6 +74,24 @@ Required: `category`, `title`, `body`. Optional but strongly preferred: `anchors
 
 **Body content**: lead with the rule or finding. Then a "Why:" line (the reason — incident, constraint, preference). Then a "How to apply:" line (when this kicks in). The Why is what makes the entry useful in 6 months when the surrounding context has changed.
 
+**`source` field**: pass the originating agent — `"claude"`, `"codex"`,
+`"cursor"`, etc. Defaults to `"agent"` if omitted, which destroys the audit
+trail. Always set it.
+
+## How entries propagate
+
+`save_knowledge` writes a `knowledge_entries` row **plus** a paired
+`chunks` row with `source_type='knowledge'`. The next `index-embed`
+pass picks it up and writes an embedding — until then the entry is
+findable by anchor and lexical search but not by semantic search.
+
+To force immediate semantic availability, the user can run
+`make index-embed`. Otherwise the next scheduled reindex covers it.
+
+Anchored entries auto-surface inside `get_symbol_context`,
+`get_package_summary`, and `search_go_context` — no extra
+`search_knowledge` call required from the consuming agent.
+
 ## Examples
 
 **Lesson, anchored to a symbol:**
@@ -64,7 +101,8 @@ save_knowledge(
   title="halfvec(1024) ANN index needs lists ≥ √rows",
   body="When the lists parameter is too small relative to row count, recall collapses below 50%.\n\n**Why:** Hit this when we scaled past 50k chunks — top-k results stopped including obvious matches.\n**How to apply:** When tuning vector indexes, set lists ≈ √(expected rows), reindex with CONCURRENTLY.",
   tags=["pgvector", "performance"],
-  anchors=[{"type":"package","ref":"internal/storage"}]
+  anchors=[{"type":"package","ref":"internal/storage"}],
+  source="claude"
 )
 ```
 
@@ -75,7 +113,8 @@ save_knowledge(
   title="Provider clients live under internal/providers/<name>",
   body="Each external API gets its own subdirectory under internal/providers/. Constructor takes config + http.Client.\n\n**Why:** Keeps boundary tests isolated and makes provider swaps trivial.\n**How to apply:** Adding a new external API → create internal/providers/<name>/, expose Client struct, add config block in configs/index.yaml.",
   tags=["architecture"],
-  anchors=[{"type":"package","ref":"internal/providers"}]
+  anchors=[{"type":"package","ref":"internal/providers"}],
+  source="claude"
 )
 ```
 
@@ -85,7 +124,8 @@ save_knowledge(
   category="decision",
   title="Ollama for embeddings, Anthropic for summaries",
   body="Local Ollama mxbai-embed-large for embeddings; Claude Sonnet via Anthropic API for summaries.\n\n**Why:** Embeddings are high-volume + privacy-sensitive (run locally, free). Summaries are low-volume + benefit from quality (worth API cost).\n**How to apply:** Don't add new providers without a clear reason; prefer extending one of these two.",
-  tags=["providers"]
+  tags=["providers"],
+  source="claude"
 )
 ```
 

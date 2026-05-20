@@ -68,13 +68,17 @@ projectlens/
     003_vector_dimensions.up.sql
     004_knowledge_layer.up.sql
     005_writer_lock.up.sql
-  claude/
-    mcp-config.json          # MCP server config snippet (Claude Code format)
-    CLAUDE.md.snippet        # guidance block to merge into target repo's CLAUDE.md
-    settings-snippet.json    # PreToolUse + Stop hooks bundle (3 hooks)
-    skills/
+  agent/                     # vendor-neutral agent integration assets
+    skills/                  # canonical skill bodies (loaded by any agent)
       use-projectlens/         # MANDATORY MCP-first skill — trace/debug/impact/data-flow workflows
       capture-knowledge/      # detect + persist durable knowledge during sessions
+    claude/                  # Claude Code wiring
+      mcp-config.json          # MCP server config snippet (Claude Code format)
+      CLAUDE.md.snippet        # guidance block to merge into target repo's CLAUDE.md
+      settings-snippet.json    # SessionStart + PreToolUse + Stop hooks bundle (4 hooks)
+    codex/                   # Codex wiring
+      config.toml.snippet      # MCP server entry for ~/.codex/config.toml
+      AGENTS.md.snippet        # rule + tool picker for target repo's AGENTS.md
   docs/
     AGENT_SETUP.md            # end-user guide: per-agent config, skills, hooks
     plans/
@@ -258,46 +262,68 @@ session — any in-flight transactions in that process roll back.
 
 `get_symbol_context`, `get_package_summary`, and `search_go_context` automatically append a `Related knowledge` block when entries are anchored to the target — no extra call needed.
 
-> **Structured responses.** Each tool returns a typed `structuredContent` payload alongside the prose text. Evidence spans, degradation flags, and provider health surface as named fields. See [`claude/skills/use-projectlens/SKILL.md`](claude/skills/use-projectlens/SKILL.md#structured-fields) for the field reference.
+> **Structured responses.** Each tool returns a typed `structuredContent` payload alongside the prose text. Evidence spans, degradation flags, and provider health surface as named fields. See [`agent/skills/use-projectlens/SKILL.md`](agent/skills/use-projectlens/SKILL.md#structured-fields) for the field reference.
 
-## Skills and hooks (bundled in `claude/`)
+## Skills and hooks (bundled in `agent/`)
 
-The `claude/` directory ships **agent integration assets** — skills and
-hooks that end users install into their target repo to make their AI
-assistant reliably reach for ProjectLens. We maintain these as part of the
-ProjectLens project; users symlink them into `.claude/` in their own repo
-(see [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) for the install path).
+The `agent/` directory ships **vendor-neutral agent integration assets**
+— skills (canonical bodies) plus per-vendor wiring (Claude Code, Codex,
+…) that end users install into their target repo to make their AI
+assistant reliably reach for ProjectLens. We maintain these as part of
+the ProjectLens project; users symlink them into their agent's config
+dir (see [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) for the install
+path).
 
-### Skills
+### Skills (canonical, vendor-neutral)
 
-Two skills, one role each:
+Two skills, one role each. The bodies under `agent/skills/` are the
+single source of truth — vendor adapters reference them, never copy.
 
-- **`use-projectlens`** (`claude/skills/use-projectlens/SKILL.md`) — primary
+- **`use-projectlens`** (`agent/skills/use-projectlens/SKILL.md`) — primary
   forcing skill. The rule: *"Before opening files, grepping, or listing
   directories to answer a question about code structure, behavior,
   history, data flow, or impact — call ProjectLens first."* Contains a
-  decision-flow diagram, tool-picker table, and four canonical workflows
-  (trace, debug-test, change-impact, data-flow). When adding a new MCP
-  tool, also extend the tool-picker table here.
+  decision-flow diagram, tool-picker table, four canonical workflows
+  (trace, debug-test, change-impact, data-flow), proactive freshness
+  check, and writer-lock awareness. When adding a new MCP tool, also
+  extend the tool-picker table here.
 
-- **`capture-knowledge`** (`claude/skills/capture-knowledge/SKILL.md`) —
+- **`capture-knowledge`** (`agent/skills/capture-knowledge/SKILL.md`) —
   write-back skill. Defines 9 trigger signals and 6 categories
   (`lesson`, `best_practice`, `convention`, `domain_knowledge`, `how_to`,
-  `decision`). When the agent detects a signal, it calls
-  `save_knowledge` with required `category`/`title`/`body` and an optional
-  anchor. Body format is rule + `**Why:**` + `**How to apply:**`.
+  `decision`). When the agent detects a signal, it first calls
+  `search_knowledge` to dedup, then `save_knowledge` with required
+  `category`/`title`/`body`, an optional anchor, and a `source` field
+  identifying the agent. Body format is rule + `**Why:**` + `**How to
+  apply:**`.
 
 When you change a skill, the change reaches users on their next pull /
 symlink refresh — there's no separate publish step.
 
-### Hooks (`claude/settings-snippet.json`)
+### Vendor wiring
 
-Three hooks, all soft `<system-reminder>` nudges (no exit-code blocking):
+- **`agent/claude/`** — Claude Code-specific. `mcp-config.json` for the
+  MCP server entry, `settings-snippet.json` for the hooks bundle,
+  `CLAUDE.md.snippet` for the guidance block to merge into the target
+  repo's CLAUDE.md.
+- **`agent/codex/`** — Codex-specific. `config.toml.snippet` for
+  `~/.codex/config.toml`, `AGENTS.md.snippet` for the target repo's
+  `AGENTS.md` (compressed rule + tool picker; refers back to the
+  canonical skill files for the full playbook).
+
+Adding a new agent (Cursor, Cline, Zed, …) means creating a new
+`agent/<name>/` directory with its wiring. The skill bodies don't
+change — only the adapter does.
+
+### Hooks (`agent/claude/settings-snippet.json`)
+
+Four hooks, all soft `<system-reminder>` nudges (no exit-code blocking):
 
 | Event | Matcher | Purpose |
 |---|---|---|
+| `SessionStart` | (any) | Reminds the agent to call `index_status` before the first high-impact task this session (change-impact, refactor, data-flow audit, migration planning, deep debug). Quick lookups skip. |
 | `PreToolUse` | `Edit \| Write \| MultiEdit` | Pre-edit impact-check reminder. Tells the agent: if editing an exported symbol, interface, or `migrations/*.sql`, you must have called `get_symbol_context` / `get_table_context` / `get_coupling` first. |
-| `Stop` | (any) | capture-knowledge scan: if any of the 9 signals fired this turn, call `save_knowledge` before stopping. |
+| `Stop` | (any) | capture-knowledge scan: if any of the 9 signals fired this turn, `search_knowledge` first to dedup, then `save_knowledge` (set `source` to the agent name) if no matching entry exists. |
 | `Stop` | (any) | use-projectlens compliance audit: flag turns that answered structural questions via Read/Grep/Glob without a prior ProjectLens call. |
 
 **Why soft (reminder) instead of blocking (exit code 2):** blocking would
@@ -309,15 +335,15 @@ for low false-positive rate.
 **Editing the hooks.** Keep commands one-line `echo
 '<system-reminder>...</system-reminder>'`. The harness pipes the echo
 output back to the agent as a system-reminder block. JSON validates with
-`python3 -m json.tool claude/settings-snippet.json`.
+`python3 -m json.tool agent/claude/settings-snippet.json`.
 
 ### Distribution
 
-`claude/` is the **canonical** copy. Users either symlink it into their
-target repo's `.claude/` or copy it. We don't publish to a registry — the
-repo URL is the artifact. When making a breaking change to a skill or
-hook, bump the description briefly in `docs/AGENT_SETUP.md` so users
-notice on their next pull.
+`agent/` is the **canonical** copy. Users either symlink it into their
+agent config dir (e.g. `.claude/`, `~/.codex/`) or copy it. We don't
+publish to a registry — the repo URL is the artifact. When making a
+breaking change to a skill or hook, bump the description briefly in
+`docs/AGENT_SETUP.md` so users notice on their next pull.
 
 ## Indexer pipeline
 

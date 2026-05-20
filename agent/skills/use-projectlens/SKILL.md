@@ -139,6 +139,53 @@ These are the failure modes to avoid:
 
 ProjectLens is for **discovery and context**, not for code manipulation.
 
+## Proactive freshness check
+
+Before any **high-impact** task — change-impact estimate, multi-file
+refactor, data-flow audit, migration planning, deep debug of unfamiliar
+code — call `index_status` once at the start of the turn. One cheap MCP
+call beats building a long answer on stale facts.
+
+Skip the proactive check for:
+- Quick lookups (`find_symbol`, single `get_symbol_context`).
+- Questions that don't depend on the graph being fresh (definitions
+  rarely move between hours).
+
+Treat the index as stale and surface that to the user when any of:
+- `stages.code.age_minutes` > 60, OR
+- `git.dirty == true` AND the question is about current state, OR
+- any `providers[].state` is `error` or `not_configured`.
+
+Suggest `make reindex` (incremental) or `make index-all` (full) and
+stop building on the stale answer.
+
+## Writer-lock awareness
+
+Mutating indexer commands (`bootstrap`, `reindex`, `index-datastore`,
+`index-history`, `index-embed`, `index-summarize`, `index-all`) take a
+single Postgres advisory lock. Read-only commands and the MCP server
+bypass it.
+
+If the user asks you to run a mutating command and it exits with code
+**75** plus a line like:
+
+```
+another writer holds the lock: pid=<n> host=<h> cmd="<c>" started=<RFC3339>
+```
+
+1. Tell the user *who* holds the lock — quote the line verbatim (pid,
+   host, cmd, started_at). The TUI Jobs section also surfaces a
+   running indexer job.
+2. **Default: wait** for the holder to finish, then retry. Auto-recovery
+   reaps the row if the holder crashes.
+3. `projectlens unlock --force` is a **last resort**, only when
+   auto-recovery has clearly failed (holder PID is dead, row pinned
+   for hours). It kills the holder's DB session and rolls back any
+   in-flight transactions.
+
+Never call `unlock --force` yourself without explicit user
+confirmation.
+
 ## Stale index handling
 
 If a query returns nothing for an obviously-present symbol, or returns a

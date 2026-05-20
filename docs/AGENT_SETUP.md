@@ -43,7 +43,7 @@ project `.claude/mcp.json`):
 }
 ```
 
-A ready-to-copy version lives at [`claude/mcp-config.json`](../claude/mcp-config.json).
+A ready-to-copy version lives at [`agent/claude/mcp-config.json`](../agent/claude/mcp-config.json).
 
 ### Cursor
 
@@ -65,7 +65,7 @@ implicitly).
 1. Install the bridge once: `npm i -g mcp-remote` — or rely on `npx -y`
    in the config and skip the global install.
 2. Add to `~/.codex/config.toml` (see
-   [`claude/codex/config.toml.snippet`](../claude/codex/config.toml.snippet)
+   [`agent/codex/config.toml.snippet`](../agent/codex/config.toml.snippet)
    in this repo):
 
    ```toml
@@ -78,13 +78,16 @@ implicitly).
 
 Codex does **not** auto-load `.claude/skills/*.md` the way Claude Code
 does. Instead, paste the contents of
-[`claude/codex/AGENTS.md.snippet`](../claude/codex/AGENTS.md.snippet)
+[`agent/codex/AGENTS.md.snippet`](../agent/codex/AGENTS.md.snippet)
 into your target repo's `AGENTS.md` (or the Codex system-prompt
 override). It compresses the mandatory rule, tool picker, and
 knowledge-capture instructions into the prompt body so Codex actually
-reaches for the tools. The full Codex-flavored skill lives at
-[`claude/codex/use-projectlens.md`](../claude/codex/use-projectlens.md);
-link to it from `AGENTS.md` for the longer playbook.
+reaches for the tools. The canonical skill bodies live at
+[`agent/skills/use-projectlens/SKILL.md`](../agent/skills/use-projectlens/SKILL.md)
+and
+[`agent/skills/capture-knowledge/SKILL.md`](../agent/skills/capture-knowledge/SKILL.md);
+read them directly when you need the longer playbook (workflows,
+anti-patterns, structured-content fields, writer-lock awareness).
 
 When Codex calls `save_knowledge`, pass `source: "codex"` so the
 audit trail distinguishes agents.
@@ -117,8 +120,8 @@ In your target repo:
 ```bash
 # Symlink the skills so they auto-update with ProjectLens
 mkdir -p .claude/skills
-ln -s /path/to/projectlens/claude/skills/use-projectlens    .claude/skills/use-projectlens
-ln -s /path/to/projectlens/claude/skills/capture-knowledge .claude/skills/capture-knowledge
+ln -s /path/to/projectlens/agent/skills/use-projectlens    .claude/skills/use-projectlens
+ln -s /path/to/projectlens/agent/skills/capture-knowledge .claude/skills/capture-knowledge
 ```
 
 (Or copy the directories instead of symlinking if your agent doesn't follow
@@ -142,7 +145,7 @@ what it touches in the database, how it has changed, or what depends on it
 | "What breaks if I change X?" | `find_symbol` → `get_symbol_context` → `get_coupling` → `get_package_summary` (per affected pkg) |
 | "Which code reads/writes table T?" | `get_table_context` → `get_symbol_context` on top writer |
 
-Full details in [`claude/skills/use-projectlens/SKILL.md`](../claude/skills/use-projectlens/SKILL.md).
+Full details in [`agent/skills/use-projectlens/SKILL.md`](../agent/skills/use-projectlens/SKILL.md).
 
 ### `capture-knowledge` at a glance
 
@@ -157,20 +160,21 @@ someone asks about the same symbol or package, the entry surfaces
 automatically inside `get_symbol_context`, `get_package_summary`, and
 `search_go_context` — no extra call needed.
 
-Full details in [`claude/skills/capture-knowledge/SKILL.md`](../claude/skills/capture-knowledge/SKILL.md).
+Full details in [`agent/skills/capture-knowledge/SKILL.md`](../agent/skills/capture-knowledge/SKILL.md).
 
 ---
 
 ## Install the Hooks
 
 Hooks are shell commands the agent harness runs automatically at specific
-moments. They turn the skills' guidance into **enforced** behavior. Three
-hooks ship in [`claude/settings-snippet.json`](../claude/settings-snippet.json):
+moments. They turn the skills' guidance into **enforced** behavior. Four
+hooks ship in [`agent/claude/settings-snippet.json`](../agent/claude/settings-snippet.json):
 
 | Event | Matcher | What it does |
 |---|---|---|
+| `SessionStart` | (any) | Reminds the agent to call `index_status` before the first high-impact task this session (change-impact, refactor, data-flow audit, migration planning, deep debug). Quick lookups skip. |
 | `PreToolUse` | `Edit \| Write \| MultiEdit` | Reminds the agent: if this edit touches an exported symbol, interface, or migration, you must have called `get_symbol_context` / `get_table_context` / `get_coupling` first. STOP and run them if you skipped. |
-| `Stop` | (any) | Scans the turn for capture-worthy lessons (the 9 signals). Calls `save_knowledge` if any fired; otherwise stops silently. |
+| `Stop` | (any) | Scans the turn for capture-worthy lessons (the 9 signals). `search_knowledge` first to dedup, then `save_knowledge` (with `source` set) if no matching entry exists. Otherwise stops silently. |
 | `Stop` | (any) | `use-projectlens` compliance audit. Flags turns that answered a structural question via Read/Grep/Glob without a prior ProjectLens call. Silent when compliance is clean. |
 
 The hooks are **soft nudges** — they inject `<system-reminder>` blocks the
@@ -184,7 +188,7 @@ Merge the snippet into your repo's `.claude/settings.json`. If the file
 doesn't exist yet, just copy it:
 
 ```bash
-cp /path/to/projectlens/claude/settings-snippet.json .claude/settings.json
+cp /path/to/projectlens/agent/claude/settings-snippet.json .claude/settings.json
 ```
 
 If the file already has hooks, merge the `hooks` keys by hand — JSON does

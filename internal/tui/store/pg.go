@@ -253,7 +253,7 @@ func (s *PG) Config(ctx context.Context) (ConfigSnapshot, error) {
 
 // resolveMCPURL builds the MCP server URL from env (PROJECTLENS_MCP_URL > MCP_PORT >
 // PROJECTLENS_MCP_PORT > default 8484). Path is /mcp to match the streamable-http
-// transport configured in claude/mcp-config.json.
+// transport configured in agent/claude/mcp-config.json.
 func resolveMCPURL() string {
 	if v := os.Getenv("PROJECTLENS_MCP_URL"); v != "" {
 		return v

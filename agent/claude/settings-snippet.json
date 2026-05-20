@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '<system-reminder>ProjectLens session note. For the first high-impact task this session (change-impact estimate, multi-file refactor, data-flow audit, migration planning, deep debug of unfamiliar code), call projectlens index_status BEFORE answering. If stages.code.age_minutes > 60, git.dirty is true and the question is about current state, or any providers[].state is error/not_configured — tell the user the index looks stale and suggest make reindex (or make index-all). Skip for quick lookups (single find_symbol / get_symbol_context). Do not narrate this check.</system-reminder>'"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
@@ -17,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '<system-reminder>Before stopping: scan this turn against the capture-knowledge skill (.claude/skills/capture-knowledge/SKILL.md). If any of the 9 signals fired, call save_knowledge now. If nothing qualifies, stop silently. Do not narrate this check.</system-reminder>'"
+            "command": "echo '<system-reminder>Before stopping: scan this turn against the capture-knowledge skill (.claude/skills/capture-knowledge/SKILL.md). If any of the 9 signals fired, search_knowledge first to dedup, then call save_knowledge (set the source field to the agent name) if no matching entry exists. If nothing qualifies, stop silently. Do not narrate this check.</system-reminder>'"
           },
           {
             "type": "command",
