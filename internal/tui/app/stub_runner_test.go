@@ -10,9 +10,9 @@ import (
 // stubRunner is the minimal Runner used by app tests. It records
 // Start calls and exposes a settable Snapshot.
 type stubRunner struct {
-	mu       sync.Mutex
-	started  []jobs.Spec
-	state    jobs.Snapshot
+	mu        sync.Mutex
+	started   []jobs.Spec
+	state     jobs.Snapshot
 	cancelled bool
 }
 

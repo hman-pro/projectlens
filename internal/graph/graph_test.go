@@ -138,7 +138,6 @@ func TestBuild(t *testing.T) {
 	}
 }
 
-
 func TestBuildInvalidDir(t *testing.T) {
 	ctx := context.Background()
 	_, err := Build(ctx, "/nonexistent/dir/that/should/not/exist", []string{"./..."})

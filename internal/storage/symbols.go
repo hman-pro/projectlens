@@ -32,7 +32,7 @@ func (db *DB) InsertSymbols(ctx context.Context, symbols []SymbolRecord) error {
 		return nil
 	}
 
-	const cols = 12 // number of columns per row
+	const cols = 12               // number of columns per row
 	const maxBatch = 65535 / cols // 5461 symbols per batch
 
 	for start := 0; start < len(symbols); start += maxBatch {

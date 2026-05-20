@@ -60,7 +60,7 @@ func TestAlterTableAddColumnMerge(t *testing.T) {
 		},
 		{
 			Name: "000002_add_deal_columns.up.sql",
-			SQL: `ALTER TABLE approval.requests ADD COLUMN deal_supplier_id text, ADD COLUMN deal_uuid uuid;`,
+			SQL:  `ALTER TABLE approval.requests ADD COLUMN deal_supplier_id text, ADD COLUMN deal_uuid uuid;`,
 		},
 	}
 

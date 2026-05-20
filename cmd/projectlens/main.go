@@ -24,8 +24,8 @@ import (
 	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
-	"github.com/hman-pro/projectlens/internal/summarize"
 	"github.com/hman-pro/projectlens/internal/summaries"
+	"github.com/hman-pro/projectlens/internal/summarize"
 	_ "github.com/joho/godotenv/autoload"
 	"github.com/spf13/cobra"
 )

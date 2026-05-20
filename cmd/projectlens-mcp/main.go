@@ -11,6 +11,7 @@ import (
 
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/mcpserver"
+	"github.com/hman-pro/projectlens/internal/providers/anthropic"
 	"github.com/hman-pro/projectlens/internal/providers/ollama"
 	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
@@ -77,7 +78,8 @@ func run() error {
 	}
 
 	// Create and start MCP server.
-	srv := mcpserver.New(db, router, port, cfg.RepoPath)
+	srv := mcpserver.New(db, router, port, cfg.RepoPath).
+		WithSummarizer(newSummarizerProber(cfg))
 	return srv.Start(ctx)
 }
 
@@ -88,4 +90,62 @@ func envOr(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// summarizerProberFunc adapts the configured summarization provider to
+// the mcpserver.SummarizerProber interface. configured is mandatory;
+// ping is optional. When ping is nil and configured returns true the
+// prober reports "configured" (credentials present, no probe run) —
+// suitable for providers where probing costs tokens (e.g. Anthropic).
+type summarizerProberFunc struct {
+	name       string
+	configured func() bool
+	ping       func(ctx context.Context) error
+}
+
+func (f summarizerProberFunc) ProbeSummarizer(ctx context.Context) (string, string, error) {
+	if !f.configured() {
+		return f.name, "not_configured", nil
+	}
+	if f.ping == nil {
+		// Credentials present but no probe available.
+		return f.name, "configured", nil
+	}
+	if err := f.ping(ctx); err != nil {
+		return f.name, "error", err
+	}
+	return f.name, "reachable", nil
+}
+
+// newSummarizerProber returns an mcpserver.SummarizerProber backed by
+// the provider named in cfg.Summarization.Provider. Returns nil when
+// no provider is configured.
+func newSummarizerProber(cfg *config.Config) mcpserver.SummarizerProber {
+	switch cfg.Summarization.Provider {
+	case "anthropic":
+		client := anthropic.NewClient(cfg.Summarization.Model)
+		return summarizerProberFunc{
+			name:       "anthropic",
+			configured: client.Configured,
+		}
+	case "openai":
+		if cfg.OpenAIKey == "" {
+			// Provider is known but unkeyed: surface "openai/not_configured"
+			// instead of dropping to the default (nil prober) so index_status
+			// can distinguish "provider chosen but key missing" from "no
+			// summarization provider configured at all".
+			return summarizerProberFunc{
+				name:       "openai",
+				configured: func() bool { return false },
+			}
+		}
+		client := openai.NewClient(cfg.OpenAIKey)
+		return summarizerProberFunc{
+			name:       "openai",
+			configured: func() bool { return true },
+			ping:       client.Ping,
+		}
+	default:
+		return nil
+	}
 }

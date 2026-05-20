@@ -5,11 +5,15 @@ package openai
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 
 	oai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
+
+const defaultOpenAIBaseURL = "https://api.openai.com/v1"
 
 // embeddingBatchSize is the maximum number of texts per embedding API call.
 const embeddingBatchSize = 100
@@ -18,12 +22,19 @@ const embeddingBatchSize = 100
 type Client struct {
 	client        oai.Client
 	embeddingDims int // if > 0, request this many dimensions from the embedding model
+
+	apiKey     string
+	baseURL    string // overridable in tests
+	httpClient *http.Client
 }
 
 // NewClient creates a new OpenAI client using the provided API key.
 func NewClient(apiKey string) *Client {
 	return &Client{
-		client: oai.NewClient(option.WithAPIKey(apiKey)),
+		client:     oai.NewClient(option.WithAPIKey(apiKey)),
+		apiKey:     apiKey,
+		baseURL:    defaultOpenAIBaseURL,
+		httpClient: &http.Client{},
 	}
 }
 
@@ -33,7 +44,40 @@ func NewClientWithDims(apiKey string, dims int) *Client {
 	return &Client{
 		client:        oai.NewClient(option.WithAPIKey(apiKey)),
 		embeddingDims: dims,
+		apiKey:        apiKey,
+		baseURL:       defaultOpenAIBaseURL,
+		httpClient:    http.DefaultClient,
 	}
+}
+
+// ProviderName returns the short label "openai" used in
+// mcpserver.ProviderHealth.Provider.
+func (c *Client) ProviderName() string { return "openai" }
+
+// Ping issues GET {baseURL}/models with the configured API key and
+// returns nil on a 2xx response, an error otherwise. Caller controls
+// the timeout via ctx. Use this as a cheap health probe; it does not
+// hit the chat/embeddings APIs.
+func (c *Client) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
+	if err != nil {
+		return fmt.Errorf("openai: build ping request: %w", err)
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("openai: ping %s: %w", c.baseURL+"/models", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("openai: ping returned status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // BuildPackageSummaryPrompt constructs the prompt used for generating a package

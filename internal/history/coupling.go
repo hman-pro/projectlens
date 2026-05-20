@@ -10,7 +10,7 @@ type CouplingPair struct {
 	FileA         string  `json:"file_a"`
 	FileB         string  `json:"file_b"`
 	CoChangeCount int     `json:"co_change_count"`
-	Strength      float64 `json:"strength"`      // co_changes / max(changes_a, changes_b)
+	Strength      float64 `json:"strength"`       // co_changes / max(changes_a, changes_b)
 	LastCoChange  int64   `json:"last_co_change"` // unix timestamp
 }
 

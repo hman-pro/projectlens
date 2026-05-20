@@ -38,11 +38,17 @@ func (s *Server) handleFindSymbol(ctx context.Context, req mcp.CallToolRequest) 
 		results = filtered
 	}
 
-	if len(results) == 0 {
-		return mcp.NewToolResultText(fmt.Sprintf("No symbols found matching %q.", name)), nil
+	payload := FindSymbolPayload{Query: name, Kind: kind, Total: len(results)}
+	payload.Hits = make([]SymbolHit, 0, len(results))
+	for _, r := range results {
+		payload.Hits = append(payload.Hits, toSymbolHit(r))
 	}
 
 	var b strings.Builder
+	if len(results) == 0 {
+		fmt.Fprintf(&b, "No symbols found matching %q.", name)
+		return mcp.NewToolResultStructured(payload, b.String()), nil
+	}
 	fmt.Fprintf(&b, "Found %d symbol(s) matching %q:\n", len(results), name)
 	for i, r := range results {
 		b.WriteString("\n")
@@ -55,7 +61,7 @@ func (s *Server) handleFindSymbol(ctx context.Context, req mcp.CallToolRequest) 
 		}
 	}
 
-	return mcp.NewToolResultText(b.String()), nil
+	return mcp.NewToolResultStructured(payload, b.String()), nil
 }
 
 // handleSearchGoContext handles the search_go_context tool call.
@@ -86,18 +92,30 @@ func (s *Server) handleSearchGoContext(ctx context.Context, req mcp.CallToolRequ
 		results = filtered
 	}
 
-	if len(results) == 0 {
-		var b strings.Builder
-		fmt.Fprintf(&b, "No results found for query %q.\n", query)
-		for _, w := range qr.Warnings {
-			fmt.Fprintf(&b, "warning: %s\n", w)
+	payload := SearchGoContextPayload{
+		Query:     query,
+		QueryType: string(qr.QueryType),
+		Total:     len(results),
+	}
+	payload.Hits = make([]SymbolHit, 0, len(results))
+	for _, r := range results {
+		payload.Hits = append(payload.Hits, toSymbolHit(r))
+	}
+	if len(qr.Warnings) > 0 {
+		payload.Degradation = Degradation{
+			Degraded: true,
+			Reason:   strings.Join(qr.Warnings, "; "),
+			Fallback: "lexical-only",
 		}
-		return mcp.NewToolResultText(b.String()), nil
 	}
 
 	var b strings.Builder
 	for _, w := range qr.Warnings {
 		fmt.Fprintf(&b, "warning: %s\n", w)
+	}
+	if len(results) == 0 {
+		fmt.Fprintf(&b, "No results found for query %q.\n", query)
+		return mcp.NewToolResultStructured(payload, b.String()), nil
 	}
 	fmt.Fprintf(&b, "Found %d result(s) for %q (query type: %s):\n", len(results), query, qr.QueryType)
 	for i, r := range results {
@@ -131,7 +149,7 @@ func (s *Server) handleSearchGoContext(ctx context.Context, req mcp.CallToolRequ
 		}
 	}
 
-	return mcp.NewToolResultText(b.String()), nil
+	return mcp.NewToolResultStructured(payload, b.String()), nil
 }
 
 // handleGetSymbolContext handles the get_symbol_context tool call.
@@ -142,16 +160,17 @@ func (s *Server) handleGetSymbolContext(ctx context.Context, req mcp.CallToolReq
 	}
 	filePath := req.GetString("file_path", "")
 
-	// Find symbol via lexical search.
 	results, err := retrieval.LexicalSearch(ctx, s.db, name, 10)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("get_symbol_context: symbol lookup failed", err), nil
 	}
 	if len(results) == 0 {
-		return mcp.NewToolResultText(fmt.Sprintf("No symbol found matching %q.", name)), nil
+		return mcp.NewToolResultStructured(
+			SymbolContextPayload{Query: name, NotFound: true},
+			fmt.Sprintf("No symbol found matching %q.", name),
+		), nil
 	}
 
-	// If file_path provided, filter to that file.
 	target := results[0]
 	if filePath != "" {
 		for _, r := range results {
@@ -162,6 +181,8 @@ func (s *Server) handleGetSymbolContext(ctx context.Context, req mcp.CallToolReq
 		}
 	}
 
+	payload := SymbolContextPayload{Query: name, Target: toSymbolHit(target)}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "Symbol: %s %s\n", target.Kind, formatSignature(target))
 	fmt.Fprintf(&b, "Package: %s\n", target.PackageName)
@@ -170,41 +191,38 @@ func (s *Server) handleGetSymbolContext(ctx context.Context, req mcp.CallToolReq
 		fmt.Fprintf(&b, "Doc: %s\n", truncateDoc(target.DocComment))
 	}
 
-	// Look up full symbol record for SCIP ID.
 	symRecords, _ := s.db.GetSymbolByName(ctx, target.SymbolName)
 	for _, sr := range symRecords {
 		if sr.ID == target.SymbolID {
 			if sr.ScipSymbol != nil {
+				payload.ScipSymbol = *sr.ScipSymbol
 				fmt.Fprintf(&b, "SCIP: %s\n", *sr.ScipSymbol)
 			}
 			break
 		}
 	}
 
-	// Get callers.
-	callers, err := retrieval.GetCallers(ctx, s.db, target.SymbolID, 2)
-	if err == nil && len(callers) > 0 {
+	if callers, err := retrieval.GetCallers(ctx, s.db, target.SymbolID, 2); err == nil && len(callers) > 0 {
 		b.WriteString("\nCallers:\n")
 		for _, c := range callers {
+			payload.Callers = append(payload.Callers, toSymbolHit(c))
 			fmt.Fprintf(&b, "  - %s %s (%s:%d)\n", c.Kind, c.SymbolName, c.FilePath, c.LineStart)
 		}
 	}
 
-	// Get callees.
-	callees, err := retrieval.GetCallees(ctx, s.db, target.SymbolID, 2)
-	if err == nil && len(callees) > 0 {
+	if callees, err := retrieval.GetCallees(ctx, s.db, target.SymbolID, 2); err == nil && len(callees) > 0 {
 		b.WriteString("\nCallees:\n")
 		for _, c := range callees {
+			payload.Callees = append(payload.Callees, toSymbolHit(c))
 			fmt.Fprintf(&b, "  - %s %s (%s:%d)\n", c.Kind, c.SymbolName, c.FilePath, c.LineStart)
 		}
 	}
 
-	// Get implementors (only makes sense for interfaces).
 	if target.Kind == "interface" {
-		implementors, err := retrieval.GetImplementors(ctx, s.db, target.SymbolID)
-		if err == nil && len(implementors) > 0 {
+		if implementors, err := retrieval.GetImplementors(ctx, s.db, target.SymbolID); err == nil && len(implementors) > 0 {
 			b.WriteString("\nImplementors:\n")
 			for _, impl := range implementors {
+				payload.Implementors = append(payload.Implementors, toSymbolHit(impl))
 				fmt.Fprintf(&b, "  - %s %s (%s:%d)\n", impl.Kind, impl.SymbolName, impl.FilePath, impl.LineStart)
 			}
 		}
@@ -216,7 +234,7 @@ func (s *Server) handleGetSymbolContext(ctx context.Context, req mcp.CallToolReq
 		}
 	}
 
-	return mcp.NewToolResultText(b.String()), nil
+	return mcp.NewToolResultStructured(payload, b.String()), nil
 }
 
 // handleGetPackageSummary handles the get_package_summary tool call.
@@ -225,6 +243,8 @@ func (s *Server) handleGetPackageSummary(ctx context.Context, req mcp.CallToolRe
 	if err != nil {
 		return mcp.NewToolResultError("get_package_summary: missing required argument 'package_name'"), nil
 	}
+
+	payload := PackageSummaryPayload{PackageName: pkgName}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Package: %s\n", pkgName)
@@ -235,6 +255,14 @@ func (s *Server) handleGetPackageSummary(ctx context.Context, req mcp.CallToolRe
 		return mcp.NewToolResultErrorFromErr("get_package_summary: failed to get summary", err), nil
 	}
 	if summary != nil {
+		payload.Summary = summary.SummaryText
+		payload.ModelVersion = summary.ModelVersion
+		payload.GeneratedAt = summary.GeneratedAt.Format(time.RFC3339)
+		age := time.Since(summary.GeneratedAt)
+		payload.AgeMinutes = age.Minutes()
+		if age > 7*24*time.Hour {
+			payload.Stale = true
+		}
 		fmt.Fprintf(&b, "\nSummary:\n%s\n", summary.SummaryText)
 	} else {
 		b.WriteString("\nNo LLM summary available for this package.\n")
@@ -256,6 +284,7 @@ func (s *Server) handleGetPackageSummary(ctx context.Context, req mcp.CallToolRe
 			if sig == "" {
 				sig = sym.Name
 			}
+			payload.ExportedSymbols = append(payload.ExportedSymbols, sig)
 			fmt.Fprintf(&b, "  - %s %s\n", sym.Kind, sig)
 		}
 	} else {
@@ -268,7 +297,7 @@ func (s *Server) handleGetPackageSummary(ctx context.Context, req mcp.CallToolRe
 		}
 	}
 
-	return mcp.NewToolResultText(b.String()), nil
+	return mcp.NewToolResultStructured(payload, b.String()), nil
 }
 
 // handleGetTableContext handles the get_table_context tool call.
@@ -278,13 +307,11 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError("get_table_context: missing required argument 'table_name'"), nil
 	}
 
-	// Try exact match first with "postgres" engine.
 	table, err := s.db.GetDatastoreTableByName(ctx, tableName, "postgres")
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("get_table_context: lookup failed", err), nil
 	}
 	if table == nil {
-		// Try listing all tables and find partial match.
 		tables, _ := s.db.ListDatastoreTables(ctx)
 		for _, t := range tables {
 			if strings.HasSuffix(t.Name, "."+tableName) || t.Name == tableName {
@@ -294,26 +321,23 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 		}
 	}
 	if table == nil {
-		return mcp.NewToolResultText(fmt.Sprintf("No table found matching %q. Run 'projectlens index-datastore' to index database schemas.", tableName)), nil
+		return mcp.NewToolResultStructured(
+			TableContextPayload{TableName: tableName, NotFound: true},
+			fmt.Sprintf("No table found matching %q. Run 'projectlens index-datastore' to index database schemas.", tableName),
+		), nil
 	}
 
-	// Build response.
+	payload := TableContextPayload{TableName: table.Name, Engine: table.Engine}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "Table: %s\n", table.Name)
 	fmt.Fprintf(&b, "Engine: %s\n", table.Engine)
 
-	// Show columns from JSON.
 	if table.Columns != nil {
 		b.WriteString("\nColumns:\n")
-		var columns []struct {
-			Name         string `json:"name"`
-			Type         string `json:"type"`
-			IsNullable   bool   `json:"is_nullable"`
-			IsPrimaryKey bool   `json:"is_primary_key"`
-			Default      string `json:"default,omitempty"`
-			ForeignKey   string `json:"foreign_key,omitempty"`
-		}
+		var columns []TableColumn
 		if err := json.Unmarshal(table.Columns, &columns); err == nil {
+			payload.Columns = columns
 			for _, col := range columns {
 				attrs := col.Type
 				if col.IsPrimaryKey {
@@ -333,19 +357,28 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 		}
 	}
 
-	// Look up reads_table/writes_table edges.
 	readEdges, _ := s.db.GetEdgesTargetingDatastoreTable(ctx, table.ID, "reads_table")
 	writeEdges, _ := s.db.GetEdgesTargetingDatastoreTable(ctx, table.ID, "writes_table")
 
 	if len(readEdges) > 0 {
 		b.WriteString("\nRead by:\n")
 		for _, e := range readEdges {
+			payload.ReadBy = append(payload.ReadBy, TableEdgeHit{
+				Kind:     e.SymbolKind,
+				Name:     e.SymbolName,
+				Evidence: EvidenceSpan{FilePath: e.FilePath, LineStart: e.LineStart, LineEnd: e.LineEnd},
+			})
 			fmt.Fprintf(&b, "  - %s %s (%s:%d)\n", e.SymbolKind, e.SymbolName, e.FilePath, e.LineStart)
 		}
 	}
 	if len(writeEdges) > 0 {
 		b.WriteString("\nWritten by:\n")
 		for _, e := range writeEdges {
+			payload.WrittenBy = append(payload.WrittenBy, TableEdgeHit{
+				Kind:     e.SymbolKind,
+				Name:     e.SymbolName,
+				Evidence: EvidenceSpan{FilePath: e.FilePath, LineStart: e.LineStart, LineEnd: e.LineEnd},
+			})
 			fmt.Fprintf(&b, "  - %s %s (%s:%d)\n", e.SymbolKind, e.SymbolName, e.FilePath, e.LineStart)
 		}
 	}
@@ -353,30 +386,62 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 		b.WriteString("\nNo code references discovered. Run 'projectlens index-datastore' to scan for SQL usage.\n")
 	}
 
-	return mcp.NewToolResultText(b.String()), nil
+	return mcp.NewToolResultStructured(payload, b.String()), nil
 }
 
-// stageStatus is the per-stage block emitted in the index_status JSON.
-type stageStatus struct {
-	Stage          string  `json:"stage"`
-	Status         string  `json:"status"`
-	CommitSHA      string  `json:"commit_sha,omitempty"`
-	StartedAt      string  `json:"started_at,omitempty"`
-	CompletedAt    string  `json:"completed_at,omitempty"`
-	AgeMinutes     float64 `json:"age_minutes,omitempty"`
-	FilesProcessed int     `json:"files_processed,omitempty"`
+// probeProviders queries the configured embedder and summarizer and
+// returns a slice of ProviderHealth ready for the index_status
+// payload. Order is stable: embedder first, then summarizer.
+func (s *Server) probeProviders(ctx context.Context) []ProviderHealth {
+	out := make([]ProviderHealth, 0, 2)
+
+	if s.router != nil {
+		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		provider, ok, err := s.router.ProbeEmbedder(probeCtx)
+		cancel()
+		ph := ProviderHealth{Role: "embedder", Provider: provider}
+		switch {
+		case !ok:
+			ph.State = "not_configured"
+			ph.Error = "no embedder configured"
+		case err != nil:
+			ph.State = "error"
+			ph.Error = err.Error()
+		default:
+			ph.State = "reachable"
+		}
+		out = append(out, ph)
+	}
+
+	if s.summarizer != nil {
+		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		provider, state, err := s.summarizer.ProbeSummarizer(probeCtx)
+		cancel()
+		ph := ProviderHealth{Role: "summarizer", Provider: provider, State: state}
+		switch state {
+		case "error":
+			if err != nil {
+				ph.Error = err.Error()
+			}
+		case "not_configured":
+			ph.Error = "summarizer credentials missing"
+		}
+		out = append(out, ph)
+	}
+
+	return out
 }
 
 // indexStatusPayload is the machine-parseable block agents can inspect
 // without text-scraping. Fields here are stable; skill SKILL.md
 // references them by name.
 type indexStatusPayload struct {
-	Stages          map[string]stageStatus `json:"stages"`
-	Git             struct {
+	Stages    map[string]StageFreshness `json:"stages"`
+	Git       struct {
 		Head  string `json:"head,omitempty"`
 		Dirty bool   `json:"dirty"`
 	} `json:"git"`
-	EmbedderHealthy *bool `json:"embedder_healthy"`
+	Providers []ProviderHealth `json:"providers"`
 }
 
 // handleIndexStatus handles the index_status tool call. Returns a
@@ -388,9 +453,12 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 		return mcp.NewToolResultErrorFromErr("index_status: failed to get latest runs by stage", err), nil
 	}
 
-	payload := indexStatusPayload{Stages: map[string]stageStatus{}}
+	payload := indexStatusPayload{
+		Stages:    map[string]StageFreshness{},
+		Providers: s.probeProviders(ctx),
+	}
 	for stage, run := range byStage {
-		st := stageStatus{
+		st := StageFreshness{
 			Stage:          stage,
 			Status:         run.Status,
 			CommitSHA:      run.CommitSHA,
@@ -405,7 +473,6 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 	}
 
 	payload.Git.Head, payload.Git.Dirty = s.gitHeadAndDirty(ctx)
-	payload.EmbedderHealthy = s.embedderHealthy(ctx)
 
 	var b strings.Builder
 	b.WriteString("ProjectLens Index Status\n")
@@ -437,18 +504,23 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 	if payload.Git.Head != "" {
 		fmt.Fprintf(&b, "Git HEAD: %s (dirty=%v)\n", payload.Git.Head, payload.Git.Dirty)
 	}
-	if payload.EmbedderHealthy != nil {
-		fmt.Fprintf(&b, "Embedder healthy: %v\n", *payload.EmbedderHealthy)
-	} else {
-		b.WriteString("Embedder healthy: unknown (no embedder configured)\n")
+
+	if len(payload.Providers) > 0 {
+		b.WriteString("\nProviders:\n")
+		for _, p := range payload.Providers {
+			if p.Provider == "" {
+				fmt.Fprintf(&b, "  %s: %s", p.Role, p.State)
+			} else {
+				fmt.Fprintf(&b, "  %s (%s): %s", p.Role, p.Provider, p.State)
+			}
+			if p.Error != "" {
+				fmt.Fprintf(&b, " (%s)", p.Error)
+			}
+			b.WriteString("\n")
+		}
 	}
 
-	raw, _ := json.Marshal(payload)
-	b.WriteString("\n```json\n")
-	b.Write(raw)
-	b.WriteString("\n```\n")
-
-	return mcp.NewToolResultText(b.String()), nil
+	return mcp.NewToolResultStructured(payload, b.String()), nil
 }
 
 // gitHeadAndDirty returns the current HEAD short SHA and whether the
@@ -468,23 +540,6 @@ func (s *Server) gitHeadAndDirty(ctx context.Context) (string, bool) {
 		return head, false
 	}
 	return head, strings.TrimSpace(string(statusOut)) != ""
-}
-
-// embedderHealthy probes the router's embedder with a one-token query.
-// Returns nil when no embedder is configured (distinguishes "not
-// configured" from "configured but broken").
-func (s *Server) embedderHealthy(ctx context.Context) *bool {
-	if s.router == nil {
-		return nil
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	_, err := s.router.EmbedQuery(probeCtx, "ping")
-	healthy := err == nil
-	if err != nil && strings.Contains(err.Error(), "no embedder") {
-		return nil
-	}
-	return &healthy
 }
 
 // handleGetChangeHistory handles the get_change_history tool call.
@@ -510,11 +565,15 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("get_change_history: failed to get file history", err), nil
 		}
+
+		payload := ChangeHistoryPayload{Target: name, TargetKind: "file"}
+		payload.Records = make([]ChangeRecord, 0, len(records))
+		var b strings.Builder
 		if len(records) == 0 {
-			return mcp.NewToolResultText(fmt.Sprintf("No change history found for %s. Run 'projectlens index-history' to index git history.", name)), nil
+			fmt.Fprintf(&b, "No change history found for %s. Run 'projectlens index-history' to index git history.", name)
+			return mcp.NewToolResultStructured(payload, b.String()), nil
 		}
 
-		var b strings.Builder
 		fmt.Fprintf(&b, "Change history for %s:\n\n", name)
 		for i, r := range records {
 			date := r.CommittedAt.Format("2006-01-02")
@@ -522,9 +581,16 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 			if len(shortHash) > 7 {
 				shortHash = shortHash[:7]
 			}
+			payload.Records = append(payload.Records, ChangeRecord{
+				Hash:       r.CommitHash,
+				ShortHash:  shortHash,
+				Author:     r.Author,
+				Date:       date,
+				ChangeType: r.ChangeType,
+			})
 			fmt.Fprintf(&b, "%d. %s (%s) by %s — %s\n", i+1, shortHash, date, r.Author, r.ChangeType)
 		}
-		return mcp.NewToolResultText(b.String()), nil
+		return mcp.NewToolResultStructured(payload, b.String()), nil
 	}
 
 	// Not found as file — try as symbol.
@@ -533,7 +599,10 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 		return mcp.NewToolResultErrorFromErr("get_change_history: symbol lookup failed", err), nil
 	}
 	if len(results) == 0 {
-		return mcp.NewToolResultText(fmt.Sprintf("No file or symbol found matching %q.", name)), nil
+		return mcp.NewToolResultStructured(
+			ChangeHistoryPayload{Target: name, NotFound: true, Records: []ChangeRecord{}},
+			fmt.Sprintf("No file or symbol found matching %q.", name),
+		), nil
 	}
 
 	target := results[0]
@@ -544,11 +613,17 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("get_change_history: git history failed", err), nil
 		}
-		if len(changes) == 0 {
-			return mcp.NewToolResultText(fmt.Sprintf("No change history found for symbol %q in %s.", target.SymbolName, target.FilePath)), nil
-		}
+
+		evidence := &EvidenceSpan{FilePath: target.FilePath, LineStart: target.LineStart, LineEnd: target.LineEnd}
+		payload := ChangeHistoryPayload{Target: target.SymbolName, TargetKind: "symbol", Evidence: evidence}
+		payload.Records = make([]ChangeRecord, 0, len(changes))
 
 		var b strings.Builder
+		if len(changes) == 0 {
+			fmt.Fprintf(&b, "No change history found for symbol %q in %s.", target.SymbolName, target.FilePath)
+			return mcp.NewToolResultStructured(payload, b.String()), nil
+		}
+
 		fmt.Fprintf(&b, "Change history for symbol %s (%s:%d-%d):\n\n", target.SymbolName, target.FilePath, target.LineStart, target.LineEnd)
 		for i, c := range changes {
 			shortHash := c.Hash
@@ -556,9 +631,16 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 				shortHash = shortHash[:7]
 			}
 			date := time.Unix(c.Timestamp, 0).Format("2006-01-02")
+			subject := firstLine(c.Message)
+			payload.Records = append(payload.Records, ChangeRecord{
+				Hash:      c.Hash,
+				ShortHash: shortHash,
+				Author:    c.Author,
+				Date:      date,
+				Subject:   subject,
+			})
 			fmt.Fprintf(&b, "%d. %s (%s) by %s — %s\n", i+1, shortHash, date, c.Author, c.Message)
 			if c.DiffSnippet != "" {
-				// Indent and truncate diff snippet.
 				snippet := truncateDiff(c.DiffSnippet, 500)
 				for _, line := range strings.Split(snippet, "\n") {
 					fmt.Fprintf(&b, "   %s\n", line)
@@ -566,7 +648,7 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 				b.WriteString("\n")
 			}
 		}
-		return mcp.NewToolResultText(b.String()), nil
+		return mcp.NewToolResultStructured(payload, b.String()), nil
 	}
 
 	// Fallback: use DB-based symbol history.
@@ -574,12 +656,17 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("get_change_history: failed to get symbol history", err), nil
 	}
+
+	evidence := &EvidenceSpan{FilePath: target.FilePath, LineStart: target.LineStart, LineEnd: target.LineEnd}
+	payload := ChangeHistoryPayload{Target: target.SymbolName, TargetKind: "symbol", Evidence: evidence}
+	payload.Records = make([]ChangeRecord, 0, len(records))
+
 	if len(records) == 0 {
 		if s.repoPath == "" {
-			return mcp.NewToolResultText("Symbol-level change history requires repoPath configured on the MCP server. Set REPO_PATH env or repo_path in configs/index.yaml, then restart. (File-level history via get_change_history on a file path works without it.)"), nil
+			return mcp.NewToolResultStructured(payload, "Symbol-level change history requires repoPath configured on the MCP server. Set REPO_PATH env or repo_path in configs/index.yaml, then restart. (File-level history via get_change_history on a file path works without it.)"), nil
 		}
 		// Defensive: unreachable today (symbol_history is not populated); retained for when a future indexer stage writes to it.
-		return mcp.NewToolResultText(fmt.Sprintf("No change history found for symbol %q in %s.", target.SymbolName, target.FilePath)), nil
+		return mcp.NewToolResultStructured(payload, fmt.Sprintf("No change history found for symbol %q in %s.", target.SymbolName, target.FilePath)), nil
 	}
 
 	var b strings.Builder
@@ -590,6 +677,13 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 		if len(shortHash) > 7 {
 			shortHash = shortHash[:7]
 		}
+		payload.Records = append(payload.Records, ChangeRecord{
+			Hash:       r.CommitHash,
+			ShortHash:  shortHash,
+			Author:     r.Author,
+			Date:       date,
+			ChangeType: r.ChangeType,
+		})
 		fmt.Fprintf(&b, "%d. %s (%s) by %s — %s\n", i+1, shortHash, date, r.Author, r.ChangeType)
 		if r.DiffSnippet != nil && *r.DiffSnippet != "" {
 			snippet := truncateDiff(*r.DiffSnippet, 500)
@@ -599,7 +693,7 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 			b.WriteString("\n")
 		}
 	}
-	return mcp.NewToolResultText(b.String()), nil
+	return mcp.NewToolResultStructured(payload, b.String()), nil
 }
 
 // handleGetCoupling handles the get_coupling tool call.
@@ -616,28 +710,38 @@ func (s *Server) handleGetCoupling(ctx context.Context, req mcp.CallToolRequest)
 		minStrength = 1
 	}
 
-	// Find the file.
 	file, err := s.db.GetFileByPath(ctx, name)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("get_coupling: file lookup failed", err), nil
 	}
 	if file == nil {
-		return mcp.NewToolResultText(fmt.Sprintf("No file found matching %q. Provide the exact indexed file path.", name)), nil
+		return mcp.NewToolResultStructured(
+			CouplingPayload{Target: name, NotFound: true, MinStrength: float64(minStrength), Coupled: []CouplingEntry{}},
+			fmt.Sprintf("No file found matching %q. Provide the exact indexed file path.", name),
+		), nil
 	}
 
-	// Query coupling edges.
 	couplings, err := s.db.GetCouplingEdges(ctx, file.ID, minStrength)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("get_coupling: failed to get coupling edges", err), nil
 	}
-	if len(couplings) == 0 {
-		return mcp.NewToolResultText(fmt.Sprintf("No co-change coupling found for %s (min strength: %.1f). Run 'projectlens index-history' to build coupling data.", name, minStrength)), nil
+
+	payload := CouplingPayload{Target: name, MinStrength: float64(minStrength)}
+	payload.Coupled = make([]CouplingEntry, 0, len(couplings))
+	for _, c := range couplings {
+		payload.Coupled = append(payload.Coupled, CouplingEntry{
+			FilePath: c.FilePath,
+			Strength: float64(c.Strength),
+		})
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Co-change coupling for %s:\n", name)
+	if len(couplings) == 0 {
+		fmt.Fprintf(&b, "No co-change coupling found for %s (min strength: %.1f). Run 'projectlens index-history' to build coupling data.", name, minStrength)
+		return mcp.NewToolResultStructured(payload, b.String()), nil
+	}
 
-	// Group by strength tier.
+	fmt.Fprintf(&b, "Co-change coupling for %s:\n", name)
 	var strong, notable []string
 	for _, c := range couplings {
 		line := fmt.Sprintf("  - %s (strength: %.2f)", c.FilePath, c.Strength)
@@ -647,7 +751,6 @@ func (s *Server) handleGetCoupling(ctx context.Context, req mcp.CallToolRequest)
 			notable = append(notable, line)
 		}
 	}
-
 	if len(strong) > 0 {
 		b.WriteString("\nStrong coupling (>= 0.5):\n")
 		for _, line := range strong {
@@ -663,7 +766,16 @@ func (s *Server) handleGetCoupling(ctx context.Context, req mcp.CallToolRequest)
 		}
 	}
 
-	return mcp.NewToolResultText(b.String()), nil
+	return mcp.NewToolResultStructured(payload, b.String()), nil
+}
+
+// firstLine returns the first line of s, trimmed. Returns "" if s is
+// empty. Used to extract a commit subject from a multi-line message.
+func firstLine(s string) string {
+	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+		return strings.TrimSpace(s[:idx])
+	}
+	return strings.TrimSpace(s)
 }
 
 // truncateDiff truncates a diff snippet to maxLen bytes, cutting at the last
@@ -708,4 +820,3 @@ func isExported(name string) bool {
 	}
 	return unicode.IsUpper(rune(name[0]))
 }
-

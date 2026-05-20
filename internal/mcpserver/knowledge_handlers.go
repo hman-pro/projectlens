@@ -22,13 +22,6 @@ const maxKnowledgeBodyChars = 30000
 // synchronously-written knowledge embeddings.
 const knowledgeEmbedModelVersion = "embedding-model"
 
-type saveKnowledgeResponse struct {
-	ID                int64    `json:"id"`
-	Embedded          bool     `json:"embedded"`
-	AnchorsResolved   int      `json:"anchors_resolved"`
-	AnchorsUnresolved []string `json:"anchors_unresolved"`
-}
-
 func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	category, err := req.RequireString("category")
 	if err != nil {
@@ -99,20 +92,17 @@ func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolReques
 	// embedded later by `index-embed`. Surface the state via Embedded.
 	embedded := s.embedKnowledgeChunk(ctx, chunkID, title, body)
 
-	resp := saveKnowledgeResponse{
-		ID:       entryID,
-		Embedded: embedded,
-	}
+	payload := SaveKnowledgePayload{ID: entryID, Embedded: embedded}
 	for _, r := range resolutions {
 		if r.Resolved {
-			resp.AnchorsResolved++
+			payload.AnchorsResolved++
 		} else {
-			resp.AnchorsUnresolved = append(resp.AnchorsUnresolved,
+			payload.AnchorsUnresolved = append(payload.AnchorsUnresolved,
 				fmt.Sprintf("%s:%s", r.Anchor.Type, r.Anchor.Ref))
 		}
 	}
-	out, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(out)), nil
+	out, _ := json.Marshal(payload)
+	return mcp.NewToolResultStructured(payload, string(out)), nil
 }
 
 // embedKnowledgeChunk embeds the title+body via the router's embedder and
@@ -146,16 +136,6 @@ func (s *Server) embedKnowledgeChunk(ctx context.Context, chunkID int64, title, 
 	return true
 }
 
-type knowledgeHit struct {
-	ID         int64    `json:"id"`
-	Category   string   `json:"category"`
-	Title      string   `json:"title"`
-	Body       string   `json:"body"`
-	Tags       []string `json:"tags,omitempty"`
-	Score      float32  `json:"score,omitempty"`
-	MatchedVia string   `json:"matched_via"` // "vector" | "anchor" | "both"
-}
-
 func (s *Server) handleSearchKnowledge(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	query := req.GetString("query", "")
 	category := req.GetString("category", "")
@@ -166,7 +146,7 @@ func (s *Server) handleSearchKnowledge(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError("search_knowledge: provide query and/or anchor"), nil
 	}
 
-	byID := map[int64]*knowledgeHit{}
+	byID := map[int64]*KnowledgeHit{}
 
 	// Vector path
 	if query != "" {
@@ -179,10 +159,10 @@ func (s *Server) handleSearchKnowledge(ctx context.Context, req mcp.CallToolRequ
 			return mcp.NewToolResultError(fmt.Sprintf("search_knowledge: vector: %v", err)), nil
 		}
 		for _, h := range hits {
-			byID[h.Entry.ID] = &knowledgeHit{
+			byID[h.Entry.ID] = &KnowledgeHit{
 				ID: h.Entry.ID, Category: h.Entry.Category, Title: h.Entry.Title,
 				Body: h.Entry.Body, Tags: h.Entry.Tags,
-				Score: h.Score, MatchedVia: "vector",
+				Score: float64(h.Score), MatchedVia: "vector",
 			}
 		}
 	}
@@ -200,7 +180,7 @@ func (s *Server) handleSearchKnowledge(ctx context.Context, req mcp.CallToolRequ
 				existing.Score += 0.1
 				continue
 			}
-			byID[e.ID] = &knowledgeHit{
+			byID[e.ID] = &KnowledgeHit{
 				ID: e.ID, Category: e.Category, Title: e.Title,
 				Body: e.Body, Tags: e.Tags,
 				Score: 1.0, MatchedVia: "anchor",
@@ -208,13 +188,19 @@ func (s *Server) handleSearchKnowledge(ctx context.Context, req mcp.CallToolRequ
 		}
 	}
 
-	out := make([]*knowledgeHit, 0, len(byID))
+	out := make([]*KnowledgeHit, 0, len(byID))
 	for _, h := range byID {
 		out = append(out, h)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	if len(out) > limit {
 		out = out[:limit]
+	}
+
+	payload := SearchKnowledgePayload{Query: query, Total: len(out)}
+	payload.Entries = make([]KnowledgeHit, 0, len(out))
+	for _, h := range out {
+		payload.Entries = append(payload.Entries, *h)
 	}
 
 	var b strings.Builder
@@ -226,5 +212,6 @@ func (s *Server) handleSearchKnowledge(ctx context.Context, req mcp.CallToolRequ
 				h.MatchedVia, h.ID, h.Category, h.Score, h.Title, h.Body)
 		}
 	}
-	return mcp.NewToolResultText(b.String()), nil
+
+	return mcp.NewToolResultStructured(payload, b.String()), nil
 }

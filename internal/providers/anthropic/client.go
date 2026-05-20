@@ -5,6 +5,7 @@ package anthropic
 import (
 	"context"
 	"fmt"
+	"os"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/hman-pro/projectlens/internal/providers/openai"
@@ -14,6 +15,7 @@ import (
 type Client struct {
 	client anthropic.Client
 	model  string
+	apiKey string
 }
 
 // NewClient creates a new Anthropic client. The API key is read from
@@ -22,7 +24,16 @@ func NewClient(model string) *Client {
 	return &Client{
 		client: anthropic.NewClient(),
 		model:  model,
+		apiKey: os.Getenv("ANTHROPIC_API_KEY"),
 	}
+}
+
+// Configured reports whether the client captured an API key at
+// construction time. Cheap — no network call. Use this for a status
+// signal when paying for tokens is not appropriate (e.g. on every
+// index_status invocation).
+func (c *Client) Configured() bool {
+	return c.apiKey != ""
 }
 
 // GeneratePackageSummary calls Claude with the same prompt format used by

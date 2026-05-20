@@ -14,7 +14,7 @@ func TestReadMigrationFiles(t *testing.T) {
 		"001_initial.up.sql": "CREATE TABLE test1 (id INT);",
 		"002_second.up.sql":  "CREATE TABLE test2 (id INT);",
 		"003_third.down.sql": "DROP TABLE test2;", // should be ignored
-		"README.md":          "not a migration",    // should be ignored
+		"README.md":          "not a migration",   // should be ignored
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {

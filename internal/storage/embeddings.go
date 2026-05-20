@@ -9,9 +9,9 @@ import (
 
 // EmbeddingRecord maps to a row in the embeddings table.
 type EmbeddingRecord struct {
-	ID           int64             `json:"id"`
-	ChunkID      int64             `json:"chunk_id"`
-	ModelVersion string            `json:"model_version"`
+	ID           int64               `json:"id"`
+	ChunkID      int64               `json:"chunk_id"`
+	ModelVersion string              `json:"model_version"`
 	Embedding    pgvector.HalfVector `json:"embedding"`
 }
 

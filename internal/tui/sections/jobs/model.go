@@ -14,7 +14,7 @@ import (
 const previewLines = 200
 
 type Model struct {
-	appCtx     context.Context
+	appCtx      context.Context
 	dirOverride string
 
 	runs    []JobRun

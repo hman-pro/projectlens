@@ -32,9 +32,9 @@ func NewClient(endpoint, model string) *Client {
 
 // embedRequest is the JSON body for POST /api/embed.
 type embedRequest struct {
-	Model   string            `json:"model"`
-	Input   []string          `json:"input"`
-	Options map[string]any    `json:"options,omitempty"`
+	Model   string         `json:"model"`
+	Input   []string       `json:"input"`
+	Options map[string]any `json:"options,omitempty"`
 }
 
 // embedResponse is the JSON response from POST /api/embed.
@@ -99,6 +99,11 @@ func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, e
 
 	return vectors, nil
 }
+
+// ProviderName returns the short label "ollama" used in
+// mcpserver.ProviderHealth.Provider. Stable identifier; do not
+// change without coordinating with the MCP server.
+func (c *Client) ProviderName() string { return "ollama" }
 
 // Ping checks if the Ollama server is reachable.
 func (c *Client) Ping(ctx context.Context) error {

@@ -11,7 +11,7 @@ import (
 type Commit struct {
 	Hash      string
 	Author    string
-	Timestamp int64    // unix timestamp
+	Timestamp int64 // unix timestamp
 	Message   string
 	Files     []string // relative file paths changed in this commit
 }

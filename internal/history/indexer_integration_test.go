@@ -51,7 +51,7 @@ func runGit(t *testing.T, dir string, extraEnv []string, args ...string) {
 	cmd.Dir = dir
 	// Force a deterministic env — no global config interference.
 	base := []string{
-		"HOME=" + dir,      // isolate from user's ~/.gitconfig
+		"HOME=" + dir, // isolate from user's ~/.gitconfig
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=test",

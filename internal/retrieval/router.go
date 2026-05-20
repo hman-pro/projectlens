@@ -90,11 +90,10 @@ type Router struct {
 	embedder QueryEmbedder
 }
 
-// QueryResult holds the classified query type and the ranked results.
-// Warnings carries non-fatal backend issues (e.g. semantic search
-// degraded to lexical-only because the embedder was unavailable). MCP
-// handlers surface these to the caller so the agent knows the result
-// is partial.
+// QueryResult holds the classified query type, ranked results, and any
+// non-fatal warnings. Warnings carries backend issues (e.g. semantic
+// search degraded to lexical-only because the embedder was
+// unavailable). MCP handlers surface these as a Degradation block.
 type QueryResult struct {
 	QueryType QueryType      `json:"query_type"`
 	Results   []SearchResult `json:"results"`
@@ -219,8 +218,9 @@ func (r *Router) queryExactSymbol(ctx context.Context, query string, topK int) (
 //     "degraded to lexical-only" to the agent.
 //   - lexical fails, semantic succeeds: returns semantic results with a
 //     warning about the missing lexical hits.
-//   - no embedder configured: lexical-only, no warning (this is a
-//     deliberate config, not a degradation).
+//   - no embedder configured: lexical-only with an explicit
+//     "no embedder configured — semantic search skipped" warning so
+//     callers can flag this in the Degradation block.
 func (r *Router) queryImplementation(ctx context.Context, query string, topK int) ([]SearchResult, []string, error) {
 	type sideResult struct {
 		results []SearchResult
@@ -271,17 +271,21 @@ func (r *Router) queryImplementation(ctx context.Context, query string, topK int
 	}
 
 	var all []SearchResult
+	var warnings []string
 	all = append(all, lex.results...)
 	if semCh != nil {
 		all = append(all, sem.results...)
+	} else {
+		warnings = append(warnings, "no embedder configured — semantic search skipped")
 	}
+	sort.Strings(warnings)
 
 	merged := deduplicateBySymbolID(all)
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].Score > merged[j].Score
 	})
 
-	return merged, nil, nil
+	return merged, warnings, nil
 }
 
 // queryPackageOverview runs lexical search for the package and includes
@@ -373,6 +377,37 @@ func extractQueryPackage(query string) string {
 		}
 	}
 	return ""
+}
+
+// ProbeEmbedder reports whether the configured embedder is reachable.
+// The returned provider string is the embedder's ProviderName() when
+// available, or "" otherwise. ok==true means the embedder responded
+// to a cheap probe. err is non-nil only when a probe ran and failed.
+// When no embedder is configured the function returns ("", false, nil).
+func (r *Router) ProbeEmbedder(ctx context.Context) (string, bool, error) {
+	if r == nil || r.embedder == nil {
+		return "", false, nil
+	}
+
+	provider := ""
+	if n, ok := r.embedder.(interface{ ProviderName() string }); ok {
+		provider = n.ProviderName()
+	}
+
+	if pinger, ok := r.embedder.(interface {
+		Ping(ctx context.Context) error
+	}); ok {
+		if err := pinger.Ping(ctx); err != nil {
+			return provider, true, err
+		}
+		return provider, true, nil
+	}
+
+	// Fall back to a real embed call.
+	if _, err := r.EmbedQuery(ctx, "ping"); err != nil {
+		return provider, true, err
+	}
+	return provider, true, nil
 }
 
 // EmbedQuery embeds a single query string via the configured embedder and

@@ -82,6 +82,22 @@ func TestPromptEmptySymbols(t *testing.T) {
 	}
 }
 
+func TestConfigured_TrueWhenKeySet(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	c := NewClient("claude-sonnet-4-6")
+	if !c.Configured() {
+		t.Fatal("expected Configured()=true when ANTHROPIC_API_KEY is set")
+	}
+}
+
+func TestConfigured_FalseWhenKeyMissing(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	c := NewClient("claude-sonnet-4-6")
+	if c.Configured() {
+		t.Fatal("expected Configured()=false when ANTHROPIC_API_KEY is empty")
+	}
+}
+
 // TestLiveGeneratePackageSummary calls the real Anthropic API.
 // Skipped unless ANTHROPIC_API_KEY is set.
 //

@@ -117,6 +117,39 @@ func TestIntegration_FindSymbol_MissingArg(t *testing.T) {
 	}
 }
 
+func TestIntegration_FindSymbol_StructuredShape(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	result, err := srv.handleFindSymbol(ctx, makeRequest(map[string]interface{}{
+		"name": "SupplierFunding",
+	}))
+	if err != nil {
+		t.Fatalf("handleFindSymbol error: %v", err)
+	}
+	if result.StructuredContent == nil {
+		t.Fatal("expected StructuredContent on find_symbol")
+	}
+	var payload FindSymbolPayload
+	raw, _ := json.Marshal(result.StructuredContent)
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Query != "SupplierFunding" {
+		t.Errorf("Query=%q, want %q", payload.Query, "SupplierFunding")
+	}
+	if payload.Hits == nil {
+		t.Fatal("expected non-nil Hits slice")
+	}
+	if len(payload.Hits) == 0 {
+		t.Skip("no SupplierFunding symbol in test corpus; nothing to assert")
+	}
+	h := payload.Hits[0]
+	if h.Evidence.FilePath == "" || h.Evidence.LineStart == 0 {
+		t.Errorf("Evidence missing: %+v", h.Evidence)
+	}
+}
+
 // --- search_go_context ---
 
 func TestIntegration_SearchGoContext_Lexical(t *testing.T) {
@@ -159,6 +192,37 @@ func TestIntegration_SearchGoContext_Semantic(t *testing.T) {
 	t.Logf("semantic search result:\n%s", truncateForLog(text))
 }
 
+func TestIntegration_SearchGoContext_StructuredDegraded(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	// Force semantic to be skipped by clearing the embedder.
+	srv.router = retrieval.NewRouter(srv.db, nil)
+	ctx := context.Background()
+
+	result, err := srv.handleSearchGoContext(ctx, makeRequest(map[string]interface{}{
+		"query": "how does inventory reservation work",
+	}))
+	if err != nil {
+		t.Fatalf("handleSearchGoContext error: %v", err)
+	}
+	if result.StructuredContent == nil {
+		t.Fatal("expected StructuredContent")
+	}
+	var payload SearchGoContextPayload
+	raw, _ := json.Marshal(result.StructuredContent)
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !payload.Degradation.Degraded {
+		t.Errorf("expected Degradation.Degraded=true when embedder missing, got %+v", payload.Degradation)
+	}
+	if payload.Degradation.Fallback == "" {
+		t.Error("expected Degradation.Fallback to be non-empty")
+	}
+	if !strings.Contains(payload.Degradation.Reason, "no embedder configured") {
+		t.Errorf("Degradation.Reason missing expected text, got: %q", payload.Degradation.Reason)
+	}
+}
+
 // --- get_symbol_context ---
 
 func TestIntegration_GetSymbolContext(t *testing.T) {
@@ -178,6 +242,29 @@ func TestIntegration_GetSymbolContext(t *testing.T) {
 		t.Errorf("unexpected result format: %s", truncateForLog(text))
 	}
 	t.Logf("symbol context:\n%s", truncateForLog(text))
+}
+
+func TestIntegration_GetSymbolContext_StructuredShape(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	result, err := srv.handleGetSymbolContext(ctx, makeRequest(map[string]interface{}{
+		"name": "SupplierFunding",
+	}))
+	if err != nil {
+		t.Fatalf("handleGetSymbolContext error: %v", err)
+	}
+	if result.StructuredContent == nil {
+		t.Fatal("expected StructuredContent on get_symbol_context (NotFound payload should still ship)")
+	}
+	var payload SymbolContextPayload
+	raw, _ := json.Marshal(result.StructuredContent)
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Target.Evidence.FilePath == "" {
+		t.Errorf("Target.Evidence missing: %+v", payload.Target)
+	}
 }
 
 // --- get_package_summary ---
@@ -238,6 +325,60 @@ func TestIntegration_IndexStatus(t *testing.T) {
 	t.Logf("index status:\n%s", truncateForLog(text))
 }
 
+func TestIntegration_IndexStatus_StructuredProviders(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	result, err := srv.handleIndexStatus(ctx, makeRequest(map[string]interface{}{}))
+	if err != nil {
+		t.Fatalf("handleIndexStatus error: %v", err)
+	}
+	if result.StructuredContent == nil {
+		t.Fatal("expected StructuredContent on index_status, got nil")
+	}
+	var payload indexStatusPayload
+	raw, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structured: %v", err)
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal into payload: %v", err)
+	}
+	if len(payload.Providers) == 0 {
+		t.Fatal("expected at least one ProviderHealth entry")
+	}
+	for _, p := range payload.Providers {
+		switch p.State {
+		case "reachable", "configured", "not_configured", "error":
+		default:
+			t.Fatalf("ProviderHealth.State=%q not in {reachable,configured,not_configured,error}", p.State)
+		}
+	}
+}
+
+func TestIntegration_GetPackageSummary_StructuredShape(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	result, err := srv.handleGetPackageSummary(ctx, makeRequest(map[string]interface{}{
+		"package_name": "supplierfunding",
+	}))
+	if err != nil {
+		t.Fatalf("handleGetPackageSummary error: %v", err)
+	}
+	if result.StructuredContent == nil {
+		t.Fatal("expected StructuredContent")
+	}
+	var payload PackageSummaryPayload
+	raw, _ := json.Marshal(result.StructuredContent)
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.PackageName == "" {
+		t.Error("PackageName empty")
+	}
+}
+
 // --- get_table_context ---
 
 func TestIntegration_GetTableContext(t *testing.T) {
@@ -254,6 +395,29 @@ func TestIntegration_GetTableContext(t *testing.T) {
 
 	text := extractText(t, result)
 	t.Logf("table context:\n%s", truncateForLog(text))
+}
+
+func TestIntegration_GetTableContext_StructuredShape(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	result, err := srv.handleGetTableContext(ctx, makeRequest(map[string]interface{}{
+		"table_name": "sets",
+	}))
+	if err != nil {
+		t.Fatalf("handleGetTableContext error: %v", err)
+	}
+	if result.StructuredContent == nil {
+		t.Fatal("expected StructuredContent on get_table_context (NotFound payload should still ship)")
+	}
+	var payload TableContextPayload
+	raw, _ := json.Marshal(result.StructuredContent)
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.TableName == "" {
+		t.Error("TableName empty")
+	}
 }
 
 // --- get_change_history ---
@@ -363,7 +527,7 @@ func TestIntegration_SaveKnowledge_SourceExplicit(t *testing.T) {
 	}
 	text := extractText(t, result)
 
-	var resp saveKnowledgeResponse
+	var resp SaveKnowledgePayload
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal response %q: %v", text, err)
 	}
@@ -401,7 +565,7 @@ func TestIntegration_SaveKnowledge_SourceDefault(t *testing.T) {
 	}
 	text := extractText(t, result)
 
-	var resp saveKnowledgeResponse
+	var resp SaveKnowledgePayload
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal response %q: %v", text, err)
 	}
@@ -482,7 +646,7 @@ func TestIntegration_SaveKnowledge_EmbedsSynchronously(t *testing.T) {
 	}
 	text := extractText(t, saveRes)
 
-	var resp saveKnowledgeResponse
+	var resp SaveKnowledgePayload
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal save response %q: %v", text, err)
 	}
@@ -551,7 +715,7 @@ func TestIntegration_SaveKnowledge_NoEmbedderReturnsFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleSaveKnowledge: %v", err)
 	}
-	var resp saveKnowledgeResponse
+	var resp SaveKnowledgePayload
 	if err := json.Unmarshal([]byte(extractText(t, saveRes)), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -560,6 +724,58 @@ func TestIntegration_SaveKnowledge_NoEmbedderReturnsFalse(t *testing.T) {
 	}
 	if resp.Embedded {
 		t.Fatalf("expected Embedded:false when no embedder configured, got: %+v", resp)
+	}
+}
+
+// --- structured shape: get_change_history + get_coupling ---
+
+func TestIntegration_GetChangeHistory_Structured(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	result, err := srv.handleGetChangeHistory(ctx, makeRequest(map[string]interface{}{
+		"name":  "pkg/datamodel/tables/supplier_funding.go",
+		"limit": 5,
+	}))
+	if err != nil {
+		t.Fatalf("handleGetChangeHistory error: %v", err)
+	}
+	if result.StructuredContent == nil {
+		t.Fatal("expected StructuredContent on get_change_history (NotFound payload should still ship)")
+	}
+	var payload ChangeHistoryPayload
+	raw, _ := json.Marshal(result.StructuredContent)
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Target == "" {
+		t.Error("Target empty")
+	}
+	if payload.TargetKind != "file" && payload.TargetKind != "symbol" {
+		t.Errorf("unexpected TargetKind=%q", payload.TargetKind)
+	}
+}
+
+func TestIntegration_GetCoupling_Structured(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	result, err := srv.handleGetCoupling(ctx, makeRequest(map[string]interface{}{
+		"name": "pkg/datamodel/tables/supplier_funding.go",
+	}))
+	if err != nil {
+		t.Fatalf("handleGetCoupling error: %v", err)
+	}
+	if result.StructuredContent == nil {
+		t.Fatal("expected StructuredContent on get_coupling (NotFound payload should still ship)")
+	}
+	var payload CouplingPayload
+	raw, _ := json.Marshal(result.StructuredContent)
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Target == "" {
+		t.Error("Target empty")
 	}
 }
 

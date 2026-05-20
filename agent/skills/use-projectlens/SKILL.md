@@ -144,8 +144,8 @@ ProjectLens is for **discovery and context**, not for code manipulation.
 If a query returns nothing for an obviously-present symbol, or returns a
 deleted file:
 
-1. Call `index_status`. It returns a human-readable summary plus a fenced
-   ```json``` block with this shape:
+1. Call `index_status`. It returns a human-readable summary plus a typed
+   `structuredContent` payload with this shape:
 
    ```json
    {
@@ -155,12 +155,52 @@ deleted file:
        "embed":     {"stage":"embed","status":"completed","age_minutes":4.8, ...}
      },
      "git": {"head":"<sha>","dirty":false},
-     "embedder_healthy": true
+     "providers": [
+       {"role":"embedder","provider":"ollama","state":"reachable"},
+       {"role":"summarizer","provider":"anthropic","state":"configured"}
+     ]
    }
    ```
 
 2. If `stages.code.age_minutes` is large (e.g. > 60), or `git.dirty` is
-   `true`, or `embedder_healthy` is `false`, tell the user the index looks
-   stale/degraded and suggest `make reindex` (or `index-all` for a full
-   rebuild). Do not silently fall back to grep and pretend the answer is
-   authoritative.
+   `true`, or any `providers[].state` is `error` / `not_configured`, tell
+   the user the index looks stale/degraded and suggest `make reindex` (or
+   `index-all` for a full rebuild). Do not silently fall back to grep and
+   pretend the answer is authoritative.
+
+## Structured fields
+
+Every tool returns both human-readable text and a typed `structuredContent`
+payload (MCP `CallToolResult.structuredContent`). Prefer the structured
+payload — text is for humans, fields are for you.
+
+| Tool | Payload type | Notable fields |
+|------|--------------|----------------|
+| `find_symbol` | `FindSymbolPayload` | `hits[].evidence{file_path,line_start,line_end}` |
+| `search_go_context` | `SearchGoContextPayload` | `degradation{degraded,reason,fallback}`, `hits[].evidence` |
+| `get_symbol_context` | `SymbolContextPayload` | `target.evidence`, `scip_symbol`, `callers[]`, `callees[]`, `implementors[]` |
+| `get_package_summary` | `PackageSummaryPayload` | `generated_at`, `age_minutes`, `stale`, `exported_symbols[]` |
+| `get_table_context` | `TableContextPayload` | `columns[]`, `read_by[]`, `written_by[]` (each carries an evidence span) |
+| `get_change_history` | `ChangeHistoryPayload` | `target_kind` ∈ `file\|symbol`, `evidence` (set when symbol), `records[]` |
+| `get_coupling` | `CouplingPayload` | `coupled[].strength`, `min_strength` |
+| `index_status` | `indexStatusPayload` | `stages` map, `git`, `providers[].state` ∈ `reachable\|configured\|not_configured\|error` |
+| `save_knowledge` | `SaveKnowledgePayload` | `id`, `anchors_resolved`, `anchors_unresolved` |
+| `search_knowledge` | `SearchKnowledgePayload` | `entries[].matched_via` ∈ `vector\|anchor\|both` |
+
+**`degradation.degraded == true`** means the result is best-effort — a backend
+was unavailable (e.g. the embedder). Either ask the user before acting on it
+or re-issue the call once the missing backend is up.
+
+**`evidence` spans** (`file_path:line_start-line_end`) point at the bytes a
+hit was derived from. Before quoting or editing based on a hit, open the
+cited span to confirm — the index can be stale relative to the working tree.
+
+**`providers[].state`** in `index_status` is one of four values:
+- `reachable` — probe ran and the provider responded.
+- `configured` — credentials/endpoint set but no probe was run (the
+  probe is too expensive to run on every status call, e.g. Anthropic).
+- `not_configured` — no provider wired OR credentials missing. The
+  `error` field carries a short reason; `provider` may be empty (no
+  provider) or carry the intended name (e.g. `openai` when the key
+  is missing).
+- `error` — probe ran and failed; the `error` field carries the message.

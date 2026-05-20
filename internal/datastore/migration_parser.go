@@ -9,7 +9,7 @@ import (
 // TableDef represents a database table extracted from migrations.
 type TableDef struct {
 	Name       string      `json:"name"`
-	Schema     string      `json:"schema"`      // e.g., "plan", "approval", "" for public
+	Schema     string      `json:"schema"` // e.g., "plan", "approval", "" for public
 	Columns    []ColumnDef `json:"columns"`
 	SourceFile string      `json:"source_file"` // migration that created it
 }

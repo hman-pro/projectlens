@@ -12,8 +12,8 @@ import (
 
 // SQLRef represents a SQL table reference found in Go source code.
 type SQLRef struct {
-	Table     string `json:"table"`      // e.g., "plan.display_locations"
-	Operation string `json:"operation"`  // SELECT, INSERT, UPDATE, DELETE
+	Table     string `json:"table"`     // e.g., "plan.display_locations"
+	Operation string `json:"operation"` // SELECT, INSERT, UPDATE, DELETE
 	FuncName  string `json:"func_name"` // enclosing Go function name
 	FilePath  string `json:"file_path"`
 	Line      int    `json:"line"`

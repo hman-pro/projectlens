@@ -258,6 +258,8 @@ session — any in-flight transactions in that process roll back.
 
 `get_symbol_context`, `get_package_summary`, and `search_go_context` automatically append a `Related knowledge` block when entries are anchored to the target — no extra call needed.
 
+> **Structured responses.** Each tool returns a typed `structuredContent` payload alongside the prose text. Evidence spans, degradation flags, and provider health surface as named fields. See [`claude/skills/use-projectlens/SKILL.md`](claude/skills/use-projectlens/SKILL.md#structured-fields) for the field reference.
+
 ## Skills and hooks (bundled in `claude/`)
 
 The `claude/` directory ships **agent integration assets** — skills and
