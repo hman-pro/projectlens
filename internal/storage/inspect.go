@@ -96,7 +96,8 @@ func (db *DB) TopDatastoreTablesByEdgeCount(ctx context.Context, limit int) ([]T
 		FROM datastore_tables t
 		JOIN ref_edges re ON re.target_id = t.id
 		GROUP BY t.id, t.schema_name, t.name, t.engine
-		ORDER BY (read_refs + write_refs) DESC, t.name ASC
+		ORDER BY (SUM(CASE WHEN re.edge_type = 'reads_table'  THEN 1 ELSE 0 END) +
+			  SUM(CASE WHEN re.edge_type = 'writes_table' THEN 1 ELSE 0 END)) DESC, t.name ASC
 		LIMIT $1
 	`
 	rows, err := db.Pool.Query(ctx, q, limit)
