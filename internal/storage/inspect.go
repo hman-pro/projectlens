@@ -161,3 +161,50 @@ func (db *DB) HighCouplingPairs(ctx context.Context, limit, minCount int) ([]Cou
 	}
 	return out, rows.Err()
 }
+
+// KnowledgeStatsByCategory returns total counts per category. Categories
+// with zero rows are omitted; callers can render missing keys as 0.
+func (db *DB) KnowledgeStatsByCategory(ctx context.Context) (map[string]int, error) {
+	const q = `SELECT category, COUNT(*) FROM knowledge_entries GROUP BY category`
+	rows, err := db.Pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("storage: knowledge stats: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var cat string
+		var n int
+		if err := rows.Scan(&cat, &n); err != nil {
+			return nil, fmt.Errorf("storage: knowledge stats: scan: %w", err)
+		}
+		out[cat] = n
+	}
+	return out, rows.Err()
+}
+
+// RecentKnowledgeEntries returns the N most recently created entries,
+// ordered by created_at DESC. updated_at is not used so edits don't
+// surface as "new".
+func (db *DB) RecentKnowledgeEntries(ctx context.Context, limit int) ([]KnowledgeSummary, error) {
+	const q = `
+		SELECT id, title, category, source, created_at
+		FROM knowledge_entries
+		ORDER BY created_at DESC
+		LIMIT $1
+	`
+	rows, err := db.Pool.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("storage: recent knowledge: %w", err)
+	}
+	defer rows.Close()
+	var out []KnowledgeSummary
+	for rows.Next() {
+		var k KnowledgeSummary
+		if err := rows.Scan(&k.ID, &k.Title, &k.Category, &k.Source, &k.CreatedAt); err != nil {
+			return nil, fmt.Errorf("storage: recent knowledge: scan: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
