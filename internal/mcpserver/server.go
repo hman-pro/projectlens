@@ -62,6 +62,19 @@ func (s *Server) WithSummarizer(p SummarizerProber) *Server {
 	return s
 }
 
+// handlerTimeout caps every tool handler so a slow query or stuck DB
+// connection cannot wedge the MCP request indefinitely.
+const handlerTimeout = 30 * time.Second
+
+// withTimeout wraps a tool handler with a context deadline.
+func withTimeout(d time.Duration, h server.ToolHandlerFunc) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, d)
+		defer cancel()
+		return h(ctx, req)
+	}
+}
+
 // Start creates the MCP server, registers all tools, and starts serving over
 // Streamable HTTP. It blocks until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Start(ctx context.Context) error {
@@ -70,7 +83,7 @@ func (s *Server) Start(ctx context.Context) error {
 	)
 
 	for _, r := range s.toolRegistry() {
-		mcpServer.AddTool(r.tool, r.handler)
+		mcpServer.AddTool(r.tool, withTimeout(handlerTimeout, r.handler))
 	}
 
 	httpServer := server.NewStreamableHTTPServer(mcpServer)
@@ -136,7 +149,7 @@ func (s *Server) loggingHooks() *server.Hooks {
 func (s *Server) MCPServer() *server.MCPServer {
 	mcpServer := server.NewMCPServer("projectlens", "1.0.0")
 	for _, r := range s.toolRegistry() {
-		mcpServer.AddTool(r.tool, r.handler)
+		mcpServer.AddTool(r.tool, withTimeout(handlerTimeout, r.handler))
 	}
 	return mcpServer
 }

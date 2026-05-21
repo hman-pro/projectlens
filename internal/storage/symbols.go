@@ -2,9 +2,12 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // SymbolRecord maps to a row in the symbols table.
@@ -104,6 +107,86 @@ func (db *DB) GetSymbolsByPackage(ctx context.Context, packageName string) ([]Sy
 		FROM symbols WHERE package_name = $1 ORDER BY name
 	`
 	return db.scanSymbols(ctx, query, packageName)
+}
+
+// GetExportedSymbolsByPackageLimited returns up to `limit` exported symbols
+// in the given package. Exported = name starts with an uppercase ASCII
+// letter (Go's export rule). Filtering in SQL avoids the trap where a
+// post-fetch cap truncates exported names hidden behind many unexported
+// ones in the result set.
+func (db *DB) GetExportedSymbolsByPackageLimited(ctx context.Context, packageName string, limit int) ([]SymbolRecord, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	const query = `
+		SELECT id, file_id, name, kind, package_name, receiver, signature,
+		       doc_comment, line_start, line_end, checksum, indexed_at,
+		       scip_symbol, roles
+		FROM symbols
+		WHERE package_name = $1 AND name ~ '^[A-Z]'
+		ORDER BY name LIMIT $2
+	`
+	return db.scanSymbols(ctx, query, packageName, limit)
+}
+
+// CountSymbolsByPackage returns the total symbol count for a package
+// (exported + unexported). Used by callers that surface a truncation
+// flag alongside a capped result list.
+func (db *DB) CountSymbolsByPackage(ctx context.Context, packageName string) (int, error) {
+	var n int
+	err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM symbols WHERE package_name = $1 AND name ~ '^[A-Z]'`,
+		packageName).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("storage: count exported symbols by package: %w", err)
+	}
+	return n, nil
+}
+
+// ResolvePackageName maps a user-facing package input to its canonical
+// stored form. Resolution order, all deterministic:
+//
+//  1. Exact match against `package_name`.
+//  2. Last path segment of the input (e.g. "core/supplierfunding" →
+//     "supplierfunding") — handles agents that pass import-path style.
+//
+// No fuzzy / suffix matching: ambiguous resolutions ("funding" vs
+// "supplierfunding") are an MCP correctness hazard. Returns ("", nil)
+// when nothing matches; only real storage/query errors propagate.
+func (db *DB) ResolvePackageName(ctx context.Context, input string) (string, error) {
+	if input == "" {
+		return "", nil
+	}
+	found, err := db.lookupPackageName(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	if found != "" {
+		return found, nil
+	}
+	if i := strings.LastIndexByte(input, '/'); i >= 0 && i < len(input)-1 {
+		short := input[i+1:]
+		found, err = db.lookupPackageName(ctx, short)
+		if err != nil {
+			return "", err
+		}
+		return found, nil
+	}
+	return "", nil
+}
+
+func (db *DB) lookupPackageName(ctx context.Context, name string) (string, error) {
+	var found string
+	err := db.Pool.QueryRow(ctx,
+		`SELECT package_name FROM symbols WHERE package_name = $1 LIMIT 1`,
+		name).Scan(&found)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("storage: lookup package name: %w", err)
+	}
+	return found, nil
 }
 
 // DeleteSymbolsByFileID removes all symbols belonging to a file.

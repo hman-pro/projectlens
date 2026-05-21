@@ -244,6 +244,16 @@ func (s *Server) handleGetPackageSummary(ctx context.Context, req mcp.CallToolRe
 		return mcp.NewToolResultError("get_package_summary: missing required argument 'package_name'"), nil
 	}
 
+	// Resolve aliases like "core/supplierfunding" → "supplierfunding".
+	// Treat resolver errors as real failures, not "not found".
+	resolved, err := s.db.ResolvePackageName(ctx, pkgName)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("get_package_summary: failed to resolve package", err), nil
+	}
+	if resolved != "" && resolved != pkgName {
+		pkgName = resolved
+	}
+
 	payload := PackageSummaryPayload{PackageName: pkgName}
 
 	var b strings.Builder
@@ -268,18 +278,26 @@ func (s *Server) handleGetPackageSummary(ctx context.Context, req mcp.CallToolRe
 		b.WriteString("\nNo LLM summary available for this package.\n")
 	}
 
-	// Get symbols in the package.
-	symbols, err := s.db.GetSymbolsByPackage(ctx, pkgName)
+	// Get exported symbols. Filter and cap in SQL so the cap cannot hide
+	// exports behind unexported names.
+	const exportedLimit = 500
+	symbols, err := s.db.GetExportedSymbolsByPackageLimited(ctx, pkgName, exportedLimit)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("get_package_summary: failed to get symbols", err), nil
 	}
 
 	if len(symbols) > 0 {
-		b.WriteString("\nExported symbols:\n")
+		totalExported, err := s.db.CountSymbolsByPackage(ctx, pkgName)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("get_package_summary: failed to count symbols", err), nil
+		}
+		truncated := totalExported > len(symbols)
+		if truncated {
+			fmt.Fprintf(&b, "\nExported symbols (showing %d of %d, truncated):\n", len(symbols), totalExported)
+		} else {
+			b.WriteString("\nExported symbols:\n")
+		}
 		for _, sym := range symbols {
-			if !isExported(sym.Name) {
-				continue
-			}
 			sig := sym.Signature
 			if sig == "" {
 				sig = sym.Name
@@ -288,7 +306,7 @@ func (s *Server) handleGetPackageSummary(ctx context.Context, req mcp.CallToolRe
 			fmt.Fprintf(&b, "  - %s %s\n", sym.Kind, sig)
 		}
 	} else {
-		b.WriteString("\nNo symbols found in this package.\n")
+		b.WriteString("\nNo exported symbols found in this package.\n")
 	}
 
 	if pkgName != "" {
@@ -436,8 +454,8 @@ func (s *Server) probeProviders(ctx context.Context) []ProviderHealth {
 // without text-scraping. Fields here are stable; skill SKILL.md
 // references them by name.
 type indexStatusPayload struct {
-	Stages    map[string]StageFreshness `json:"stages"`
-	Git       struct {
+	Stages map[string]StageFreshness `json:"stages"`
+	Git    struct {
 		Head  string `json:"head,omitempty"`
 		Dirty bool   `json:"dirty"`
 	} `json:"git"`
