@@ -345,12 +345,17 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 		SELECT e.source_type, e.source_id, e.target_type, e.target_id,
 		       e.edge_type, e.confidence, e.properties,
 		       dt_src.engine, dt_src.schema_name, dt_src.name,
-		       dt_tgt.engine, dt_tgt.schema_name, dt_tgt.name
+		       dt_tgt.engine, dt_tgt.schema_name, dt_tgt.name,
+		       f_src.package_name, f_tgt.package_name
 		FROM edges e
 		LEFT JOIN datastore_tables dt_src
 		  ON e.source_type = 'datastore_table' AND dt_src.id = e.source_id
 		LEFT JOIN datastore_tables dt_tgt
 		  ON e.target_type = 'datastore_table' AND dt_tgt.id = e.target_id
+		LEFT JOIN files f_src
+		  ON e.source_type = 'package' AND f_src.id = e.source_id
+		LEFT JOIN files f_tgt
+		  ON e.target_type = 'package' AND f_tgt.id = e.target_id
 		WHERE e.edge_type = ANY($1)
 		ORDER BY e.id
 	`, edgeTypes)
@@ -366,17 +371,19 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 		var props map[string]interface{}
 		var srcEngine, srcSchema, srcName *string
 		var tgtEngine, tgtSchema, tgtName *string
+		var srcPkg, tgtPkg *string
 		if err := rows.Scan(
 			&srcType, &srcID, &tgtType, &tgtID,
 			&etype, &conf, &props,
 			&srcEngine, &srcSchema, &srcName,
 			&tgtEngine, &tgtSchema, &tgtName,
+			&srcPkg, &tgtPkg,
 		); err != nil {
 			return fmt.Errorf("export: edges scan: %w", err)
 		}
 
-		sourceID := edgeEndpoint(srcType, srcID, srcEngine, srcSchema, srcName, props, true)
-		targetID := edgeEndpoint(tgtType, tgtID, tgtEngine, tgtSchema, tgtName, props, false)
+		sourceID := edgeEndpoint(srcType, srcID, srcEngine, srcSchema, srcName, srcPkg, props, true)
+		targetID := edgeEndpoint(tgtType, tgtID, tgtEngine, tgtSchema, tgtName, tgtPkg, props, false)
 
 		if _, ok := emittedNodes[sourceID]; !ok {
 			continue
@@ -417,7 +424,7 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 	return rows.Err()
 }
 
-func edgeEndpoint(t string, id int64, engine, schema, name *string, props map[string]interface{}, isSource bool) string {
+func edgeEndpoint(t string, id int64, engine, schema, name, pkgFromFile *string, props map[string]interface{}, isSource bool) string {
 	switch t {
 	case "symbol":
 		return nodeID(kindSymbol, id, "", "", "", "")
@@ -440,12 +447,19 @@ func edgeEndpoint(t string, id int64, engine, schema, name *string, props map[st
 	case "knowledge":
 		return nodeID(kindKnowledge, id, "", "", "", "")
 	case "package":
-		key := "target_package"
-		if isSource {
-			key = "source_package"
-		}
+		// InsertKnowledgeAnchors stores target_type='package' with target_id =
+		// representative files.id. Resolve via the JOINed files.package_name
+		// first; fall back to source_package / target_package property only
+		// if the file row vanished.
 		pkg := ""
-		if props != nil {
+		if pkgFromFile != nil {
+			pkg = *pkgFromFile
+		}
+		if pkg == "" && props != nil {
+			key := "target_package"
+			if isSource {
+				key = "source_package"
+			}
 			if v, ok := props[key].(string); ok {
 				pkg = v
 			}
