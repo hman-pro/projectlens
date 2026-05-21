@@ -129,6 +129,8 @@ The MCP server exposes 10 tools. You don't invoke them directly — the agent pi
 | `index_status` | "Is the index fresh?" |
 | `save_knowledge` | "Remember that we don't import X from Y." |
 | `search_knowledge` | "What lessons do we have about Z?" |
+| `report` | "Generate a Markdown or JSON summary of the indexed state" |
+| `export_graph` | "Stream a portable JSON graph dump (nodes + edges)" |
 
 ## Documentation
 

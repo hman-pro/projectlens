@@ -45,13 +45,16 @@ projectlens/
     parser/                  # go/packages wrapper, symbol extraction
     graph/                   # call graph (CHA) and edge construction
     chunks/                  # symbol-based chunking
-    summaries/               # heuristic file + LLM package summaries
     embeddings/              # batched embedding pipeline (provider-agnostic)
+    export/                  # graph exporter (streamed JSON)
     indexer/                 # full indexing orchestrator
+    indexstate/              # shared inspector: provider probes, git state
+    mcpserver/               # MCP HTTP server with 10 tools
+    report/                  # CLI report builder + renderers
     retrieval/               # lexical, semantic, graph retrieval + router
     rerank/                  # scoring and ranking
-    mcpserver/               # MCP HTTP server with 10 tools
     storage/                 # Postgres client (pgx) for all 14 tables
+    summaries/               # heuristic file + LLM package summaries
     providers/
       ollama/                # Ollama embedding client (local)
       anthropic/             # Anthropic/Claude summarization client
@@ -133,6 +136,8 @@ make index-summarize # summarize missing packages
 make cli ARGS="inspect-symbol ReserveInventory"
 make cli ARGS="inspect-package service/graphql"
 make query ARGS='"how does inventory reservation work"'
+make cli ARGS="report --top 5"
+make cli ARGS="export graph --edges calls"
 ```
 
 ## TUI dashboard
