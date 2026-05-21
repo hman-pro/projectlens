@@ -1,6 +1,18 @@
 package mcpserver
 
-import "github.com/hman-pro/projectlens/internal/retrieval"
+import (
+	"github.com/hman-pro/projectlens/internal/indexstate"
+	"github.com/hman-pro/projectlens/internal/retrieval"
+)
+
+// ProviderHealth reports the state of one configured provider.
+type ProviderHealth = indexstate.ProviderHealth
+
+// StageFreshness mirrors the per-stage shape used in index_status.
+type StageFreshness = indexstate.StageFreshness
+
+// SummarizerProber matches the summarizer probe contract used by indexstate.
+type SummarizerProber = indexstate.SummarizerProber
 
 // EvidenceSpan points at the bytes a structured result is derived from
 // so an agent can cheaply re-read and verify before acting on them.
@@ -18,35 +30,6 @@ type Degradation struct {
 	Degraded bool   `json:"degraded"`
 	Reason   string `json:"reason,omitempty"`
 	Fallback string `json:"fallback,omitempty"`
-}
-
-// ProviderHealth reports the state of one configured provider. State is
-// one of four values:
-//   - "reachable": the provider responded to a cheap probe.
-//   - "configured": credentials/endpoint are set but no probe was run
-//     (or the probe is too expensive/charged to run on every status call).
-//   - "not_configured": no provider is wired, or credentials are missing.
-//     Provider may be empty (no provider) or carry the intended name
-//     (e.g. "openai" when the OPENAI_API_KEY is missing).
-//   - "error": a probe ran and failed; Error carries the message.
-type ProviderHealth struct {
-	Role     string `json:"role"`
-	Provider string `json:"provider"`
-	State    string `json:"state"`
-	Error    string `json:"error,omitempty"`
-}
-
-// StageFreshness mirrors the existing stageStatus block but is exported
-// for use across the response envelopes. AgeMinutes is computed at
-// response time from CompletedAt.
-type StageFreshness struct {
-	Stage          string  `json:"stage"`
-	Status         string  `json:"status"`
-	CommitSHA      string  `json:"commit_sha,omitempty"`
-	StartedAt      string  `json:"started_at,omitempty"`
-	CompletedAt    string  `json:"completed_at,omitempty"`
-	AgeMinutes     float64 `json:"age_minutes,omitempty"`
-	FilesProcessed int     `json:"files_processed,omitempty"`
 }
 
 // SymbolHit is one structured result row used by find_symbol and any

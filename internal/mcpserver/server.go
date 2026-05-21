@@ -15,26 +15,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hman-pro/projectlens/internal/indexstate"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
-
-// SummarizerProber reports the state of the configured summarization
-// provider. The returned provider string is surfaced as
-// ProviderHealth.Provider. State must be one of:
-//   - "reachable":     a probe ran and the provider responded.
-//   - "configured":    credentials are present but no probe ran
-//     (the probe is too expensive to invoke on every status call —
-//     e.g. Anthropic, where pinging costs tokens).
-//   - "not_configured": credentials missing or no provider wired.
-//   - "error":         a probe ran and failed; err carries the cause.
-//
-// err is non-nil only when state == "error".
-type SummarizerProber interface {
-	ProbeSummarizer(ctx context.Context) (provider string, state string, err error)
-}
 
 // Server wraps the dependencies needed by the MCP tool handlers.
 type Server struct {
@@ -42,16 +28,22 @@ type Server struct {
 	router     *retrieval.Router
 	port       int
 	repoPath   string
-	summarizer SummarizerProber // optional; may be nil
+	summarizer SummarizerProber    // optional; may be nil
+	inspector  indexstate.Inspector
 }
 
 // New creates a new MCP server with the given dependencies.
 func New(db *storage.DB, router *retrieval.Router, port int, repoPath string) *Server {
+	di := &indexstate.DefaultInspector{RepoPath: repoPath}
+	if router != nil {
+		di.Embedder = router
+	}
 	return &Server{
-		db:       db,
-		router:   router,
-		port:     port,
-		repoPath: repoPath,
+		db:        db,
+		router:    router,
+		port:      port,
+		repoPath:  repoPath,
+		inspector: di,
 	}
 }
 
@@ -59,6 +51,9 @@ func New(db *storage.DB, router *retrieval.Router, port int, repoPath string) *S
 // for chaining at wire-up time. Safe to call before Start.
 func (s *Server) WithSummarizer(p SummarizerProber) *Server {
 	s.summarizer = p
+	if di, ok := s.inspector.(*indexstate.DefaultInspector); ok {
+		di.Summarizer = p
+	}
 	return s
 }
 
