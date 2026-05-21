@@ -48,6 +48,8 @@ func main() {
 		newInspectSymbolCmd(),
 		newInspectPackageCmd(),
 		newQueryCmd(),
+		newReportCmd(),
+		newExportCmd(),
 		newKnowledgeCmd(),
 		newIndexDatastoreCmd(),
 		newIndexHistoryCmd(),

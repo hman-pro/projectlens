@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"context"
 	"sort"
 	"testing"
 )
@@ -322,4 +323,14 @@ func TestFormatHelpers(t *testing.T) {
 			t.Error("expected empty string to not be exported")
 		}
 	})
+}
+
+func TestNew_NoSummarizer_ProbeProvidersSafe(t *testing.T) {
+	srv := New(nil, nil, 8484, "")
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panic on probeProviders without summarizer: %v", r)
+		}
+	}()
+	_ = srv.probeProviders(context.Background())
 }

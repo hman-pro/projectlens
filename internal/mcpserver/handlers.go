@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 	"unicode"
@@ -411,43 +410,7 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 // returns a slice of ProviderHealth ready for the index_status
 // payload. Order is stable: embedder first, then summarizer.
 func (s *Server) probeProviders(ctx context.Context) []ProviderHealth {
-	out := make([]ProviderHealth, 0, 2)
-
-	if s.router != nil {
-		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		provider, ok, err := s.router.ProbeEmbedder(probeCtx)
-		cancel()
-		ph := ProviderHealth{Role: "embedder", Provider: provider}
-		switch {
-		case !ok:
-			ph.State = "not_configured"
-			ph.Error = "no embedder configured"
-		case err != nil:
-			ph.State = "error"
-			ph.Error = err.Error()
-		default:
-			ph.State = "reachable"
-		}
-		out = append(out, ph)
-	}
-
-	if s.summarizer != nil {
-		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		provider, state, err := s.summarizer.ProbeSummarizer(probeCtx)
-		cancel()
-		ph := ProviderHealth{Role: "summarizer", Provider: provider, State: state}
-		switch state {
-		case "error":
-			if err != nil {
-				ph.Error = err.Error()
-			}
-		case "not_configured":
-			ph.Error = "summarizer credentials missing"
-		}
-		out = append(out, ph)
-	}
-
-	return out
+	return s.inspector.ProbeProviders(ctx)
 }
 
 // indexStatusPayload is the machine-parseable block agents can inspect
@@ -541,23 +504,12 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 	return mcp.NewToolResultStructured(payload, b.String()), nil
 }
 
-// gitHeadAndDirty returns the current HEAD short SHA and whether the
-// working tree has uncommitted changes. Empty SHA when no repoPath is
-// configured or git isn't reachable — agents treat that as "unknown".
+// gitHeadAndDirty returns the current HEAD SHA and whether the working
+// tree has uncommitted changes. Empty SHA when no repoPath is configured
+// or git isn't reachable — agents treat that as "unknown".
 func (s *Server) gitHeadAndDirty(ctx context.Context) (string, bool) {
-	if s.repoPath == "" {
-		return "", false
-	}
-	headOut, err := exec.CommandContext(ctx, "git", "-C", s.repoPath, "rev-parse", "HEAD").Output()
-	if err != nil {
-		return "", false
-	}
-	head := strings.TrimSpace(string(headOut))
-	statusOut, err := exec.CommandContext(ctx, "git", "-C", s.repoPath, "status", "--porcelain").Output()
-	if err != nil {
-		return head, false
-	}
-	return head, strings.TrimSpace(string(statusOut)) != ""
+	gs := s.inspector.GitHeadAndDirty(ctx)
+	return gs.Head, gs.Dirty
 }
 
 // handleGetChangeHistory handles the get_change_history tool call.

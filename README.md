@@ -130,6 +130,13 @@ The MCP server exposes 10 tools. You don't invoke them directly — the agent pi
 | `save_knowledge` | "Remember that we don't import X from Y." |
 | `search_knowledge` | "What lessons do we have about Z?" |
 
+Two extra read-only CLI commands ship alongside the MCP server (run from your shell, not from the agent):
+
+| Command | What it does |
+|---|---|
+| `projectlens report` | Generate a Markdown or JSON summary of the indexed state |
+| `projectlens export graph` | Stream a portable JSON graph dump (nodes + edges) |
+
 ## Documentation
 
 | Doc | For |
