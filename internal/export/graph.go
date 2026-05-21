@@ -109,14 +109,18 @@ func (g *GraphExporter) Export(ctx context.Context, w io.Writer, opts Options) e
 		gs.Head,
 		gs.Dirty)
 
+	emittedNodes := map[string]struct{}{}
 	first := true
-	emit := func(jsonBytes []byte) error {
+	emit := func(id string, jsonBytes []byte) error {
 		if !first {
 			if _, err := w.Write([]byte(",")); err != nil {
 				return err
 			}
 		}
 		first = false
+		if id != "" {
+			emittedNodes[id] = struct{}{}
+		}
 		_, err := w.Write(jsonBytes)
 		return err
 	}
@@ -139,7 +143,17 @@ func (g *GraphExporter) Export(ctx context.Context, w io.Writer, opts Options) e
 
 	fmt.Fprintf(w, `],"edges":[`)
 	first = true
-	if err := streamEdges(ctx, g.db, edgeTypes, opts.IncludeEvidence, emit); err != nil {
+	emitEdge := func(jsonBytes []byte) error {
+		if !first {
+			if _, err := w.Write([]byte(",")); err != nil {
+				return err
+			}
+		}
+		first = false
+		_, err := w.Write(jsonBytes)
+		return err
+	}
+	if err := streamEdges(ctx, g.db, edgeTypes, opts.IncludeEvidence, emittedNodes, emitEdge); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, `]}`)
@@ -162,7 +176,7 @@ type edgeOut struct {
 	Properties map[string]interface{} `json:"properties,omitempty"`
 }
 
-func streamSymbols(ctx context.Context, db *storage.DB, emit func([]byte) error) error {
+func streamSymbols(ctx context.Context, db *storage.DB, emit func(string, []byte) error) error {
 	rows, err := db.Pool.Query(ctx,
 		`SELECT id, package_name, name, kind, file_id FROM symbols ORDER BY id`)
 	if err != nil {
@@ -185,14 +199,14 @@ func streamSymbols(ctx context.Context, db *storage.DB, emit func([]byte) error)
 		if err != nil {
 			return err
 		}
-		if err := emit(b); err != nil {
+		if err := emit(n.ID, b); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
 }
 
-func streamFiles(ctx context.Context, db *storage.DB, emit func([]byte) error) error {
+func streamFiles(ctx context.Context, db *storage.DB, emit func(string, []byte) error) error {
 	rows, err := db.Pool.Query(ctx, `SELECT id, path, package_name FROM files ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("export: files: %w", err)
@@ -219,14 +233,14 @@ func streamFiles(ctx context.Context, db *storage.DB, emit func([]byte) error) e
 		if err != nil {
 			return err
 		}
-		if err := emit(b); err != nil {
+		if err := emit(n.ID, b); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
 }
 
-func streamTables(ctx context.Context, db *storage.DB, emit func([]byte) error) error {
+func streamTables(ctx context.Context, db *storage.DB, emit func(string, []byte) error) error {
 	rows, err := db.Pool.Query(ctx, `SELECT id, engine, schema_name, name FROM datastore_tables ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("export: tables: %w", err)
@@ -257,14 +271,14 @@ func streamTables(ctx context.Context, db *storage.DB, emit func([]byte) error) 
 		if err != nil {
 			return err
 		}
-		if err := emit(b); err != nil {
+		if err := emit(n.ID, b); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
 }
 
-func streamPackages(ctx context.Context, db *storage.DB, emit func([]byte) error) error {
+func streamPackages(ctx context.Context, db *storage.DB, emit func(string, []byte) error) error {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT DISTINCT package_name FROM symbols
 		UNION
@@ -290,14 +304,14 @@ func streamPackages(ctx context.Context, db *storage.DB, emit func([]byte) error
 		if err != nil {
 			return err
 		}
-		if err := emit(b); err != nil {
+		if err := emit(n.ID, b); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
 }
 
-func streamKnowledge(ctx context.Context, db *storage.DB, emit func([]byte) error) error {
+func streamKnowledge(ctx context.Context, db *storage.DB, emit func(string, []byte) error) error {
 	rows, err := db.Pool.Query(ctx, `SELECT id, title, category FROM knowledge_entries ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("export: knowledge: %w", err)
@@ -319,14 +333,14 @@ func streamKnowledge(ctx context.Context, db *storage.DB, emit func([]byte) erro
 		if err != nil {
 			return err
 		}
-		if err := emit(b); err != nil {
+		if err := emit(n.ID, b); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
 }
 
-func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includeEvidence bool, emit func([]byte) error) error {
+func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includeEvidence bool, emittedNodes map[string]struct{}, emit func([]byte) error) error {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT e.source_type, e.source_id, e.target_type, e.target_id,
 		       e.edge_type, e.confidence, e.properties,
@@ -363,6 +377,13 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 
 		sourceID := edgeEndpoint(srcType, srcID, srcEngine, srcSchema, srcName, props, true)
 		targetID := edgeEndpoint(tgtType, tgtID, tgtEngine, tgtSchema, tgtName, props, false)
+
+		if _, ok := emittedNodes[sourceID]; !ok {
+			continue
+		}
+		if _, ok := emittedNodes[targetID]; !ok {
+			continue
+		}
 
 		if !includeEvidence && props != nil {
 			delete(props, "evidence")
