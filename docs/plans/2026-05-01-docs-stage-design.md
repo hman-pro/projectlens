@@ -1,7 +1,11 @@
 # Docs Stage (Confluence + Jira) Design
 
 **Date:** 2026-05-01
-**Status:** Draft
+**Status:** Superseded for chunking/retrieval (fetcher portion retained)
+
+> **Superseded by [`2026-05-06-lightrag-integration-design.md`](./2026-05-06-lightrag-integration-design.md).**
+> The Confluence/Jira fetchers, `documents` canonical table, `index-docs` CLI subcommand, and TUI `O` hotkey designed below are still in scope. The chunking-into-`chunks` path, `confluence://` / `jira://` `source_uri` schemes, and retrieval via `search_go_context` are replaced by LightRAG-backed `search_docs` / `search_concept` MCP tools. See the LightRAG design for the new ingest path and tool surface.
+
 **Goal:** Implement the planned `docs` stage of the projectlens indexer so Confluence pages and Jira issues land in the existing `documents` table, get chunked + embedded into the same vector space as code, and become reachable via the existing retrieval router and MCP tools without retrieval-side changes.
 
 ## Goal
