@@ -118,3 +118,46 @@ func (db *DB) TopDatastoreTablesByEdgeCount(ctx context.Context, limit int) ([]T
 	}
 	return out, rows.Err()
 }
+
+// HighCouplingPairs returns up to N symmetric co-change pairs from
+// file_history. Files are paired by shared commit_hash; only the
+// canonical (lower file_id < higher file_id) direction is emitted.
+// Pairs with fewer than minCount shared commits are filtered out.
+func (db *DB) HighCouplingPairs(ctx context.Context, limit, minCount int) ([]CouplingPair, error) {
+	if minCount < 1 {
+		minCount = 1
+	}
+	const q = `
+		WITH pairs AS (
+			SELECT h1.file_id AS a,
+			       h2.file_id AS b,
+			       COUNT(*)   AS cnt
+			FROM file_history h1
+			JOIN file_history h2
+			  ON h1.commit_hash = h2.commit_hash
+			 AND h1.file_id < h2.file_id
+			GROUP BY h1.file_id, h2.file_id
+			HAVING COUNT(*) >= $2
+		)
+		SELECT fa.path, fb.path, p.cnt
+		FROM pairs p
+		JOIN files fa ON fa.id = p.a
+		JOIN files fb ON fb.id = p.b
+		ORDER BY p.cnt DESC, fa.path ASC, fb.path ASC
+		LIMIT $1
+	`
+	rows, err := db.Pool.Query(ctx, q, limit, minCount)
+	if err != nil {
+		return nil, fmt.Errorf("storage: coupling: %w", err)
+	}
+	defer rows.Close()
+	var out []CouplingPair
+	for rows.Next() {
+		var c CouplingPair
+		if err := rows.Scan(&c.FileA, &c.FileB, &c.CoChangeCount); err != nil {
+			return nil, fmt.Errorf("storage: coupling: scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
