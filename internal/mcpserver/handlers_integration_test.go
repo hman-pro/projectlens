@@ -839,6 +839,238 @@ func TestIntegration_SaveKnowledge_DedupShortCircuits(t *testing.T) {
 	}
 }
 
+// TestIntegration_SaveKnowledge_DedupReportsOriginalEmbedded asserts that a
+// dedup hit reports the original entry's true embedding state. When the
+// first save ran without an embedder, the retry must NOT claim Embedded:true
+// — agents read that flag to decide whether to wait for index-embed.
+func TestIntegration_SaveKnowledge_DedupReportsOriginalEmbedded(t *testing.T) {
+	// No embedder wired: first save records embedded:false. Retry must
+	// preserve that.
+	ctx := context.Background()
+	db, err := storage.Connect(ctx, testDB)
+	if err != nil {
+		t.Skipf("cannot connect to test database: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	srv := New(db, retrieval.NewRouter(db, nil), 0, "")
+
+	marker := fmt.Sprintf("dedup-embed-state-%d", time.Now().UnixNano())
+	args := map[string]interface{}{
+		"category": "lesson",
+		"title":    marker + " title",
+		"body":     "Original was not embedded.",
+		"source":   "test-dedup-embed",
+	}
+	t.Cleanup(func() {
+		_, _ = srv.db.Pool.Exec(ctx,
+			`DELETE FROM knowledge_entries WHERE title = $1`, args["title"])
+	})
+
+	first, err := srv.handleSaveKnowledge(ctx, makeRequest(args))
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	var firstPayload SaveKnowledgePayload
+	if err := json.Unmarshal([]byte(extractText(t, first)), &firstPayload); err != nil {
+		t.Fatalf("decode first: %v", err)
+	}
+	if firstPayload.Embedded {
+		t.Fatalf("precondition: expected Embedded:false without embedder, got %+v", firstPayload)
+	}
+
+	second, err := srv.handleSaveKnowledge(ctx, makeRequest(args))
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	var secondPayload SaveKnowledgePayload
+	if err := json.Unmarshal([]byte(extractText(t, second)), &secondPayload); err != nil {
+		t.Fatalf("decode second: %v", err)
+	}
+	if !secondPayload.Deduped {
+		t.Fatalf("expected Deduped:true on retry, got %+v", secondPayload)
+	}
+	if secondPayload.Embedded {
+		t.Fatalf("dedup must not claim Embedded:true when original was not embedded, got %+v", secondPayload)
+	}
+}
+
+// TestIntegration_SaveKnowledge_DifferentCategoryBypassesDedup asserts that
+// a retry with the same source+title+body but a different category creates
+// a new entry — re-classification is a real edit, not a retry.
+func TestIntegration_SaveKnowledge_DifferentCategoryBypassesDedup(t *testing.T) {
+	srv := setupKnowledgeServer(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("dedup-cat-%d", time.Now().UnixNano())
+	base := map[string]interface{}{
+		"title":  marker + " title",
+		"body":   "Same prose, different category on retry.",
+		"source": "test-dedup-cat",
+	}
+	t.Cleanup(func() {
+		_, _ = srv.db.Pool.Exec(ctx,
+			`DELETE FROM knowledge_entries WHERE title = $1`, base["title"])
+	})
+
+	mkArgs := func(cat string) map[string]interface{} {
+		out := map[string]interface{}{"category": cat}
+		for k, v := range base {
+			out[k] = v
+		}
+		return out
+	}
+
+	first, err := srv.handleSaveKnowledge(ctx, makeRequest(mkArgs("lesson")))
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	var firstPayload SaveKnowledgePayload
+	if err := json.Unmarshal([]byte(extractText(t, first)), &firstPayload); err != nil {
+		t.Fatalf("decode first: %v", err)
+	}
+	if firstPayload.Deduped {
+		t.Fatalf("first call must not dedup, got %+v", firstPayload)
+	}
+
+	second, err := srv.handleSaveKnowledge(ctx, makeRequest(mkArgs("convention")))
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	var secondPayload SaveKnowledgePayload
+	if err := json.Unmarshal([]byte(extractText(t, second)), &secondPayload); err != nil {
+		t.Fatalf("decode second: %v", err)
+	}
+	if secondPayload.Deduped {
+		t.Fatalf("different category must bypass dedup, got %+v", secondPayload)
+	}
+	if secondPayload.ID == firstPayload.ID {
+		t.Fatalf("expected separate ids, got %d twice", firstPayload.ID)
+	}
+}
+
+// TestIntegration_SaveKnowledge_BadCategoryValidates asserts that a retry
+// with a malformed category returns the validation error from
+// KnowledgeEntry.Validate instead of being absorbed by the dedup
+// short-circuit on an otherwise matching (source, title, body).
+func TestIntegration_SaveKnowledge_BadCategoryValidates(t *testing.T) {
+	srv := setupKnowledgeServer(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("dedup-bad-cat-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = srv.db.Pool.Exec(ctx,
+			`DELETE FROM knowledge_entries WHERE title LIKE $1`, marker+"%")
+	})
+
+	// Seed an entry with a valid category so the (source,title,body) tuple
+	// would dedup if validation ran after dedup.
+	if _, err := srv.handleSaveKnowledge(ctx, makeRequest(map[string]interface{}{
+		"category": "lesson",
+		"title":    marker + " title",
+		"body":     "shared body",
+		"source":   "test-dedup-bad-cat",
+	})); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res, err := srv.handleSaveKnowledge(ctx, makeRequest(map[string]interface{}{
+		"category": "not-a-real-category",
+		"title":    marker + " title",
+		"body":     "shared body",
+		"source":   "test-dedup-bad-cat",
+	}))
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected validation error, got success: %s", extractText(t, res))
+	}
+	if got := extractText(t, res); !strings.Contains(got, "category") {
+		t.Fatalf("expected category validation in error text, got %q", got)
+	}
+}
+
+// TestIntegration_SaveKnowledge_ConcurrentDedup asserts that the
+// advisory-lock-protected critical section makes two parallel identical
+// save_knowledge calls serialize: exactly one row is written and the loser
+// reports Deduped:true.
+func TestIntegration_SaveKnowledge_ConcurrentDedup(t *testing.T) {
+	srv := setupKnowledgeServer(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("dedup-concurrent-%d", time.Now().UnixNano())
+	args := map[string]interface{}{
+		"category": "lesson",
+		"title":    marker + " title",
+		"body":     "Parallel identical save serialization test.",
+		"source":   "test-dedup-concurrent",
+	}
+	t.Cleanup(func() {
+		_, _ = srv.db.Pool.Exec(ctx,
+			`DELETE FROM knowledge_entries WHERE title = $1`, args["title"])
+	})
+
+	type outcome struct {
+		payload SaveKnowledgePayload
+		err     error
+	}
+	const n = 4
+	results := make(chan outcome, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		go func() {
+			<-start
+			res, err := srv.handleSaveKnowledge(ctx, makeRequest(args))
+			if err != nil {
+				results <- outcome{err: err}
+				return
+			}
+			var p SaveKnowledgePayload
+			if err := json.Unmarshal([]byte(extractText(t, res)), &p); err != nil {
+				results <- outcome{err: err}
+				return
+			}
+			results <- outcome{payload: p}
+		}()
+	}
+	close(start)
+
+	dedupCount := 0
+	insertCount := 0
+	var winnerID int64
+	for i := 0; i < n; i++ {
+		o := <-results
+		if o.err != nil {
+			t.Fatalf("goroutine: %v", o.err)
+		}
+		if o.payload.Deduped {
+			dedupCount++
+		} else {
+			insertCount++
+			winnerID = o.payload.ID
+		}
+		if o.payload.ID == 0 {
+			t.Fatalf("zero id in response: %+v", o.payload)
+		}
+	}
+	if insertCount != 1 {
+		t.Fatalf("expected exactly 1 inserter, got %d (deduped=%d)", insertCount, dedupCount)
+	}
+	if dedupCount != n-1 {
+		t.Fatalf("expected %d deduped responses, got %d", n-1, dedupCount)
+	}
+
+	// DB must show exactly one row.
+	var rowCount int
+	if err := srv.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM knowledge_entries WHERE title = $1`, args["title"]).Scan(&rowCount); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if rowCount != 1 {
+		t.Fatalf("expected 1 row after concurrent saves, got %d (winner=%d)", rowCount, winnerID)
+	}
+}
+
 // TestIntegration_SaveKnowledge_AnchorReasonsSurfaced asserts that an
 // unresolved short-name anchor surfaces as "type:ref (reason)" in
 // AnchorsUnresolved so the agent sees why it failed instead of retrying

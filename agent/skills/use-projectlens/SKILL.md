@@ -231,7 +231,7 @@ payload — text is for humans, fields are for you.
 | `get_change_history` | `ChangeHistoryPayload` | `target_kind` ∈ `file\|symbol`, `evidence` (set when symbol), `records[]` |
 | `get_coupling` | `CouplingPayload` | `coupled[].strength`, `min_strength` |
 | `index_status` | `indexStatusPayload` | `stages` map, `git`, `providers[].state` ∈ `reachable\|configured\|not_configured\|error` |
-| `save_knowledge` | `SaveKnowledgePayload` | `id`, `anchors_resolved`, `anchors_unresolved` |
+| `save_knowledge` | `SaveKnowledgePayload` | `id`, `embedded`, `deduped`, `anchors_resolved`, `anchors_unresolved[]` |
 | `search_knowledge` | `SearchKnowledgePayload` | `entries[].matched_via` ∈ `vector\|anchor\|both` |
 
 **`degradation.degraded == true`** means the result is best-effort — a backend
@@ -251,3 +251,25 @@ cited span to confirm — the index can be stale relative to the working tree.
   provider) or carry the intended name (e.g. `openai` when the key
   is missing).
 - `error` — probe ran and failed; the `error` field carries the message.
+
+**`save_knowledge` response flags** are informational, not errors — never
+retry a save based on them (you would create a near-duplicate when your
+second body differs even slightly).
+
+- `embedded: false` — sync embed step skipped (no embedder wired, or
+  transient failure). Entry + chunk are persisted; the next `index-embed`
+  pass picks it up. Lexical and anchor search work immediately; semantic
+  search lags by one indexer pass.
+- `deduped: true` — server detected a recent identical save
+  (same `source`+`title`+`body`+`category` within 60s) and returned the
+  original entry's id. The reported `embedded` field reflects the
+  original entry's true state, not the retry call. New resolvable anchors
+  in the second call are merged into the original entry's edges.
+- `anchors_unresolved: ["symbol:Foo (reason)"]` — each entry is formatted
+  as `"type:ref (reason)"`. Reasons:
+  - `not found` — ref doesn't match anything in the index. Re-check the
+    name via `find_symbol` / `get_symbol_context`; if truly absent, drop
+    the anchor and don't retry with the same ref.
+  - `ambiguous: N matches — use SCIP id` — the short name is shared by
+    multiple symbols. Look up the SCIP id (e.g.
+    `go . core/funding . Match`) via `get_symbol_context` and re-anchor.

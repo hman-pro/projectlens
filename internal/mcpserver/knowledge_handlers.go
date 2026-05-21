@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"sort"
 	"strings"
@@ -81,25 +82,63 @@ func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolReques
 
 	source := req.GetString("source", "agent")
 
-	// Dedup fast path: agents have been observed to retry save_knowledge
-	// after seeing embedded=false or unresolved anchors on the first
-	// attempt, producing identical rows. Detect (source, title, body)
-	// matches within knowledgeDedupWindow and short-circuit. The dedup
-	// check is best-effort — a lookup failure logs and falls through to
-	// the normal insert path so a transient DB hiccup never silently
-	// drops a knowledge write.
-	if existingID, err := s.db.FindRecentDuplicateKnowledge(
-		ctx, source, title, body, knowledgeDedupWindow,
-	); err != nil {
-		log.Printf("save_knowledge: dedup lookup failed: %v", err)
-	} else if existingID != 0 {
-		return s.respondDedup(ctx, existingID, anchors)
-	}
-
+	// Validate before any DB work so a malformed retry (e.g. bad category
+	// with otherwise identical fields) surfaces the validation error
+	// instead of getting absorbed by the dedup short-circuit.
 	entry := &storage.KnowledgeEntry{
 		Category: category, Title: title, Body: body,
 		Tags: tags, Source: source, SessionID: sessPtr,
 	}
+	if err := entry.Validate(); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("save_knowledge: %v", err)), nil
+	}
+
+	// Serialize the dedup check + insert against concurrent identical
+	// retries via a Postgres session-scoped advisory lock keyed on a
+	// 64-bit hash of (source, title, body, category). pg_advisory_lock is
+	// process-global on the server, so two parallel save_knowledge calls
+	// with the same payload run their dedup-then-insert critical sections
+	// back-to-back: the second caller's dedup check sees the first
+	// caller's row and short-circuits. Lock is held only across the
+	// critical section — embedding (which can take seconds) runs after
+	// the unlock.
+	lockKey := dedupLockKey(source, title, body, category)
+	conn, err := s.db.Pool.Acquire(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("save_knowledge: acquire conn: %v", err)), nil
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("save_knowledge: lock: %v", err)), nil
+	}
+	unlocked := false
+	releaseLock := func() {
+		if unlocked {
+			return
+		}
+		unlocked = true
+		// Use a fresh context so a cancelled request context still releases
+		// the lock; the pool returns the conn shortly after, which would
+		// also drop session locks, but unlocking explicitly is cleaner.
+		if _, err := conn.Exec(context.WithoutCancel(ctx),
+			"SELECT pg_advisory_unlock($1)", lockKey); err != nil {
+			log.Printf("save_knowledge: unlock failed (key=%d): %v", lockKey, err)
+		}
+	}
+	defer releaseLock()
+
+	// Dedup fast path. Lookup failures fall through to insert so a
+	// transient DB hiccup never silently drops a knowledge write.
+	if existingID, err := s.db.FindRecentDuplicateKnowledge(
+		ctx, source, title, body, category, knowledgeDedupWindow,
+	); err != nil {
+		log.Printf("save_knowledge: dedup lookup failed: %v", err)
+	} else if existingID != 0 {
+		result, err := s.respondDedup(ctx, existingID, anchors)
+		releaseLock()
+		return result, err
+	}
+
 	entryID, chunkID, err := s.db.InsertKnowledgeEntry(ctx, entry)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("save_knowledge: %v", err)), nil
@@ -109,6 +148,10 @@ func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolReques
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("save_knowledge: anchors: %v", err)), nil
 	}
+
+	// Insert is committed and the row is visible to other readers; we can
+	// drop the dedup lock before the (slow) embed call.
+	releaseLock()
 
 	// Embed synchronously so the entry is immediately query-searchable.
 	// Failures here are non-fatal: the entry is still persisted and can be
@@ -121,21 +164,45 @@ func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolReques
 	return mcp.NewToolResultStructured(payload, string(out)), nil
 }
 
-// respondDedup builds the dedup short-circuit response. New anchors are
-// still resolved and inserted because the edges unique constraint makes
-// the insert idempotent — this lets a retry with corrected anchors attach
+// respondDedup builds the dedup short-circuit response. The original
+// entry's true embedding state is reported (not optimistically true), so
+// agents see embedded:false when the original save was not embedded and
+// can still defer to `index-embed` for semantic availability. New anchors
+// are resolved and inserted because the edges unique constraint makes the
+// insert idempotent — this lets a retry with corrected anchors attach
 // them to the original entry without producing a duplicate row.
 func (s *Server) respondDedup(
 	ctx context.Context, existingID int64, anchors []storage.AnchorRequest,
 ) (*mcp.CallToolResult, error) {
+	embedded, err := s.db.IsKnowledgeEntryEmbedded(ctx, existingID)
+	if err != nil {
+		// Lookup failure is not fatal — fall back to false rather than
+		// reporting a misleading true; agents treat false as "lexical /
+		// anchor search work, semantic lags by one indexer pass".
+		log.Printf("save_knowledge: dedup embedded check failed (id=%d): %v", existingID, err)
+		embedded = false
+	}
 	resolutions, err := s.db.InsertKnowledgeAnchors(ctx, existingID, anchors)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("save_knowledge: dedup anchors: %v", err)), nil
 	}
-	payload := SaveKnowledgePayload{ID: existingID, Embedded: true, Deduped: true}
+	payload := SaveKnowledgePayload{ID: existingID, Embedded: embedded, Deduped: true}
 	fillAnchorResults(&payload, resolutions)
 	out, _ := json.Marshal(payload)
 	return mcp.NewToolResultStructured(payload, string(out)), nil
+}
+
+// dedupLockKey hashes the dedup tuple to a Postgres advisory-lock key.
+// FNV-64a is non-cryptographic but has acceptable distribution for this
+// purpose — a hash collision only causes spurious blocking between unrelated
+// concurrent save_knowledge calls, never an incorrect dedup result.
+func dedupLockKey(source, title, body, category string) int64 {
+	h := fnv.New64a()
+	for _, s := range []string{source, title, body, category} {
+		h.Write([]byte(s))
+		h.Write([]byte{0})
+	}
+	return int64(h.Sum64())
 }
 
 // fillAnchorResults projects storage anchor resolutions onto the response

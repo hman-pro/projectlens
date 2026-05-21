@@ -43,24 +43,29 @@ func (e *KnowledgeEntry) Validate() error {
 	return nil
 }
 
-// FindRecentDuplicateKnowledge returns the id of an existing entry with the
-// same (source, title, body) created within the given window, or 0 if none.
+// FindRecentDuplicateKnowledge returns the id of an existing entry that
+// matches (source, title, body, category) and was created within the given
+// window, or 0 if none. Category is part of the key because re-classifying
+// the same prose under a different category is a real edit, not a retry.
 // Used by save_knowledge to absorb rapid retry storms when an agent
 // re-submits the same content after seeing embed/anchor diagnostics on a
-// previous attempt. The match is exact on all three fields — intentional
-// refinements (different body) bypass dedup and create a new entry.
-func (db *DB) FindRecentDuplicateKnowledge(ctx context.Context, source, title, body string, window time.Duration) (int64, error) {
+// previous attempt.
+func (db *DB) FindRecentDuplicateKnowledge(
+	ctx context.Context,
+	source, title, body, category string,
+	window time.Duration,
+) (int64, error) {
 	if window <= 0 {
 		return 0, nil
 	}
 	const q = `
         SELECT id FROM knowledge_entries
-        WHERE source = $1 AND title = $2 AND body = $3
-          AND created_at > NOW() - make_interval(secs => $4)
+        WHERE source = $1 AND title = $2 AND body = $3 AND category = $4
+          AND created_at > NOW() - make_interval(secs => $5)
         ORDER BY created_at DESC
         LIMIT 1`
 	var id int64
-	err := db.Pool.QueryRow(ctx, q, source, title, body, window.Seconds()).Scan(&id)
+	err := db.Pool.QueryRow(ctx, q, source, title, body, category, window.Seconds()).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
@@ -68,6 +73,27 @@ func (db *DB) FindRecentDuplicateKnowledge(ctx context.Context, source, title, b
 		return 0, fmt.Errorf("storage: knowledge: find recent duplicate: %w", err)
 	}
 	return id, nil
+}
+
+// IsKnowledgeEntryEmbedded reports whether the paired chunk for the given
+// knowledge entry has an embeddings row. Used by save_knowledge dedup hits
+// to report the original entry's true embedding state instead of optimistically
+// claiming Embedded:true.
+func (db *DB) IsKnowledgeEntryEmbedded(ctx context.Context, entryID int64) (bool, error) {
+	const q = `
+        SELECT EXISTS (
+          SELECT 1
+          FROM embeddings e
+          JOIN chunks c ON c.id = e.chunk_id
+          WHERE c.source_uri = $1
+        )`
+	var exists bool
+	if err := db.Pool.QueryRow(ctx, q,
+		fmt.Sprintf("knowledge:%d", entryID),
+	).Scan(&exists); err != nil {
+		return false, fmt.Errorf("storage: knowledge: check embedded: %w", err)
+	}
+	return exists, nil
 }
 
 // InsertKnowledgeEntry inserts the entry and a paired knowledge-typed chunk

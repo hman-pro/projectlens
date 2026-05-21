@@ -402,7 +402,7 @@ func TestFindRecentDuplicateKnowledge(t *testing.T) {
 
 	// 1. Exact match within window returns the id.
 	hit, err := db.FindRecentDuplicateKnowledge(ctx,
-		"test-dedup", entry.Title, entry.Body, 60*time.Second)
+		"test-dedup", entry.Title, entry.Body, entry.Category, 60*time.Second)
 	if err != nil {
 		t.Fatalf("dedup hit: %v", err)
 	}
@@ -412,7 +412,7 @@ func TestFindRecentDuplicateKnowledge(t *testing.T) {
 
 	// 2. Different body bypasses dedup.
 	hit, err = db.FindRecentDuplicateKnowledge(ctx,
-		"test-dedup", entry.Title, "different body", 60*time.Second)
+		"test-dedup", entry.Title, "different body", entry.Category, 60*time.Second)
 	if err != nil {
 		t.Fatalf("body diff: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestFindRecentDuplicateKnowledge(t *testing.T) {
 
 	// 3. Different source bypasses dedup.
 	hit, err = db.FindRecentDuplicateKnowledge(ctx,
-		"other-source", entry.Title, entry.Body, 60*time.Second)
+		"other-source", entry.Title, entry.Body, entry.Category, 60*time.Second)
 	if err != nil {
 		t.Fatalf("source diff: %v", err)
 	}
@@ -430,13 +430,72 @@ func TestFindRecentDuplicateKnowledge(t *testing.T) {
 		t.Fatalf("expected miss on source diff, got %d", hit)
 	}
 
-	// 4. window=0 disables dedup.
+	// 4. Different category bypasses dedup (re-classification is a real edit).
 	hit, err = db.FindRecentDuplicateKnowledge(ctx,
-		"test-dedup", entry.Title, entry.Body, 0)
+		"test-dedup", entry.Title, entry.Body, "convention", 60*time.Second)
+	if err != nil {
+		t.Fatalf("category diff: %v", err)
+	}
+	if hit != 0 {
+		t.Fatalf("expected miss on category diff, got %d", hit)
+	}
+
+	// 5. window=0 disables dedup.
+	hit, err = db.FindRecentDuplicateKnowledge(ctx,
+		"test-dedup", entry.Title, entry.Body, entry.Category, 0)
 	if err != nil {
 		t.Fatalf("zero window: %v", err)
 	}
 	if hit != 0 {
 		t.Fatalf("expected zero-window to disable dedup, got %d", hit)
+	}
+}
+
+// Exercises IsKnowledgeEntryEmbedded: returns false when no embedding row
+// exists for the paired chunk, true after one is written.
+func TestIsKnowledgeEntryEmbedded(t *testing.T) {
+	ctx := context.Background()
+	db, err := Connect(ctx, dbURL(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer db.Close()
+
+	marker := fmt.Sprintf("embedded-check-%d", time.Now().UnixNano())
+	entryID, chunkID, err := db.InsertKnowledgeEntry(ctx, &KnowledgeEntry{
+		Category: "lesson",
+		Title:    marker + " title",
+		Body:     "body",
+		Source:   "test-embedded",
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Pool.Exec(ctx, `DELETE FROM knowledge_entries WHERE id = $1`, entryID)
+	})
+
+	// Before any embedding row exists.
+	embedded, err := db.IsKnowledgeEntryEmbedded(ctx, entryID)
+	if err != nil {
+		t.Fatalf("check pre: %v", err)
+	}
+	if embedded {
+		t.Fatalf("expected false before embedding")
+	}
+
+	// After writing a stub embedding.
+	vec := make([]float32, 1024)
+	if err := db.UpsertEmbedding(ctx, &EmbeddingRecord{
+		ChunkID: chunkID, ModelVersion: "test", Embedding: pgvector.NewHalfVector(vec),
+	}); err != nil {
+		t.Fatalf("upsert embedding: %v", err)
+	}
+	embedded, err = db.IsKnowledgeEntryEmbedded(ctx, entryID)
+	if err != nil {
+		t.Fatalf("check post: %v", err)
+	}
+	if !embedded {
+		t.Fatalf("expected true after embedding")
 	}
 }
