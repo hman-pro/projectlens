@@ -48,9 +48,10 @@ Before calling `save_knowledge`, call `search_knowledge` with a tight query
 on the title or the rule's keywords (and the same `anchor` if you have one).
 
 - If a matching entry already exists, **leave it alone**. Do not call
-  `save_knowledge` again — the handler inserts unconditionally, so a
-  re-save produces a duplicate `knowledge_entries` row and a duplicate
-  `knowledge:<id>` chunk. There is no upsert path today.
+  `save_knowledge` again — content-level dedup is now done server-side
+  (identical `source`+`title`+`body` within 60s short-circuits with
+  `deduped: true`), but a re-save with even slightly different prose
+  still creates a new row. There is no upsert path today.
 - If the search returns near-misses on a different facet (same symbol, but
   a different rule), save the new one — they coexist.
 - If the existing entry is genuinely wrong or outdated, surface that to
@@ -60,6 +61,23 @@ on the title or the rule's keywords (and the same `anchor` if you have one).
 
 Skipping this step leads to 5 sessions = 5 near-duplicate entries on the
 same convention. Don't pollute the knowledge layer.
+
+## Response flags are informational — do not retry
+
+`save_knowledge` returns three diagnostic fields that look like failures
+but are not. **Never retry a save based on these — they describe the row
+that was already written.** Retrying produces a near-duplicate when your
+second body differs even slightly from the first.
+
+| Field | Meaning | Action |
+|---|---|---|
+| `embedded: false` | Sync embed step skipped (no embedder wired, or transient embedder failure). Entry + chunk are persisted; the next `index-embed` pass picks it up. | None. Lexical and anchor search work immediately; semantic search lags by one indexer pass. |
+| `anchors_unresolved: ["symbol:Foo (not found)"]` | The ref didn't match any symbol in the index. | Re-check the symbol name from `find_symbol` / `get_symbol_context`; if it's truly absent, drop the anchor. Don't blind-retry with the same ref. |
+| `anchors_unresolved: ["symbol:Foo (ambiguous: 7 matches — use SCIP id)"]` | The short name is shared by multiple symbols and the resolver refuses to guess. | Look up the SCIP id (e.g. `go . core/funding . Match`) via `get_symbol_context` and re-anchor with that exact ref. |
+| `deduped: true` | The server detected a recent identical save and returned the original id. Any new resolvable anchors in the second call have been merged into the original entry's edges. | None. The entry exists with id from the response. |
+
+If you got a `deduped: true` response, the user-facing summary should
+still cite the returned id — there is no "failure" to recover from.
 
 ## How to call `save_knowledge`
 

@@ -196,9 +196,21 @@ type CouplingPayload struct {
 }
 
 // SaveKnowledgePayload is the structured response for save_knowledge.
+//
+// Deduped is true when the handler short-circuited on a recent duplicate
+// (same source+title+body within the dedup window) — the returned ID points
+// at the pre-existing entry. Anchors from the dup-hit call are still resolved
+// and merged into the existing entry's edges (idempotent via the edges
+// unique constraint), so a retry with corrected anchors can still attach.
+//
+// AnchorsUnresolved entries are formatted as "type:ref (reason)" — the
+// reason is the resolver's diagnostic ("not found", "ambiguous: N matches
+// — use SCIP id") so the agent can pick a canonical ref instead of retrying
+// with the same short name.
 type SaveKnowledgePayload struct {
 	ID                int64    `json:"id"`
 	Embedded          bool     `json:"embedded"`
+	Deduped           bool     `json:"deduped,omitempty"`
 	AnchorsResolved   int      `json:"anchors_resolved"`
 	AnchorsUnresolved []string `json:"anchors_unresolved,omitempty"`
 }

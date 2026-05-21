@@ -779,6 +779,111 @@ func TestIntegration_GetCoupling_Structured(t *testing.T) {
 	}
 }
 
+// --- save_knowledge dedup + anchor-reason behavior ---
+
+// TestIntegration_SaveKnowledge_DedupShortCircuits asserts that a second
+// save_knowledge with identical (source, title, body) inside the dedup
+// window returns the existing entry id with Deduped:true and writes no new
+// row.
+func TestIntegration_SaveKnowledge_DedupShortCircuits(t *testing.T) {
+	srv := setupKnowledgeServer(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("dedup-handler-%d", time.Now().UnixNano())
+	args := map[string]interface{}{
+		"category": "lesson",
+		"title":    marker + " title",
+		"body":     "Identical body for dedup verification.",
+		"source":   "test-dedup-handler",
+	}
+
+	t.Cleanup(func() {
+		_, _ = srv.db.Pool.Exec(ctx,
+			`DELETE FROM knowledge_entries WHERE title = $1`, args["title"])
+	})
+
+	first, err := srv.handleSaveKnowledge(ctx, makeRequest(args))
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	var firstPayload SaveKnowledgePayload
+	if err := json.Unmarshal([]byte(extractText(t, first)), &firstPayload); err != nil {
+		t.Fatalf("decode first: %v", err)
+	}
+	if firstPayload.ID == 0 || firstPayload.Deduped {
+		t.Fatalf("first call should insert fresh, got %+v", firstPayload)
+	}
+
+	second, err := srv.handleSaveKnowledge(ctx, makeRequest(args))
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	var secondPayload SaveKnowledgePayload
+	if err := json.Unmarshal([]byte(extractText(t, second)), &secondPayload); err != nil {
+		t.Fatalf("decode second: %v", err)
+	}
+	if !secondPayload.Deduped {
+		t.Fatalf("expected Deduped:true on retry, got %+v", secondPayload)
+	}
+	if secondPayload.ID != firstPayload.ID {
+		t.Fatalf("expected dedup to reuse id %d, got %d", firstPayload.ID, secondPayload.ID)
+	}
+
+	var rowCount int
+	if err := srv.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM knowledge_entries WHERE title = $1`, args["title"]).Scan(&rowCount); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if rowCount != 1 {
+		t.Fatalf("expected dedup to keep row count at 1, got %d", rowCount)
+	}
+}
+
+// TestIntegration_SaveKnowledge_AnchorReasonsSurfaced asserts that an
+// unresolved short-name anchor surfaces as "type:ref (reason)" in
+// AnchorsUnresolved so the agent sees why it failed instead of retrying
+// blindly.
+func TestIntegration_SaveKnowledge_AnchorReasonsSurfaced(t *testing.T) {
+	srv := setupKnowledgeServer(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("anchor-reason-%d", time.Now().UnixNano())
+	missingRef := marker + "NoSuchSymbol"
+	args := map[string]interface{}{
+		"category": "lesson",
+		"title":    marker + " title",
+		"body":     "Anchor reason surfacing test.",
+		"source":   "test-anchor-reason",
+		"anchors": []interface{}{
+			map[string]interface{}{"type": "symbol", "ref": missingRef},
+		},
+	}
+
+	t.Cleanup(func() {
+		_, _ = srv.db.Pool.Exec(ctx,
+			`DELETE FROM knowledge_entries WHERE title = $1`, args["title"])
+	})
+
+	res, err := srv.handleSaveKnowledge(ctx, makeRequest(args))
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	var payload SaveKnowledgePayload
+	if err := json.Unmarshal([]byte(extractText(t, res)), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(payload.AnchorsUnresolved) != 1 {
+		t.Fatalf("expected exactly 1 unresolved anchor, got %+v", payload.AnchorsUnresolved)
+	}
+	got := payload.AnchorsUnresolved[0]
+	if !strings.Contains(got, "symbol:"+missingRef) {
+		t.Errorf("expected ref in unresolved entry, got %q", got)
+	}
+	if !strings.Contains(got, "not found") {
+		t.Errorf("expected reason 'not found' in unresolved entry, got %q", got)
+	}
+}
+
 // --- helpers ---
 
 func extractText(t *testing.T, result *mcp.CallToolResult) string {

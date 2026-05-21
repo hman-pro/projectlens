@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -248,5 +249,194 @@ func TestKnowledgeSymbolWithPackageAndNotFound(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("expected nil for missing id, got %+v", got)
+	}
+}
+
+// Exercises the multi-strategy anchor resolver: symbol short-name fallback
+// (unique → resolves; >1 → unresolved + ambiguity reason), package
+// import-path fallback, and the "not found" reason.
+func TestKnowledgeAnchorResolution(t *testing.T) {
+	ctx := context.Background()
+	db, err := Connect(ctx, dbURL(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer db.Close()
+
+	marker := fmt.Sprintf("anchor-resolve-%d", time.Now().UnixNano())
+	uniquePkg := marker + "_unique"
+	dupPkg := marker + "_dup"
+
+	uniqueFileID, err := db.UpsertFile(ctx, &FileRecord{
+		Path: marker + "/unique.go", PackageName: uniquePkg,
+		Checksum: "x", Language: "go", LineCount: 1, CommitSHA: "d",
+		IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("upsert unique file: %v", err)
+	}
+	dupFileA, err := db.UpsertFile(ctx, &FileRecord{
+		Path: marker + "/dup_a.go", PackageName: dupPkg,
+		Checksum: "x", Language: "go", LineCount: 1, CommitSHA: "d",
+		IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("upsert dup file A: %v", err)
+	}
+	dupFileB, err := db.UpsertFile(ctx, &FileRecord{
+		Path: marker + "/dup_b.go", PackageName: dupPkg,
+		Checksum: "x", Language: "go", LineCount: 1, CommitSHA: "d",
+		IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("upsert dup file B: %v", err)
+	}
+
+	uniqueName := marker + "UniqFunc"
+	uniqueScip := "go . " + uniquePkg + " . " + uniqueName
+	dupName := marker + "Dup"
+	dupScipA := "go . " + dupPkg + " . " + dupName + "A"
+	dupScipB := "go . " + dupPkg + " . " + dupName + "B"
+
+	if err := db.InsertSymbols(ctx, []SymbolRecord{{
+		FileID: uniqueFileID, Name: uniqueName, Kind: "func", PackageName: uniquePkg,
+		Signature: "func()", LineStart: 1, LineEnd: 1, Checksum: "y",
+		IndexedAt: time.Now(), ScipSymbol: &uniqueScip,
+	}, {
+		FileID: dupFileA, Name: dupName, Kind: "func", PackageName: dupPkg,
+		Signature: "func()", LineStart: 1, LineEnd: 1, Checksum: "y",
+		IndexedAt: time.Now(), ScipSymbol: &dupScipA,
+	}, {
+		FileID: dupFileB, Name: dupName, Kind: "func", PackageName: dupPkg,
+		Signature: "func()", LineStart: 1, LineEnd: 1, Checksum: "y",
+		IndexedAt: time.Now(), ScipSymbol: &dupScipB,
+	}}); err != nil {
+		t.Fatalf("insert symbols: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = db.Pool.Exec(ctx, `DELETE FROM symbols WHERE file_id IN ($1,$2,$3)`,
+			uniqueFileID, dupFileA, dupFileB)
+		_, _ = db.Pool.Exec(ctx, `DELETE FROM files WHERE id IN ($1,$2,$3)`,
+			uniqueFileID, dupFileA, dupFileB)
+	})
+
+	// 1. Unique short-name resolves via name fallback when SCIP miss.
+	id, ok, reason, err := db.resolveAnchor(ctx, AnchorRequest{Type: "symbol", Ref: uniqueName})
+	if err != nil {
+		t.Fatalf("unique resolve: %v", err)
+	}
+	if !ok || reason != "" {
+		t.Fatalf("expected unique short-name to resolve, got ok=%v reason=%q", ok, reason)
+	}
+	if id == 0 {
+		t.Fatalf("expected non-zero id")
+	}
+
+	// 2. Exact SCIP id still works (fast path).
+	if _, ok, _, err := db.resolveAnchor(ctx, AnchorRequest{Type: "symbol", Ref: uniqueScip}); err != nil || !ok {
+		t.Fatalf("scip exact: ok=%v err=%v", ok, err)
+	}
+
+	// 3. Ambiguous short name returns unresolved + count reason.
+	_, ok, reason, err = db.resolveAnchor(ctx, AnchorRequest{Type: "symbol", Ref: dupName})
+	if err != nil {
+		t.Fatalf("dup resolve: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected ambiguous to be unresolved")
+	}
+	if !strings.Contains(reason, "ambiguous") || !strings.Contains(reason, "2") {
+		t.Fatalf("expected reason to mention ambiguity and count, got %q", reason)
+	}
+
+	// 4. Missing symbol returns "not found".
+	_, ok, reason, err = db.resolveAnchor(ctx, AnchorRequest{Type: "symbol", Ref: marker + "Nope"})
+	if err != nil {
+		t.Fatalf("missing resolve: %v", err)
+	}
+	if ok || reason != "not found" {
+		t.Fatalf("expected not-found, got ok=%v reason=%q", ok, reason)
+	}
+
+	// 5. Package import-path fallback: "core/<pkg>" resolves to "<pkg>".
+	_, ok, _, err = db.resolveAnchor(ctx, AnchorRequest{Type: "package", Ref: "core/" + uniquePkg})
+	if err != nil {
+		t.Fatalf("pkg import-path resolve: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected import-path style package to resolve via last-segment fallback")
+	}
+
+	// 6. Package exact match path.
+	if _, ok, _, err := db.resolveAnchor(ctx, AnchorRequest{Type: "package", Ref: uniquePkg}); err != nil || !ok {
+		t.Fatalf("pkg exact: ok=%v err=%v", ok, err)
+	}
+}
+
+// Exercises FindRecentDuplicateKnowledge: same (source,title,body) within the
+// window returns the existing id; a different body bypasses dedup; window=0
+// disables dedup.
+func TestFindRecentDuplicateKnowledge(t *testing.T) {
+	ctx := context.Background()
+	db, err := Connect(ctx, dbURL(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer db.Close()
+
+	marker := fmt.Sprintf("dedup-%d", time.Now().UnixNano())
+	entry := &KnowledgeEntry{
+		Category: "lesson",
+		Title:    marker + " title",
+		Body:     "exact body content",
+		Source:   "test-dedup",
+	}
+	entryID, _, err := db.InsertKnowledgeEntry(ctx, entry)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Pool.Exec(ctx, `DELETE FROM knowledge_entries WHERE id = $1`, entryID)
+	})
+
+	// 1. Exact match within window returns the id.
+	hit, err := db.FindRecentDuplicateKnowledge(ctx,
+		"test-dedup", entry.Title, entry.Body, 60*time.Second)
+	if err != nil {
+		t.Fatalf("dedup hit: %v", err)
+	}
+	if hit != entryID {
+		t.Fatalf("expected dedup to return %d, got %d", entryID, hit)
+	}
+
+	// 2. Different body bypasses dedup.
+	hit, err = db.FindRecentDuplicateKnowledge(ctx,
+		"test-dedup", entry.Title, "different body", 60*time.Second)
+	if err != nil {
+		t.Fatalf("body diff: %v", err)
+	}
+	if hit != 0 {
+		t.Fatalf("expected miss on body diff, got %d", hit)
+	}
+
+	// 3. Different source bypasses dedup.
+	hit, err = db.FindRecentDuplicateKnowledge(ctx,
+		"other-source", entry.Title, entry.Body, 60*time.Second)
+	if err != nil {
+		t.Fatalf("source diff: %v", err)
+	}
+	if hit != 0 {
+		t.Fatalf("expected miss on source diff, got %d", hit)
+	}
+
+	// 4. window=0 disables dedup.
+	hit, err = db.FindRecentDuplicateKnowledge(ctx,
+		"test-dedup", entry.Title, entry.Body, 0)
+	if err != nil {
+		t.Fatalf("zero window: %v", err)
+	}
+	if hit != 0 {
+		t.Fatalf("expected zero-window to disable dedup, got %d", hit)
 	}
 }

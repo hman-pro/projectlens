@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pgvector/pgvector-go"
@@ -39,6 +41,33 @@ func (e *KnowledgeEntry) Validate() error {
 		return fmt.Errorf("category %q not in allowed set", e.Category)
 	}
 	return nil
+}
+
+// FindRecentDuplicateKnowledge returns the id of an existing entry with the
+// same (source, title, body) created within the given window, or 0 if none.
+// Used by save_knowledge to absorb rapid retry storms when an agent
+// re-submits the same content after seeing embed/anchor diagnostics on a
+// previous attempt. The match is exact on all three fields — intentional
+// refinements (different body) bypass dedup and create a new entry.
+func (db *DB) FindRecentDuplicateKnowledge(ctx context.Context, source, title, body string, window time.Duration) (int64, error) {
+	if window <= 0 {
+		return 0, nil
+	}
+	const q = `
+        SELECT id FROM knowledge_entries
+        WHERE source = $1 AND title = $2 AND body = $3
+          AND created_at > NOW() - make_interval(secs => $4)
+        ORDER BY created_at DESC
+        LIMIT 1`
+	var id int64
+	err := db.Pool.QueryRow(ctx, q, source, title, body, window.Seconds()).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("storage: knowledge: find recent duplicate: %w", err)
+	}
+	return id, nil
 }
 
 // InsertKnowledgeEntry inserts the entry and a paired knowledge-typed chunk
@@ -221,6 +250,11 @@ type AnchorResolution struct {
 	Anchor   AnchorRequest
 	TargetID int64 // 0 if unresolved
 	Resolved bool
+	// Reason is "" when Resolved is true. When Resolved is false it carries
+	// a short diagnostic — "not found" or "ambiguous: N matches — use SCIP id".
+	// Surfaced to agents so they can pick a canonical ref instead of retrying
+	// blindly with the same short name.
+	Reason string
 }
 
 // InsertKnowledgeAnchors resolves each anchor to an existing target and writes
@@ -230,11 +264,11 @@ func (db *DB) InsertKnowledgeAnchors(ctx context.Context, knowledgeID int64, anc
 	edges := make([]EdgeRecord, 0, len(anchors))
 
 	for _, a := range anchors {
-		targetID, ok, err := db.resolveAnchor(ctx, a)
+		targetID, ok, reason, err := db.resolveAnchor(ctx, a)
 		if err != nil {
 			return nil, fmt.Errorf("storage: knowledge: resolve anchor %s:%s: %w", a.Type, a.Ref, err)
 		}
-		out = append(out, AnchorResolution{Anchor: a, TargetID: targetID, Resolved: ok})
+		out = append(out, AnchorResolution{Anchor: a, TargetID: targetID, Resolved: ok, Reason: reason})
 		if !ok {
 			continue
 		}
@@ -320,7 +354,7 @@ func (db *DB) KnowledgeForAnchor(ctx context.Context, a AnchorRequest, limit int
 	if limit <= 0 {
 		limit = 10
 	}
-	targetID, ok, err := db.resolveAnchor(ctx, a)
+	targetID, ok, _, err := db.resolveAnchor(ctx, a)
 	if err != nil {
 		return nil, err
 	}
@@ -428,33 +462,114 @@ func (db *DB) KnowledgeForSymbolWithPackage(ctx context.Context, symbolID int64,
 	return out, rows.Err()
 }
 
-// resolveAnchor maps an AnchorRequest to the target row id.
+// resolveAnchor maps an AnchorRequest to the target row id with multi-strategy
+// resolution per type. The strategies are deterministic — no fuzzy / suffix
+// matching — and an ambiguous short-name lookup is rejected with a reason
+// rather than silently picking the first match.
+//
+// Returns (id, resolved, reason, err). reason is "" when resolved; otherwise
+// "not found" or "ambiguous: N matches — use SCIP id".
+//
+// Resolution per type:
+//
+//   - symbol:  1) exact scip_symbol; 2) unambiguous symbols.name fallback so
+//     agents can anchor by short name when there is exactly one match.
+//   - file:    exact files.path.
+//   - package: 1) exact files.package_name; 2) last-path-segment fallback
+//     ("core/funding" → "funding") so agents can pass import-path style refs.
+//   - table:   exact datastore_tables.name.
+//
 // Package anchors are stored against the smallest file.id in that package;
 // retrieval (KnowledgeForAnchor) joins via files.package_name to traverse.
-func (db *DB) resolveAnchor(ctx context.Context, a AnchorRequest) (int64, bool, error) {
-	var id int64
-	var query string
+func (db *DB) resolveAnchor(ctx context.Context, a AnchorRequest) (int64, bool, string, error) {
 	switch a.Type {
 	case "symbol":
-		query = `SELECT id FROM symbols WHERE scip_symbol = $1 LIMIT 1`
+		return db.resolveSymbolAnchor(ctx, a.Ref)
 	case "file":
-		query = `SELECT id FROM files WHERE path = $1 LIMIT 1`
+		return db.resolveSingleRow(ctx,
+			`SELECT id FROM files WHERE path = $1 LIMIT 1`, a.Ref)
 	case "package":
-		query = `SELECT MIN(id) FROM files WHERE package_name = $1`
-	case "table":
-		query = `SELECT id FROM datastore_tables WHERE name = $1 LIMIT 1`
-	default:
-		return 0, false, fmt.Errorf("unknown anchor type %q", a.Type)
-	}
-	err := db.Pool.QueryRow(ctx, query, a.Ref).Scan(&id)
-	if err != nil {
-		if err.Error() == "no rows in result set" || strings.Contains(err.Error(), "no rows") {
-			return 0, false, nil
+		id, ok, reason, err := db.resolvePackageAnchor(ctx, a.Ref)
+		if err != nil || ok {
+			return id, ok, reason, err
 		}
-		return 0, false, err
+		if i := strings.LastIndexByte(a.Ref, '/'); i >= 0 && i < len(a.Ref)-1 {
+			return db.resolvePackageAnchor(ctx, a.Ref[i+1:])
+		}
+		return 0, false, "not found", nil
+	case "table":
+		return db.resolveSingleRow(ctx,
+			`SELECT id FROM datastore_tables WHERE name = $1 LIMIT 1`, a.Ref)
+	default:
+		return 0, false, "", fmt.Errorf("unknown anchor type %q", a.Type)
+	}
+}
+
+func (db *DB) resolveSymbolAnchor(ctx context.Context, ref string) (int64, bool, string, error) {
+	var id int64
+	err := db.Pool.QueryRow(ctx,
+		`SELECT id FROM symbols WHERE scip_symbol = $1 LIMIT 1`, ref).Scan(&id)
+	if err == nil {
+		return id, true, "", nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, "", err
+	}
+
+	// LIMIT 2 is enough to distinguish unambiguous from ambiguous; COUNT(*)
+	// runs only on the ambiguous path so the unambiguous fast path stays cheap.
+	rows, err := db.Pool.Query(ctx,
+		`SELECT id FROM symbols WHERE name = $1 LIMIT 2`, ref)
+	if err != nil {
+		return 0, false, "", err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var rid int64
+		if err := rows.Scan(&rid); err != nil {
+			return 0, false, "", err
+		}
+		ids = append(ids, rid)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, "", err
+	}
+	if len(ids) == 0 {
+		return 0, false, "not found", nil
+	}
+	if len(ids) == 1 {
+		return ids[0], true, "", nil
+	}
+	var n int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM symbols WHERE name = $1`, ref).Scan(&n); err != nil {
+		return 0, false, "", err
+	}
+	return 0, false, fmt.Sprintf("ambiguous: %d matches — use SCIP id", n), nil
+}
+
+func (db *DB) resolvePackageAnchor(ctx context.Context, name string) (int64, bool, string, error) {
+	var id int64
+	err := db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(MIN(id), 0) FROM files WHERE package_name = $1`, name).Scan(&id)
+	if err != nil {
+		return 0, false, "", err
 	}
 	if id == 0 {
-		return 0, false, nil
+		return 0, false, "not found", nil
 	}
-	return id, true, nil
+	return id, true, "", nil
+}
+
+func (db *DB) resolveSingleRow(ctx context.Context, query, ref string) (int64, bool, string, error) {
+	var id int64
+	err := db.Pool.QueryRow(ctx, query, ref).Scan(&id)
+	if err == nil {
+		return id, true, "", nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, "not found", nil
+	}
+	return 0, false, "", err
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/pgvector/pgvector-go"
@@ -21,6 +22,13 @@ const maxKnowledgeBodyChars = 30000
 // knowledgeEmbedModelVersion is the model_version tag stored alongside
 // synchronously-written knowledge embeddings.
 const knowledgeEmbedModelVersion = "embedding-model"
+
+// knowledgeDedupWindow is the look-back used by save_knowledge to absorb
+// duplicate retries. 60s is short enough that intentional re-saves (delete
+// + recreate, content refinement minutes later) still create new entries,
+// and long enough to swallow rapid retry storms from agents reacting to
+// embed/anchor diagnostics.
+const knowledgeDedupWindow = 60 * time.Second
 
 func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	category, err := req.RequireString("category")
@@ -73,6 +81,21 @@ func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolReques
 
 	source := req.GetString("source", "agent")
 
+	// Dedup fast path: agents have been observed to retry save_knowledge
+	// after seeing embedded=false or unresolved anchors on the first
+	// attempt, producing identical rows. Detect (source, title, body)
+	// matches within knowledgeDedupWindow and short-circuit. The dedup
+	// check is best-effort — a lookup failure logs and falls through to
+	// the normal insert path so a transient DB hiccup never silently
+	// drops a knowledge write.
+	if existingID, err := s.db.FindRecentDuplicateKnowledge(
+		ctx, source, title, body, knowledgeDedupWindow,
+	); err != nil {
+		log.Printf("save_knowledge: dedup lookup failed: %v", err)
+	} else if existingID != 0 {
+		return s.respondDedup(ctx, existingID, anchors)
+	}
+
 	entry := &storage.KnowledgeEntry{
 		Category: category, Title: title, Body: body,
 		Tags: tags, Source: source, SessionID: sessPtr,
@@ -93,16 +116,43 @@ func (s *Server) handleSaveKnowledge(ctx context.Context, req mcp.CallToolReques
 	embedded := s.embedKnowledgeChunk(ctx, chunkID, title, body)
 
 	payload := SaveKnowledgePayload{ID: entryID, Embedded: embedded}
-	for _, r := range resolutions {
-		if r.Resolved {
-			payload.AnchorsResolved++
-		} else {
-			payload.AnchorsUnresolved = append(payload.AnchorsUnresolved,
-				fmt.Sprintf("%s:%s", r.Anchor.Type, r.Anchor.Ref))
-		}
-	}
+	fillAnchorResults(&payload, resolutions)
 	out, _ := json.Marshal(payload)
 	return mcp.NewToolResultStructured(payload, string(out)), nil
+}
+
+// respondDedup builds the dedup short-circuit response. New anchors are
+// still resolved and inserted because the edges unique constraint makes
+// the insert idempotent — this lets a retry with corrected anchors attach
+// them to the original entry without producing a duplicate row.
+func (s *Server) respondDedup(
+	ctx context.Context, existingID int64, anchors []storage.AnchorRequest,
+) (*mcp.CallToolResult, error) {
+	resolutions, err := s.db.InsertKnowledgeAnchors(ctx, existingID, anchors)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("save_knowledge: dedup anchors: %v", err)), nil
+	}
+	payload := SaveKnowledgePayload{ID: existingID, Embedded: true, Deduped: true}
+	fillAnchorResults(&payload, resolutions)
+	out, _ := json.Marshal(payload)
+	return mcp.NewToolResultStructured(payload, string(out)), nil
+}
+
+// fillAnchorResults projects storage anchor resolutions onto the response
+// payload. Unresolved anchors carry their resolver-supplied reason so the
+// agent can distinguish "not found" from "ambiguous, use SCIP id".
+func fillAnchorResults(p *SaveKnowledgePayload, resolutions []storage.AnchorResolution) {
+	for _, r := range resolutions {
+		if r.Resolved {
+			p.AnchorsResolved++
+			continue
+		}
+		s := fmt.Sprintf("%s:%s", r.Anchor.Type, r.Anchor.Ref)
+		if r.Reason != "" {
+			s += " (" + r.Reason + ")"
+		}
+		p.AnchorsUnresolved = append(p.AnchorsUnresolved, s)
+	}
 }
 
 // embedKnowledgeChunk embeds the title+body via the router's embedder and
