@@ -224,3 +224,232 @@ func TestDeleteEdgesByType(t *testing.T) {
 		}
 	})
 }
+
+func TestInsertEdgesProvenance(t *testing.T) {
+	db := connectForIntegration(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("test-prov-%d", time.Now().UnixNano())
+	pathA := "/tmp/" + marker + "-a.go"
+	pathB := "/tmp/" + marker + "-b.go"
+
+	fileAID, err := db.UpsertFile(ctx, &FileRecord{
+		Path: pathA, PackageName: "testpkg", Checksum: "ca-" + marker, Language: "go", CommitSHA: "c-" + marker,
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile A: %v", err)
+	}
+	fileBID, err := db.UpsertFile(ctx, &FileRecord{
+		Path: pathB, PackageName: "testpkg", Checksum: "cb-" + marker, Language: "go", CommitSHA: "c-" + marker,
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile B: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.Pool.Exec(ctx,
+			`DELETE FROM edges WHERE source_type='file' AND source_id = ANY($1)`,
+			[]int64{fileAID, fileBID},
+		); err != nil {
+			t.Logf("cleanup edges: %v", err)
+		}
+		if _, err := db.Pool.Exec(ctx,
+			`DELETE FROM files WHERE path = ANY($1)`,
+			[]string{pathA, pathB},
+		); err != nil {
+			t.Logf("cleanup files: %v", err)
+		}
+	})
+
+	edgeType := "test_prov_calls_" + marker
+	conf := float32(0.75)
+	if err := db.InsertEdges(ctx, []EdgeRecord{
+		{
+			SourceType: "file", SourceID: fileAID,
+			TargetType: "file", TargetID: fileBID,
+			EdgeType:        edgeType,
+			Confidence:      &conf,
+			Provenance:      "callgraph",
+			ConfidenceClass: "inferred",
+		},
+	}); err != nil {
+		t.Fatalf("InsertEdges: %v", err)
+	}
+
+	var prov, class string
+	var gotConf float32
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT provenance, confidence_class, confidence
+		FROM edges WHERE source_id=$1 AND target_id=$2 AND edge_type=$3
+	`, fileAID, fileBID, edgeType).Scan(&prov, &class, &gotConf); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if prov != "callgraph" || class != "inferred" || gotConf != 0.75 {
+		t.Errorf("round-trip mismatch: prov=%q class=%q conf=%v", prov, class, gotConf)
+	}
+
+	// Upsert path: changing class on conflict should propagate via EXCLUDED.
+	if err := db.InsertEdges(ctx, []EdgeRecord{
+		{
+			SourceType: "file", SourceID: fileAID,
+			TargetType: "file", TargetID: fileBID,
+			EdgeType:        edgeType,
+			Confidence:      &conf,
+			Provenance:      "callgraph",
+			ConfidenceClass: "ambiguous",
+		},
+	}); err != nil {
+		t.Fatalf("InsertEdges (upsert): %v", err)
+	}
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT confidence_class FROM edges WHERE source_id=$1 AND target_id=$2 AND edge_type=$3
+	`, fileAID, fileBID, edgeType).Scan(&class); err != nil {
+		t.Fatalf("scan upsert: %v", err)
+	}
+	if class != "ambiguous" {
+		t.Errorf("upsert did not update confidence_class: got %q want %q", class, "ambiguous")
+	}
+
+	// Empty provenance + class round-trip as NULL (not empty string).
+	edgeType2 := "test_prov_null_" + marker
+	if err := db.InsertEdges(ctx, []EdgeRecord{
+		{SourceType: "file", SourceID: fileAID, TargetType: "file", TargetID: fileBID, EdgeType: edgeType2},
+	}); err != nil {
+		t.Fatalf("InsertEdges (null): %v", err)
+	}
+	var nullProv, nullClass *string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT provenance, confidence_class FROM edges WHERE source_id=$1 AND target_id=$2 AND edge_type=$3
+	`, fileAID, fileBID, edgeType2).Scan(&nullProv, &nullClass); err != nil {
+		t.Fatalf("scan null: %v", err)
+	}
+	if nullProv != nil || nullClass != nil {
+		t.Errorf("expected NULL provenance/class, got prov=%v class=%v", nullProv, nullClass)
+	}
+
+	// CHECK constraint rejects invalid class.
+	bad := EdgeRecord{
+		SourceType: "file", SourceID: fileAID, TargetType: "file", TargetID: fileBID,
+		EdgeType: "test_prov_bad_" + marker, ConfidenceClass: "definitely",
+	}
+	if err := db.InsertEdges(ctx, []EdgeRecord{bad}); err == nil {
+		t.Errorf("expected CHECK violation for invalid confidence_class")
+	}
+}
+
+func TestBackfillProvenance_PartialRepair(t *testing.T) {
+	db := connectForIntegration(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("test-backfill-%d", time.Now().UnixNano())
+	pathA := "/tmp/" + marker + "-a.go"
+	pathB := "/tmp/" + marker + "-b.go"
+	fileAID, err := db.UpsertFile(ctx, &FileRecord{
+		Path: pathA, PackageName: "testpkg", Checksum: "ca-" + marker, Language: "go", CommitSHA: "c-" + marker,
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile A: %v", err)
+	}
+	fileBID, err := db.UpsertFile(ctx, &FileRecord{
+		Path: pathB, PackageName: "testpkg", Checksum: "cb-" + marker, Language: "go", CommitSHA: "c-" + marker,
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile B: %v", err)
+	}
+
+	// Use a marker-scoped edge_type to avoid touching production rows.
+	edgeType := "test_backfill_" + marker
+	t.Cleanup(func() {
+		if _, err := db.Pool.Exec(ctx,
+			`DELETE FROM edges WHERE edge_type = $1`, edgeType,
+		); err != nil {
+			t.Logf("cleanup edges: %v", err)
+		}
+		if _, err := db.Pool.Exec(ctx,
+			`DELETE FROM files WHERE path = ANY($1)`, []string{pathA, pathB},
+		); err != nil {
+			t.Logf("cleanup files: %v", err)
+		}
+	})
+
+	// Three rows: NULL/NULL, prov-only, class-only — partial rows must be
+	// repaired by the backfill without overwriting set values.
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO edges (source_type, source_id, target_type, target_id, edge_type, provenance, confidence_class)
+		VALUES
+		    ('file', $1, 'file', $2, $3, NULL,         NULL),
+		    ('file', $2, 'file', $1, $3, 'callgraph',  NULL),
+		    ('file', $1, 'file', $2, $3 || '-x', NULL, 'extracted')
+	`, fileAID, fileBID, edgeType); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Backfill the base edgeType with defaults that should fill missing values
+	// but leave the already-set 'callgraph' provenance untouched.
+	n, err := db.BackfillProvenance(ctx, edgeType, "history", "inferred")
+	if err != nil {
+		t.Fatalf("backfill base: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 rows updated for %q, got %d", edgeType, n)
+	}
+
+	// Backfill the -x variant: row already has class, only prov needs filling.
+	if _, err := db.BackfillProvenance(ctx, edgeType+"-x", "callgraph", "ambiguous"); err != nil {
+		t.Fatalf("backfill x: %v", err)
+	}
+
+	// Verify final state.
+	rows, err := db.Pool.Query(ctx, `
+		SELECT source_id, target_id, edge_type, provenance, confidence_class
+		FROM edges WHERE edge_type = ANY($1)
+		ORDER BY edge_type, source_id, target_id
+	`, []string{edgeType, edgeType + "-x"})
+	if err != nil {
+		t.Fatalf("verify query: %v", err)
+	}
+	defer rows.Close()
+	type row struct {
+		src, tgt   int64
+		etype      string
+		prov, cls  *string
+	}
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.src, &r.tgt, &r.etype, &r.prov, &r.cls); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+
+	for _, r := range got {
+		if r.prov == nil || r.cls == nil {
+			t.Errorf("row %+v still has NULL: prov=%v cls=%v", r, r.prov, r.cls)
+		}
+	}
+	// The prov-only seed row must keep 'callgraph', not be overwritten with 'history'.
+	for _, r := range got {
+		if r.etype == edgeType && r.src == fileBID && r.tgt == fileAID {
+			if r.prov == nil || *r.prov != "callgraph" {
+				t.Errorf("expected preserved provenance=callgraph on prov-only row, got %v", r.prov)
+			}
+		}
+	}
+	// Class-only seed row must keep 'extracted', not be overwritten with 'ambiguous'.
+	for _, r := range got {
+		if r.etype == edgeType+"-x" {
+			if r.cls == nil || *r.cls != "extracted" {
+				t.Errorf("expected preserved confidence_class=extracted on class-only row, got %v", r.cls)
+			}
+		}
+	}
+
+	// Re-running on a fully-filled set is a no-op.
+	n2, err := db.BackfillProvenance(ctx, edgeType, "history", "inferred")
+	if err != nil {
+		t.Fatalf("backfill rerun: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("expected 0 rows on idempotent rerun, got %d", n2)
+	}
+}

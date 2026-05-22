@@ -8,28 +8,42 @@ import (
 
 // EdgeRecord maps to a row in the edges table.
 type EdgeRecord struct {
-	ID         int64    `json:"id"`
-	SourceType string   `json:"source_type"`
-	SourceID   int64    `json:"source_id"`
-	TargetType string   `json:"target_type"`
-	TargetID   int64    `json:"target_id"`
-	EdgeType   string   `json:"edge_type"`
-	Properties *[]byte  `json:"properties,omitempty"`
-	Confidence *float32 `json:"confidence,omitempty"`
+	ID              int64    `json:"id"`
+	SourceType      string   `json:"source_type"`
+	SourceID        int64    `json:"source_id"`
+	TargetType      string   `json:"target_type"`
+	TargetID        int64    `json:"target_id"`
+	EdgeType        string   `json:"edge_type"`
+	Properties      *[]byte  `json:"properties,omitempty"`
+	Confidence      *float32 `json:"confidence,omitempty"`
+	Provenance      string   `json:"provenance,omitempty"`
+	ConfidenceClass string   `json:"confidence_class,omitempty"`
+}
+
+// nullableString returns nil for an empty string so that the column is
+// inserted as SQL NULL rather than an empty literal. Used by edge writers
+// that may legitimately leave provenance/confidence_class unset.
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // EdgeResult is returned by graph traversal queries and includes the related
 // symbol information via a JOIN.
 type EdgeResult struct {
-	EdgeID      int64  `json:"edge_id"`
-	EdgeType    string `json:"edge_type"`
-	SymbolID    int64  `json:"symbol_id"`
-	SymbolName  string `json:"symbol_name"`
-	SymbolKind  string `json:"symbol_kind"`
-	PackageName string `json:"package_name"`
-	FilePath    string `json:"file_path"`
-	LineStart   int    `json:"line_start"`
-	LineEnd     int    `json:"line_end"`
+	EdgeID          int64  `json:"edge_id"`
+	EdgeType        string `json:"edge_type"`
+	SymbolID        int64  `json:"symbol_id"`
+	SymbolName      string `json:"symbol_name"`
+	SymbolKind      string `json:"symbol_kind"`
+	PackageName     string `json:"package_name"`
+	FilePath        string `json:"file_path"`
+	LineStart       int    `json:"line_start"`
+	LineEnd         int    `json:"line_end"`
+	Provenance      string `json:"provenance,omitempty"`
+	ConfidenceClass string `json:"confidence_class,omitempty"`
 }
 
 // InsertEdges batch-inserts edge records with ON CONFLICT DO NOTHING.
@@ -52,8 +66,8 @@ func (db *DB) InsertEdges(ctx context.Context, edges []EdgeRecord) error {
 	}
 	edges = deduped
 
-	const cols = 7
-	const maxBatch = 65535 / cols // 9362 edges per batch
+	const cols = 9
+	const maxBatch = 65535 / cols // 7281 edges per batch
 
 	for start := 0; start < len(edges); start += maxBatch {
 		end := start + maxBatch
@@ -68,17 +82,23 @@ func (db *DB) InsertEdges(ctx context.Context, edges []EdgeRecord) error {
 		for i, e := range batch {
 			base := i * cols
 			valueStrings = append(valueStrings, fmt.Sprintf(
-				"($%d, $%d, $%d, $%d, $%d, $%d, $%d)", base+1, base+2, base+3, base+4, base+5, base+6, base+7,
+				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9,
 			))
-			args = append(args, e.SourceType, e.SourceID, e.TargetType, e.TargetID, e.EdgeType, e.Properties, e.Confidence)
+			args = append(args,
+				e.SourceType, e.SourceID, e.TargetType, e.TargetID, e.EdgeType,
+				e.Properties, e.Confidence, nullableString(e.Provenance), nullableString(e.ConfidenceClass),
+			)
 		}
 
 		query := fmt.Sprintf(`
-			INSERT INTO edges (source_type, source_id, target_type, target_id, edge_type, properties, confidence)
+			INSERT INTO edges (source_type, source_id, target_type, target_id, edge_type, properties, confidence, provenance, confidence_class)
 			VALUES %s
 			ON CONFLICT (source_type, source_id, target_type, target_id, edge_type) DO UPDATE SET
 				properties = EXCLUDED.properties,
-				confidence = EXCLUDED.confidence
+				confidence = EXCLUDED.confidence,
+				provenance = EXCLUDED.provenance,
+				confidence_class = EXCLUDED.confidence_class
 		`, strings.Join(valueStrings, ", "))
 
 		_, err := db.Pool.Exec(ctx, query, args...)
@@ -94,7 +114,8 @@ func (db *DB) InsertEdges(ctx context.Context, edges []EdgeRecord) error {
 func (db *DB) GetCallers(ctx context.Context, symbolID int64) ([]EdgeResult, error) {
 	const query = `
 		SELECT e.id, e.edge_type, s.id, s.name, s.kind, s.package_name,
-		       f.path, s.line_start, s.line_end
+		       f.path, s.line_start, s.line_end,
+		       COALESCE(e.provenance, ''), COALESCE(e.confidence_class, '')
 		FROM edges e
 		JOIN symbols s ON s.id = e.source_id
 		JOIN files f ON f.id = s.file_id
@@ -110,7 +131,8 @@ func (db *DB) GetCallers(ctx context.Context, symbolID int64) ([]EdgeResult, err
 func (db *DB) GetCallees(ctx context.Context, symbolID int64) ([]EdgeResult, error) {
 	const query = `
 		SELECT e.id, e.edge_type, s.id, s.name, s.kind, s.package_name,
-		       f.path, s.line_start, s.line_end
+		       f.path, s.line_start, s.line_end,
+		       COALESCE(e.provenance, ''), COALESCE(e.confidence_class, '')
 		FROM edges e
 		JOIN symbols s ON s.id = e.target_id
 		JOIN files f ON f.id = s.file_id
@@ -127,7 +149,8 @@ func (db *DB) GetCallees(ctx context.Context, symbolID int64) ([]EdgeResult, err
 func (db *DB) GetImplementors(ctx context.Context, symbolID int64) ([]EdgeResult, error) {
 	const query = `
 		SELECT e.id, e.edge_type, s.id, s.name, s.kind, s.package_name,
-		       f.path, s.line_start, s.line_end
+		       f.path, s.line_start, s.line_end,
+		       COALESCE(e.provenance, ''), COALESCE(e.confidence_class, '')
 		FROM edges e
 		JOIN symbols s ON s.id = e.source_id
 		JOIN files f ON f.id = s.file_id
@@ -143,7 +166,8 @@ func (db *DB) GetImplementors(ctx context.Context, symbolID int64) ([]EdgeResult
 func (db *DB) GetEdgesTargetingDatastoreTable(ctx context.Context, tableID int64, edgeType string) ([]EdgeResult, error) {
 	const query = `
 		SELECT e.id, e.edge_type, s.id, s.name, s.kind, s.package_name,
-		       f.path, s.line_start, s.line_end
+		       f.path, s.line_start, s.line_end,
+		       COALESCE(e.provenance, ''), COALESCE(e.confidence_class, '')
 		FROM edges e
 		JOIN symbols s ON s.id = e.source_id
 		JOIN files f ON f.id = s.file_id
@@ -187,16 +211,23 @@ func (db *DB) DeleteEdgesBySymbolID(ctx context.Context, symbolID int64) error {
 	return nil
 }
 
-// CouplingResult represents a co-change coupling edge with the coupled file path.
+// CouplingResult represents a co-change coupling edge with the coupled
+// file path. Provenance + ConfidenceClass carry the trust class of the
+// underlying edge row (typically history/inferred).
 type CouplingResult struct {
-	FilePath string  `json:"file_path"`
-	Strength float32 `json:"strength"`
+	FilePath        string  `json:"file_path"`
+	Strength        float32 `json:"strength"`
+	Provenance      string  `json:"provenance,omitempty"`
+	ConfidenceClass string  `json:"confidence_class,omitempty"`
 }
 
 // GetCouplingEdges returns files that co-change with the given file.
 func (db *DB) GetCouplingEdges(ctx context.Context, fileID int64, minStrength float32) ([]CouplingResult, error) {
 	const query = `
-		SELECT f.path, COALESCE(e.confidence, 0) as strength
+		SELECT f.path,
+		       COALESCE(e.confidence, 0) as strength,
+		       COALESCE(e.provenance, '') AS provenance,
+		       COALESCE(e.confidence_class, '') AS confidence_class
 		FROM edges e
 		JOIN files f ON f.id = CASE
 			WHEN e.source_id = $1 AND e.source_type = 'file' THEN e.target_id
@@ -216,12 +247,33 @@ func (db *DB) GetCouplingEdges(ctx context.Context, fileID int64, minStrength fl
 	var results []CouplingResult
 	for rows.Next() {
 		var r CouplingResult
-		if err := rows.Scan(&r.FilePath, &r.Strength); err != nil {
+		if err := rows.Scan(&r.FilePath, &r.Strength, &r.Provenance, &r.ConfidenceClass); err != nil {
 			return nil, fmt.Errorf("storage: scan coupling result: %w", err)
 		}
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+// BackfillProvenance fills (provenance, confidence_class) on rows where
+// either column is NULL. COALESCE preserves any already-set value so the
+// operation is partial-field repair, not blanket overwrite. Returns the
+// number of rows touched. Used by `projectlens index-backfill-provenance`
+// to apply per-type defaults to edges written before migration 006 and
+// to repair partial rows left by older/broken writers.
+func (db *DB) BackfillProvenance(ctx context.Context, edgeType, provenance, class string) (int64, error) {
+	const query = `
+		UPDATE edges
+		SET provenance = COALESCE(provenance, $2),
+		    confidence_class = COALESCE(confidence_class, $3)
+		WHERE edge_type = $1
+		  AND (provenance IS NULL OR confidence_class IS NULL)
+	`
+	tag, err := db.Pool.Exec(ctx, query, edgeType, provenance, class)
+	if err != nil {
+		return 0, fmt.Errorf("storage: backfill provenance %s: %w", edgeType, err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // scanEdgeResults is a helper that scans rows into EdgeResult slices.
@@ -239,6 +291,7 @@ func (db *DB) scanEdgeResults(ctx context.Context, query string, args ...any) ([
 			&r.EdgeID, &r.EdgeType, &r.SymbolID, &r.SymbolName,
 			&r.SymbolKind, &r.PackageName, &r.FilePath,
 			&r.LineStart, &r.LineEnd,
+			&r.Provenance, &r.ConfidenceClass,
 		); err != nil {
 			return nil, fmt.Errorf("storage: scan edge result: %w", err)
 		}

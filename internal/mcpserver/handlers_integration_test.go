@@ -267,6 +267,58 @@ func TestIntegration_GetSymbolContext_StructuredShape(t *testing.T) {
 	}
 }
 
+func TestIntegration_GetSymbolContext_ProvenanceAndTrust(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	// Try a few well-connected symbols; pick the first whose payload includes
+	// any caller/callee/implementor so the assertions are meaningful. If no
+	// such symbol exists in the indexed corpus, the test logs and exits — the
+	// payload-shape coverage is still done by the unit tests on worstClass.
+	candidates := []string{"Indexer", "Run", "Build", "IndexCode", "InsertEdges"}
+	var payload SymbolContextPayload
+	for _, name := range candidates {
+		result, err := srv.handleGetSymbolContext(ctx, makeRequest(map[string]interface{}{"name": name}))
+		if err != nil {
+			t.Fatalf("handleGetSymbolContext %q: %v", name, err)
+		}
+		if result.StructuredContent == nil {
+			continue
+		}
+		raw, _ := json.Marshal(result.StructuredContent)
+		var p SymbolContextPayload
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatalf("decode %q: %v", name, err)
+		}
+		if len(p.Callers)+len(p.Callees)+len(p.Implementors) > 0 {
+			payload = p
+			t.Logf("using symbol %q with %d callers, %d callees, %d implementors",
+				name, len(p.Callers), len(p.Callees), len(p.Implementors))
+			break
+		}
+	}
+	if len(payload.Callers)+len(payload.Callees)+len(payload.Implementors) == 0 {
+		t.Skip("no candidate symbol has graph edges in the current index — skipping")
+	}
+
+	// Every graph-derived hit should carry provenance + confidence_class
+	// after the backfill + writer changes.
+	for _, group := range [][]SymbolHit{payload.Callers, payload.Callees, payload.Implementors} {
+		for _, h := range group {
+			if h.Provenance == "" || h.ConfidenceClass == "" {
+				t.Errorf("graph hit missing provenance/class: %+v", h)
+			}
+		}
+	}
+
+	if payload.Trust == nil {
+		t.Fatal("expected Trust to be set when edges are present")
+	}
+	if payload.Trust.WorstClass != "extracted" && payload.Trust.WorstClass != "inferred" && payload.Trust.WorstClass != "ambiguous" {
+		t.Errorf("unexpected Trust.WorstClass: %q", payload.Trust.WorstClass)
+	}
+}
+
 // --- get_package_summary ---
 
 func TestIntegration_GetPackageSummary(t *testing.T) {
@@ -417,6 +469,53 @@ func TestIntegration_GetTableContext_StructuredShape(t *testing.T) {
 	}
 	if payload.TableName == "" {
 		t.Error("TableName empty")
+	}
+}
+
+func TestIntegration_GetTableContext_TrustAndProvenance(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	// Use the same well-known table; iterate alternates if necessary.
+	candidates := []string{"sets", "items", "stores", "suppliers"}
+	var payload TableContextPayload
+	for _, name := range candidates {
+		result, err := srv.handleGetTableContext(ctx, makeRequest(map[string]interface{}{"table_name": name}))
+		if err != nil {
+			t.Fatalf("handleGetTableContext %q: %v", name, err)
+		}
+		if result.StructuredContent == nil {
+			continue
+		}
+		raw, _ := json.Marshal(result.StructuredContent)
+		var p TableContextPayload
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatalf("decode %q: %v", name, err)
+		}
+		if len(p.ReadBy)+len(p.WrittenBy) > 0 {
+			payload = p
+			t.Logf("using table %q with %d readers, %d writers", name, len(p.ReadBy), len(p.WrittenBy))
+			break
+		}
+	}
+	if len(payload.ReadBy)+len(payload.WrittenBy) == 0 {
+		t.Skip("no candidate table has reads_table/writes_table edges in the current index — skipping")
+	}
+
+	for _, group := range [][]TableEdgeHit{payload.ReadBy, payload.WrittenBy} {
+		for _, e := range group {
+			if e.Provenance == "" || e.ConfidenceClass == "" {
+				t.Errorf("table edge hit missing provenance/class: %+v", e)
+			}
+		}
+	}
+	if payload.Trust == nil {
+		t.Fatal("expected Trust to be set when table edges are present")
+	}
+	switch payload.Trust.WorstClass {
+	case "extracted", "inferred", "ambiguous":
+	default:
+		t.Errorf("unexpected Trust.WorstClass: %q", payload.Trust.WorstClass)
 	}
 }
 
@@ -776,6 +875,63 @@ func TestIntegration_GetCoupling_Structured(t *testing.T) {
 	}
 	if payload.Target == "" {
 		t.Error("Target empty")
+	}
+}
+
+func TestIntegration_GetCoupling_TrustAndProvenance(t *testing.T) {
+	srv := setupIntegrationServer(t)
+	ctx := context.Background()
+
+	// Try a few well-coupled files; pick the first that returns any
+	// coupling entries so the assertions are meaningful.
+	candidates := []string{
+		"pkg/datamodel/tables/supplier_funding.go",
+		"service/graphql/cmd/dev/main.go",
+		"service/graphql/cmd/server/main.go",
+		"service/graphql/resolvers/query.go",
+	}
+	var payload CouplingPayload
+	for _, name := range candidates {
+		result, err := srv.handleGetCoupling(ctx, makeRequest(map[string]interface{}{
+			"name":         name,
+			"min_strength": 0.0,
+		}))
+		if err != nil {
+			t.Fatalf("handleGetCoupling %q: %v", name, err)
+		}
+		if result.StructuredContent == nil {
+			continue
+		}
+		raw, _ := json.Marshal(result.StructuredContent)
+		var p CouplingPayload
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatalf("decode %q: %v", name, err)
+		}
+		if len(p.Coupled) > 0 {
+			payload = p
+			t.Logf("using file %q with %d coupled entries", name, len(p.Coupled))
+			break
+		}
+	}
+	if len(payload.Coupled) == 0 {
+		t.Skip("no candidate file has co_changes edges in the current index — skipping")
+	}
+
+	for _, c := range payload.Coupled {
+		if c.Provenance == "" || c.ConfidenceClass == "" {
+			t.Errorf("coupling entry missing provenance/class: %+v", c)
+		}
+		if c.Provenance != "history" {
+			t.Errorf("expected provenance=history on co_changes entry, got %q", c.Provenance)
+		}
+	}
+	if payload.Trust == nil {
+		t.Fatal("expected Trust to be set when coupling entries are present")
+	}
+	if payload.Trust.WorstClass != "inferred" && payload.Trust.WorstClass != "extracted" {
+		// All co_changes are 'inferred' by the writer; allow 'extracted' for
+		// future schema flexibility but flag anything else.
+		t.Errorf("unexpected Trust.WorstClass for coupling: %q", payload.Trust.WorstClass)
 	}
 }
 

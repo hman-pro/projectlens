@@ -26,6 +26,11 @@ type SearchResult struct {
 	Relationship string  `json:"relationship"` // e.g., "caller", "callee", "implements" — empty for non-graph
 	SourceType   string  `json:"source_type"`  // "code", "confluence", "jira", "migration"
 	SourceURI    string  `json:"source_uri,omitempty"`
+	// Provenance and ConfidenceClass are populated on graph-derived results
+	// (Source == "graph"). They identify the edge that produced this hit.
+	// Empty for lexical/semantic results.
+	Provenance      string `json:"provenance,omitempty"`
+	ConfidenceClass string `json:"confidence_class,omitempty"`
 }
 
 // LexicalSearch runs three parallel queries against the symbols table:

@@ -419,12 +419,15 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		if sourceID == 0 || targetID == 0 {
 			continue
 		}
+		prov, class := edgeProvenance(e.EdgeType)
 		edgeRecords = append(edgeRecords, storage.EdgeRecord{
-			SourceType: "symbol",
-			SourceID:   sourceID,
-			TargetType: "symbol",
-			TargetID:   targetID,
-			EdgeType:   e.EdgeType,
+			SourceType:      "symbol",
+			SourceID:        sourceID,
+			TargetType:      "symbol",
+			TargetID:        targetID,
+			EdgeType:        e.EdgeType,
+			Provenance:      prov,
+			ConfidenceClass: class,
 		})
 	}
 
@@ -622,4 +625,19 @@ func matchSymbol(candidates []storage.SymbolRecord, pkgPath string) int64 {
 func sha256Hex(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h)
+}
+
+// edgeProvenance returns (provenance, confidence_class) for an edge type
+// emitted by the Go graph builder. CHA-derived call edges are over-
+// approximate so they are classed as 'inferred'; type-checker facts
+// (implements, imports) are 'extracted'.
+func edgeProvenance(edgeType string) (string, string) {
+	switch edgeType {
+	case "calls":
+		return "callgraph", "inferred"
+	case "implements", "imports":
+		return "parser", "extracted"
+	default:
+		return "", ""
+	}
 }

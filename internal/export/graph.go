@@ -11,7 +11,10 @@ import (
 	"github.com/hman-pro/projectlens/internal/storage"
 )
 
-const SchemaVersion = "projectlens-graph/v1"
+// SchemaVersion bumps when the document shape changes. v2 added
+// per-edge `provenance` and `confidence_class` fields (additive — v1
+// readers ignore them).
+const SchemaVersion = "projectlens-graph/v2"
 
 // AllowedEdgeTypes is the canonical raw-edge_type vocabulary the
 // exporter and the --edges flag both consult. Adding a new edge_type
@@ -168,12 +171,14 @@ type nodeOut struct {
 }
 
 type edgeOut struct {
-	Source     string                 `json:"source"`
-	Target     string                 `json:"target"`
-	Type       string                 `json:"type"`
-	Confidence *float64               `json:"confidence,omitempty"`
-	SourceAttr string                 `json:"source_attr,omitempty"`
-	Properties map[string]interface{} `json:"properties,omitempty"`
+	Source          string                 `json:"source"`
+	Target          string                 `json:"target"`
+	Type            string                 `json:"type"`
+	Confidence      *float64               `json:"confidence,omitempty"`
+	SourceAttr      string                 `json:"source_attr,omitempty"`
+	Provenance      string                 `json:"provenance,omitempty"`
+	ConfidenceClass string                 `json:"confidence_class,omitempty"`
+	Properties      map[string]interface{} `json:"properties,omitempty"`
 }
 
 func streamSymbols(ctx context.Context, db *storage.DB, emit func(string, []byte) error) error {
@@ -344,6 +349,7 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 	rows, err := db.Pool.Query(ctx, `
 		SELECT e.source_type, e.source_id, e.target_type, e.target_id,
 		       e.edge_type, e.confidence, e.properties,
+		       COALESCE(e.provenance, ''), COALESCE(e.confidence_class, ''),
 		       dt_src.engine, dt_src.schema_name, dt_src.name,
 		       dt_tgt.engine, dt_tgt.schema_name, dt_tgt.name,
 		       f_src.package_name, f_tgt.package_name
@@ -369,12 +375,14 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 		var srcID, tgtID int64
 		var conf *float64
 		var props map[string]interface{}
+		var provenance, confClass string
 		var srcEngine, srcSchema, srcName *string
 		var tgtEngine, tgtSchema, tgtName *string
 		var srcPkg, tgtPkg *string
 		if err := rows.Scan(
 			&srcType, &srcID, &tgtType, &tgtID,
 			&etype, &conf, &props,
+			&provenance, &confClass,
 			&srcEngine, &srcSchema, &srcName,
 			&tgtEngine, &tgtSchema, &tgtName,
 			&srcPkg, &tgtPkg,
@@ -406,12 +414,14 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 		}
 
 		e := edgeOut{
-			Source:     sourceID,
-			Target:     targetID,
-			Type:       etype,
-			Confidence: conf,
-			SourceAttr: sourceAttr,
-			Properties: props,
+			Source:          sourceID,
+			Target:          targetID,
+			Type:            etype,
+			Confidence:      conf,
+			SourceAttr:      sourceAttr,
+			Provenance:      provenance,
+			ConfidenceClass: confClass,
+			Properties:      props,
 		}
 		b, err := json.Marshal(e)
 		if err != nil {

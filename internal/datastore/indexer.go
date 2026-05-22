@@ -130,11 +130,13 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 		}
 
 		edges = append(edges, storage.EdgeRecord{
-			SourceType: "symbol",
-			SourceID:   symbols[0].ID,
-			TargetType: "datastore_table",
-			TargetID:   tableID,
-			EdgeType:   edgeType,
+			SourceType:      "symbol",
+			SourceID:        symbols[0].ID,
+			TargetType:      "datastore_table",
+			TargetID:        tableID,
+			EdgeType:        edgeType,
+			Provenance:      "sql_scanner",
+			ConfidenceClass: "extracted",
 		})
 	}
 

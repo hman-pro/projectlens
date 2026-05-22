@@ -56,6 +56,7 @@ func main() {
 		newIndexEmbedCmd(),
 		newIndexSummarizeCmd(),
 		newIndexAllCmd(),
+		newIndexBackfillProvenanceCmd(),
 		newUnlockCmd(),
 		newMigrateCmd(),
 	)
@@ -608,6 +609,53 @@ func newIndexSummarizeCmd() *cobra.Command {
 			return recordStageRun(ctx, db, repoPath, "summarize", func() (int, error) {
 				return summarize.SummarizeMissing(ctx, db, summarizer)
 			})
+		})
+	return cmd
+}
+
+// edgeProvenanceDefaults defines the per-edge_type defaults applied by
+// `projectlens index backfill-provenance`. Mirrors the table in
+// docs/2026-05-22-confidence-and-provenance-design.md.
+var edgeProvenanceDefaults = []struct {
+	EdgeType   string
+	Provenance string
+	Class      string
+}{
+	{"calls", "callgraph", "inferred"},
+	{"implements", "parser", "extracted"},
+	{"imports", "parser", "extracted"},
+	{"co_changes", "history", "inferred"},
+	{"knowledge_about", "knowledge", "extracted"},
+	{"reads_table", "sql_scanner", "extracted"},
+	{"writes_table", "sql_scanner", "extracted"},
+}
+
+func newIndexBackfillProvenanceCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "index-backfill-provenance",
+		Short: "Backfill provenance + confidence_class on existing edge rows",
+		Long: `Backfill the provenance and confidence_class columns on rows that
+were inserted before migration 006. Idempotent: only rows with NULL provenance
+are touched. Each edge_type has fixed defaults defined in the design doc.`,
+	}
+	cmd.RunE = withWriteLock("index-backfill-provenance",
+		func(ctx context.Context, _ *cobra.Command, db *storage.DB, _ *config.Config, _ string) error {
+			var total int64
+			for _, d := range edgeProvenanceDefaults {
+				n, err := db.BackfillProvenance(ctx, d.EdgeType, d.Provenance, d.Class)
+				if err != nil {
+					return err
+				}
+				logger.Info("backfilled",
+					"edge_type", d.EdgeType,
+					"provenance", d.Provenance,
+					"class", d.Class,
+					"rows", n,
+				)
+				total += n
+			}
+			logger.Info("backfill complete", "total_rows", total)
+			return nil
 		})
 	return cmd
 }

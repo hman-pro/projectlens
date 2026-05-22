@@ -19,6 +19,7 @@ func TestMarkdownRenderer_SectionsPresent(t *testing.T) {
 		"## Top Packages",
 		"## Top Datastore Tables",
 		"## High-Coupling File Pairs",
+		"## Edge Trust (provenance + confidence)",
 		"## Knowledge Inventory",
 		"## Degraded / Missing",
 		"## Suggested Agent Questions",
@@ -33,6 +34,8 @@ func TestMarkdownRenderer_SectionsPresent(t *testing.T) {
 		"public.orders",
 		"a.go",
 		"run projectlens index-embed",
+		"| calls | callgraph | 0 | 100 | 0 | 0 | 100 |",
+		"| implements | parser | 7 | 0 | 0 | 0 | 7 |",
 	} {
 		if !strings.Contains(s, frag) {
 			t.Errorf("missing fragment %q in:\n%s", frag, s)

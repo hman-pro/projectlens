@@ -233,6 +233,11 @@ func (s *Server) handleGetSymbolContext(ctx context.Context, req mcp.CallToolReq
 		}
 	}
 
+	if wc := worstClass(payload.Callers, payload.Callees, payload.Implementors); wc != "" {
+		payload.Trust = &Trust{WorstClass: wc}
+		fmt.Fprintf(&b, "\nTrust: worst edge class is %q.\n", wc)
+	}
+
 	return mcp.NewToolResultStructured(payload, b.String()), nil
 }
 
@@ -377,14 +382,18 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 	readEdges, _ := s.db.GetEdgesTargetingDatastoreTable(ctx, table.ID, "reads_table")
 	writeEdges, _ := s.db.GetEdgesTargetingDatastoreTable(ctx, table.ID, "writes_table")
 
+	var edgeClasses []string
 	if len(readEdges) > 0 {
 		b.WriteString("\nRead by:\n")
 		for _, e := range readEdges {
 			payload.ReadBy = append(payload.ReadBy, TableEdgeHit{
-				Kind:     e.SymbolKind,
-				Name:     e.SymbolName,
-				Evidence: EvidenceSpan{FilePath: e.FilePath, LineStart: e.LineStart, LineEnd: e.LineEnd},
+				Kind:            e.SymbolKind,
+				Name:            e.SymbolName,
+				Evidence:        EvidenceSpan{FilePath: e.FilePath, LineStart: e.LineStart, LineEnd: e.LineEnd},
+				Provenance:      e.Provenance,
+				ConfidenceClass: e.ConfidenceClass,
 			})
+			edgeClasses = append(edgeClasses, e.ConfidenceClass)
 			fmt.Fprintf(&b, "  - %s %s (%s:%d)\n", e.SymbolKind, e.SymbolName, e.FilePath, e.LineStart)
 		}
 	}
@@ -392,15 +401,23 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 		b.WriteString("\nWritten by:\n")
 		for _, e := range writeEdges {
 			payload.WrittenBy = append(payload.WrittenBy, TableEdgeHit{
-				Kind:     e.SymbolKind,
-				Name:     e.SymbolName,
-				Evidence: EvidenceSpan{FilePath: e.FilePath, LineStart: e.LineStart, LineEnd: e.LineEnd},
+				Kind:            e.SymbolKind,
+				Name:            e.SymbolName,
+				Evidence:        EvidenceSpan{FilePath: e.FilePath, LineStart: e.LineStart, LineEnd: e.LineEnd},
+				Provenance:      e.Provenance,
+				ConfidenceClass: e.ConfidenceClass,
 			})
+			edgeClasses = append(edgeClasses, e.ConfidenceClass)
 			fmt.Fprintf(&b, "  - %s %s (%s:%d)\n", e.SymbolKind, e.SymbolName, e.FilePath, e.LineStart)
 		}
 	}
 	if len(readEdges) == 0 && len(writeEdges) == 0 {
 		b.WriteString("\nNo code references discovered. Run 'projectlens index-datastore' to scan for SQL usage.\n")
+	}
+
+	if wc := worstClassOf(edgeClasses); wc != "" {
+		payload.Trust = &Trust{WorstClass: wc}
+		fmt.Fprintf(&b, "\nTrust: worst edge class is %q.\n", wc)
 	}
 
 	return mcp.NewToolResultStructured(payload, b.String()), nil
@@ -698,11 +715,18 @@ func (s *Server) handleGetCoupling(ctx context.Context, req mcp.CallToolRequest)
 
 	payload := CouplingPayload{Target: name, MinStrength: float64(minStrength)}
 	payload.Coupled = make([]CouplingEntry, 0, len(couplings))
+	var edgeClasses []string
 	for _, c := range couplings {
 		payload.Coupled = append(payload.Coupled, CouplingEntry{
-			FilePath: c.FilePath,
-			Strength: float64(c.Strength),
+			FilePath:        c.FilePath,
+			Strength:        float64(c.Strength),
+			Provenance:      c.Provenance,
+			ConfidenceClass: c.ConfidenceClass,
 		})
+		edgeClasses = append(edgeClasses, c.ConfidenceClass)
+	}
+	if wc := worstClassOf(edgeClasses); wc != "" {
+		payload.Trust = &Trust{WorstClass: wc}
 	}
 
 	var b strings.Builder

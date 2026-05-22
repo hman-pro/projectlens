@@ -75,6 +75,23 @@ func (MarkdownRenderer) Render(w io.Writer, r *Report) error {
 	}
 	b.WriteString("\n")
 
+	b.WriteString("## Edge Trust (provenance + confidence)\n\n")
+	if len(r.EdgeTrust) == 0 {
+		b.WriteString("No edges indexed.\n\n")
+	} else {
+		b.WriteString("| Edge type | Provenance | Extracted | Inferred | Ambiguous | Unknown | Total |\n")
+		b.WriteString("|-----------|------------|-----------|----------|-----------|---------|-------|\n")
+		for _, s := range r.EdgeTrust {
+			prov := s.Provenance
+			if prov == "" {
+				prov = "—"
+			}
+			fmt.Fprintf(&b, "| %s | %s | %d | %d | %d | %d | %d |\n",
+				s.EdgeType, prov, s.Extracted, s.Inferred, s.Ambiguous, s.Unknown, s.Total)
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("## Knowledge Inventory\n\n")
 	fmt.Fprintf(&b, "- Total entries: %d\n", r.Knowledge.TotalEntries)
 	cats := make([]string, 0, len(r.Knowledge.CountsByCategory))

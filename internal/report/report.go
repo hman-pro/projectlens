@@ -21,6 +21,7 @@ type Report struct {
 	TopPackages  []storage.PackageStat                `json:"top_packages"`
 	TopTables    []storage.TableStat                  `json:"top_tables"`
 	HighCoupling []storage.CouplingPair               `json:"high_coupling"`
+	EdgeTrust    []storage.EdgeConfidenceStat         `json:"edge_trust"`
 	Knowledge    KnowledgeInventory                   `json:"knowledge"`
 	Degraded     []StageDegradation                   `json:"degraded"`
 	Suggestions  []AgentQuestion                      `json:"suggestions"`
@@ -124,6 +125,11 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		r.Degraded = append(r.Degraded, StageDegradation{Stage: "high_coupling", Reason: err.Error()})
 	} else {
 		r.HighCoupling = pairs
+	}
+	if stats, err := b.db.EdgeConfidenceBreakdown(ctx); err != nil {
+		r.Degraded = append(r.Degraded, StageDegradation{Stage: "edge_trust", Reason: err.Error()})
+	} else {
+		r.EdgeTrust = stats
 	}
 	if counts, err := b.db.KnowledgeStatsByCategory(ctx); err != nil {
 		r.Degraded = append(r.Degraded, StageDegradation{Stage: "knowledge_counts", Reason: err.Error()})

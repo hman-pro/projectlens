@@ -44,6 +44,12 @@ type SymbolHit struct {
 	Score       float64      `json:"score"`
 	DocComment  string       `json:"doc_comment,omitempty"`
 	Evidence    EvidenceSpan `json:"evidence"`
+	// Provenance + ConfidenceClass are set on graph-derived hits
+	// (callers/callees/implementors) and identify the trust class of the
+	// edge that produced the hit. Empty on the Target hit and on
+	// lexical/semantic results.
+	Provenance      string `json:"provenance,omitempty"`
+	ConfidenceClass string `json:"confidence_class,omitempty"`
 }
 
 // FindSymbolPayload is the structured response for find_symbol.
@@ -70,13 +76,15 @@ type SearchGoContextPayload struct {
 // without importing retrieval in places that don't need it.
 func toSymbolHit(r retrieval.SearchResult) SymbolHit {
 	return SymbolHit{
-		Kind:        r.Kind,
-		Name:        r.SymbolName,
-		Signature:   formatSignature(r),
-		PackageName: r.PackageName,
-		Score:       r.Score,
-		DocComment:  r.DocComment,
-		Evidence:    EvidenceSpan{FilePath: r.FilePath, LineStart: r.LineStart, LineEnd: r.LineEnd},
+		Kind:            r.Kind,
+		Name:            r.SymbolName,
+		Signature:       formatSignature(r),
+		PackageName:     r.PackageName,
+		Score:           r.Score,
+		DocComment:      r.DocComment,
+		Evidence:        EvidenceSpan{FilePath: r.FilePath, LineStart: r.LineStart, LineEnd: r.LineEnd},
+		Provenance:      r.Provenance,
+		ConfidenceClass: r.ConfidenceClass,
 	}
 }
 
@@ -93,6 +101,47 @@ type SymbolContextPayload struct {
 	Callers      []SymbolHit `json:"callers,omitempty"`
 	Callees      []SymbolHit `json:"callees,omitempty"`
 	Implementors []SymbolHit `json:"implementors,omitempty"`
+	Trust        *Trust      `json:"trust,omitempty"`
+}
+
+// Trust summarizes the worst confidence class encountered across the edges
+// that fed a response. Agents can read this single field instead of scanning
+// every hit. Ordering: ambiguous > inferred > extracted (worst first).
+type Trust struct {
+	WorstClass string `json:"worst_class"`
+}
+
+// worstClassRank maps the three confidence classes to their severity rank.
+// Anything outside the enum is ignored (rank 0).
+var worstClassRank = map[string]int{"extracted": 1, "inferred": 2, "ambiguous": 3}
+
+// worstClassOf returns the worst (least trusted) class observed in classes.
+// Empty strings and unknown values are ignored.
+func worstClassOf(classes []string) string {
+	worst := ""
+	rank := 0
+	for _, c := range classes {
+		r, ok := worstClassRank[c]
+		if !ok {
+			continue
+		}
+		if r > rank {
+			worst = c
+			rank = r
+		}
+	}
+	return worst
+}
+
+// worstClass returns the worst class across SymbolHit groups.
+func worstClass(hits ...[]SymbolHit) string {
+	var classes []string
+	for _, group := range hits {
+		for _, h := range group {
+			classes = append(classes, h.ConfidenceClass)
+		}
+	}
+	return worstClassOf(classes)
 }
 
 // PackageSummaryPayload is the structured response for
@@ -122,15 +171,19 @@ type TableColumn struct {
 
 // TableEdgeHit is a code reference to a table — used in TableContextPayload
 // to expose reads_table / writes_table edges with evidence spans.
+// Provenance + ConfidenceClass identify the trust class of the edge.
 type TableEdgeHit struct {
-	Kind     string       `json:"kind"`
-	Name     string       `json:"name"`
-	Evidence EvidenceSpan `json:"evidence"`
+	Kind            string       `json:"kind"`
+	Name            string       `json:"name"`
+	Evidence        EvidenceSpan `json:"evidence"`
+	Provenance      string       `json:"provenance,omitempty"`
+	ConfidenceClass string       `json:"confidence_class,omitempty"`
 }
 
 // TableContextPayload is the structured response for get_table_context.
 // NotFound is set when the table lookup didn't match anything; in that
 // case Columns/ReadBy/WrittenBy are nil and TableName echoes the query.
+// Trust summarizes the worst class across ReadBy + WrittenBy edges.
 type TableContextPayload struct {
 	TableName string         `json:"table_name"`
 	NotFound  bool           `json:"not_found,omitempty"`
@@ -138,6 +191,7 @@ type TableContextPayload struct {
 	Columns   []TableColumn  `json:"columns,omitempty"`
 	ReadBy    []TableEdgeHit `json:"read_by,omitempty"`
 	WrittenBy []TableEdgeHit `json:"written_by,omitempty"`
+	Trust     *Trust         `json:"trust,omitempty"`
 }
 
 // ChangeRecord is one structured change-history entry. Subject is the
@@ -164,18 +218,24 @@ type ChangeHistoryPayload struct {
 }
 
 // CouplingEntry is one structurally exposed co-change relationship.
+// Provenance + ConfidenceClass identify the trust class of the underlying
+// co_changes edge (typically history/inferred).
 type CouplingEntry struct {
-	FilePath string  `json:"file_path"`
-	Strength float64 `json:"strength"`
+	FilePath        string  `json:"file_path"`
+	Strength        float64 `json:"strength"`
+	Provenance      string  `json:"provenance,omitempty"`
+	ConfidenceClass string  `json:"confidence_class,omitempty"`
 }
 
 // CouplingPayload is the structured response for get_coupling. NotFound
-// is set when the named file isn't indexed; Coupled is then nil.
+// is set when the named file isn't indexed; Coupled is then nil. Trust
+// summarizes the worst class across the Coupled entries.
 type CouplingPayload struct {
 	Target      string          `json:"target"`
 	NotFound    bool            `json:"not_found,omitempty"`
 	MinStrength float64         `json:"min_strength"`
 	Coupled     []CouplingEntry `json:"coupled"`
+	Trust       *Trust          `json:"trust,omitempty"`
 }
 
 // SaveKnowledgePayload is the structured response for save_knowledge.

@@ -125,15 +125,17 @@ func GetPackageDeps(ctx context.Context, db *storage.DB, packageName string) ([]
 // edgeResultToSearchResult converts a storage.EdgeResult to a SearchResult.
 func edgeResultToSearchResult(e storage.EdgeResult, score float64, relationship string) SearchResult {
 	return SearchResult{
-		SymbolID:     e.SymbolID,
-		SymbolName:   e.SymbolName,
-		Kind:         e.SymbolKind,
-		PackageName:  e.PackageName,
-		FilePath:     e.FilePath,
-		LineStart:    e.LineStart,
-		LineEnd:      e.LineEnd,
-		Score:        score,
-		Source:       "graph",
-		Relationship: relationship,
+		SymbolID:        e.SymbolID,
+		SymbolName:      e.SymbolName,
+		Kind:            e.SymbolKind,
+		PackageName:     e.PackageName,
+		FilePath:        e.FilePath,
+		LineStart:       e.LineStart,
+		LineEnd:         e.LineEnd,
+		Score:           score,
+		Source:          "graph",
+		Relationship:    relationship,
+		Provenance:      e.Provenance,
+		ConfidenceClass: e.ConfidenceClass,
 	}
 }

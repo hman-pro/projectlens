@@ -193,12 +193,16 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 		if !okA || !okB {
 			continue
 		}
+		strength := float32(p.Strength)
 		edges = append(edges, storage.EdgeRecord{
-			SourceType: "file",
-			SourceID:   fidA,
-			TargetType: "file",
-			TargetID:   fidB,
-			EdgeType:   "co_changes",
+			SourceType:      "file",
+			SourceID:        fidA,
+			TargetType:      "file",
+			TargetID:        fidB,
+			EdgeType:        "co_changes",
+			Confidence:      &strength,
+			Provenance:      "history",
+			ConfidenceClass: "inferred",
 		})
 	}
 

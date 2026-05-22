@@ -22,6 +22,10 @@ func fixtureReport() *Report {
 		TopPackages:  []storage.PackageStat{{ImportPath: "pkg/a", SymbolCount: 3, FileCount: 2}},
 		TopTables:    []storage.TableStat{{Schema: "public", Name: "orders", Engine: "postgres", ReadRefs: 2, WriteRefs: 1, SourceFileCount: 3}},
 		HighCoupling: []storage.CouplingPair{{FileA: "a.go", FileB: "b.go", CoChangeCount: 3}},
+		EdgeTrust: []storage.EdgeConfidenceStat{
+			{EdgeType: "calls", Provenance: "callgraph", Extracted: 0, Inferred: 100, Ambiguous: 0, Unknown: 0, Total: 100},
+			{EdgeType: "implements", Provenance: "parser", Extracted: 7, Inferred: 0, Ambiguous: 0, Unknown: 0, Total: 7},
+		},
 		Knowledge: KnowledgeInventory{
 			TotalEntries:     2,
 			CountsByCategory: map[string]int{"lesson": 2},
@@ -50,5 +54,14 @@ func TestJSONRenderer_RoundTrip(t *testing.T) {
 	}
 	if decoded.Knowledge.CountsByCategory["lesson"] != 2 {
 		t.Errorf("knowledge counts: %+v", decoded.Knowledge.CountsByCategory)
+	}
+	if len(decoded.EdgeTrust) != 2 {
+		t.Fatalf("edge_trust length: got %d, want 2", len(decoded.EdgeTrust))
+	}
+	if decoded.EdgeTrust[0].EdgeType != "calls" || decoded.EdgeTrust[0].Provenance != "callgraph" || decoded.EdgeTrust[0].Inferred != 100 {
+		t.Errorf("edge_trust[0]: %+v", decoded.EdgeTrust[0])
+	}
+	if decoded.EdgeTrust[1].EdgeType != "implements" || decoded.EdgeTrust[1].Extracted != 7 {
+		t.Errorf("edge_trust[1]: %+v", decoded.EdgeTrust[1])
 	}
 }

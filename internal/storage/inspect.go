@@ -30,6 +30,52 @@ type CouplingPair struct {
 	CoChangeCount int
 }
 
+// EdgeConfidenceStat is one row of EdgeConfidenceBreakdown: per
+// edge_type counts split by confidence_class. Empty class column maps
+// to the "unknown" bucket (rows missing class — should be zero after
+// the backfill but tracked for visibility).
+type EdgeConfidenceStat struct {
+	EdgeType   string
+	Provenance string
+	Extracted  int
+	Inferred   int
+	Ambiguous  int
+	Unknown    int
+	Total      int
+}
+
+// EdgeConfidenceBreakdown returns per-edge_type confidence_class counts
+// across the edges table. Rows are sorted by total descending.
+func (db *DB) EdgeConfidenceBreakdown(ctx context.Context) ([]EdgeConfidenceStat, error) {
+	const q = `
+		SELECT
+		    edge_type,
+		    COALESCE(provenance, '') AS provenance,
+		    COUNT(*) FILTER (WHERE confidence_class = 'extracted') AS extracted,
+		    COUNT(*) FILTER (WHERE confidence_class = 'inferred')  AS inferred,
+		    COUNT(*) FILTER (WHERE confidence_class = 'ambiguous') AS ambiguous,
+		    COUNT(*) FILTER (WHERE confidence_class IS NULL)       AS unknown,
+		    COUNT(*) AS total
+		FROM edges
+		GROUP BY edge_type, COALESCE(provenance, '')
+		ORDER BY total DESC, edge_type ASC
+	`
+	rows, err := db.Pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("storage: edge confidence breakdown: %w", err)
+	}
+	defer rows.Close()
+	var out []EdgeConfidenceStat
+	for rows.Next() {
+		var s EdgeConfidenceStat
+		if err := rows.Scan(&s.EdgeType, &s.Provenance, &s.Extracted, &s.Inferred, &s.Ambiguous, &s.Unknown, &s.Total); err != nil {
+			return nil, fmt.Errorf("storage: scan edge confidence stat: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // KnowledgeSummary is one row of RecentKnowledgeEntries.
 type KnowledgeSummary struct {
 	ID        int64

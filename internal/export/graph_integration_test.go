@@ -89,3 +89,87 @@ func TestExportGraph_EdgeFilter(t *testing.T) {
 		}
 	}
 }
+
+// TestExportGraph_EdgeProvenance verifies that v2 edges carry top-level
+// provenance + confidence_class fields. Skips when the live DB has no
+// edges (fresh install / empty fixture).
+func TestExportGraph_EdgeProvenance(t *testing.T) {
+	db := openIntegration(t)
+	ctx := context.Background()
+	var buf bytes.Buffer
+	if err := export.NewGraphExporter(db, nil).Export(ctx, &buf, export.Options{}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var doc struct {
+		SchemaVersion string `json:"schema_version"`
+		Edges         []struct {
+			Source          string `json:"source"`
+			Target          string `json:"target"`
+			Type            string `json:"type"`
+			Provenance      string `json:"provenance"`
+			ConfidenceClass string `json:"confidence_class"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, buf.String())
+	}
+	if doc.SchemaVersion != "projectlens-graph/v2" {
+		t.Errorf("schema_version: got %s want projectlens-graph/v2", doc.SchemaVersion)
+	}
+	if len(doc.Edges) == 0 {
+		t.Skip("no edges in current index — skipping provenance assertion")
+	}
+
+	// Every edge must carry both fields after backfill + writer changes.
+	for i, e := range doc.Edges {
+		if e.Provenance == "" || e.ConfidenceClass == "" {
+			t.Errorf("edge %d (type=%s) missing provenance/class: prov=%q class=%q",
+				i, e.Type, e.Provenance, e.ConfidenceClass)
+		}
+	}
+
+	// Verify known type → provenance mappings for whichever edge types are
+	// present in the current index. Track which mappings actually got
+	// exercised so a sparse fixture (no datastore stage, no knowledge
+	// anchors, …) does not silently bypass the assertion.
+	want := map[string]string{
+		"calls":           "callgraph",
+		"implements":      "parser",
+		"imports":         "parser",
+		"co_changes":      "history",
+		"knowledge_about": "knowledge",
+		"reads_table":     "sql_scanner",
+		"writes_table":    "sql_scanner",
+	}
+	seen := map[string]struct{}{}
+	for _, e := range doc.Edges {
+		exp, ok := want[e.Type]
+		if !ok {
+			continue
+		}
+		seen[e.Type] = struct{}{}
+		if e.Provenance != exp {
+			t.Errorf("edge type=%s: provenance=%q want %q", e.Type, e.Provenance, exp)
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatalf("no known edge types found in export (%d edges total); expected at least one of %v", len(doc.Edges), keysOf(want))
+	}
+	var unseen []string
+	for k := range want {
+		if _, ok := seen[k]; !ok {
+			unseen = append(unseen, k)
+		}
+	}
+	if len(unseen) > 0 {
+		t.Logf("known type→provenance mappings not exercised by this index (sparse data, not a failure): %v", unseen)
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

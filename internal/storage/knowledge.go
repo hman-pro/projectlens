@@ -300,12 +300,14 @@ func (db *DB) InsertKnowledgeAnchors(ctx context.Context, knowledgeID int64, anc
 		}
 		conf := float32(1.0)
 		edges = append(edges, EdgeRecord{
-			SourceType: "knowledge",
-			SourceID:   knowledgeID,
-			TargetType: a.Type,
-			TargetID:   targetID,
-			EdgeType:   "knowledge_about",
-			Confidence: &conf,
+			SourceType:      "knowledge",
+			SourceID:        knowledgeID,
+			TargetType:      a.Type,
+			TargetID:        targetID,
+			EdgeType:        "knowledge_about",
+			Confidence:      &conf,
+			Provenance:      "knowledge",
+			ConfidenceClass: "extracted",
 		})
 	}
 
