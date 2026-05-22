@@ -51,6 +51,13 @@ flowchart LR
 | Summaries | `summaries`, file heuristic summaries | `index-summarize`, code indexer | package context, reports, MCP responses |
 | Runs and locks | `index_runs`, `index_locks` | all mutating indexer commands | `status`, `index_status`, TUI pipeline/jobs |
 
+Edges carry two trust axes alongside the numeric `confidence` score:
+
+- `provenance` — which producer wrote the edge (`parser`, `callgraph`, `sql_scanner`, `history`, `knowledge`, `docs`).
+- `confidence_class` — graphify-style epistemic strength (`extracted`, `inferred`, `ambiguous`).
+
+Both are CHECK-constrained. `projectlens report`, `projectlens export graph` (schema `projectlens-graph/v2`), and the three pilot MCP tools (`get_symbol_context`, `get_table_context`, `get_coupling`) surface them as per-hit fields and a top-level `Trust.worst_class` summary.
+
 ## Indexing Flow
 
 ```mermaid
@@ -105,6 +112,7 @@ Use these files before updating docs or behavior:
 | TUI navigation keys | `internal/tui/app/keys.go` |
 | TUI action keys | `internal/tui/jobs/registry.go` |
 | Schema | `migrations/*.up.sql` |
+| Edge trust vocabulary and writer rules | `docs/2026-05-22-confidence-and-provenance-design.md` |
 | Agent setup | `agent/` and `docs/AGENT_SETUP.md` |
 
 ## Owner Docs

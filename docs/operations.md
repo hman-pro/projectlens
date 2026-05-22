@@ -231,7 +231,16 @@ make migrate
 
 `bootstrap` also applies migrations before indexing. Use `migrate` to catch up an existing database without reindexing.
 
-`index-backfill-provenance` is an idempotent post-migration repair command for edge rows inserted before migration 006. It fills NULL `provenance` and `confidence_class` values using fixed defaults from `docs/2026-05-22-confidence-and-provenance-design.md`.
+`index-backfill-provenance` is an idempotent post-migration repair command for edge rows that pre-date migration 006 or were written by older/broken producers. It performs partial-field repair via `COALESCE` — rows are touched when **either** `provenance` or `confidence_class` is NULL, and an already-set value on the other column is preserved. Per-edge-type defaults live in `cmd/projectlens/main.go::edgeProvenanceDefaults`; see `docs/2026-05-22-confidence-and-provenance-design.md` for the design rationale and full vocabulary. Re-runs on a fully-filled set update zero rows.
+
+Verify the trust invariant after the backfill:
+
+```bash
+psql "$DATABASE_URL" -c \
+  "SELECT COUNT(*) FROM edges WHERE provenance IS NULL OR confidence_class IS NULL;"
+```
+
+A non-zero result indicates a writer that is not yet attaching trust fields; add it to the writer table in `docs/internals.md` and re-run the backfill.
 
 ## Troubleshooting
 
@@ -244,6 +253,8 @@ make migrate
 | Writer lock busy | Exit code 75 plus `another writer holds the lock: pid=<n> host=<h> cmd="<c>" started=<RFC3339>`. | Wait for the holder to finish. Use `projectlens unlock --force` only after confirming auto-recovery failed. |
 | Missing TUI binary | TUI says `projectlens binary not found`. | Run `make build-cli`, set `PROJECTLENS_BINARY`, keep `projectlens` next to `projectlens-tui`, or add it to `PATH`. |
 | Agent does not use ProjectLens | Agent sees no tools or greps first. | Confirm MCP server is running, agent config points at `/mcp`, and skills/hooks from `docs/AGENT_SETUP.md` are installed. |
+| Edge trust NULLs in report | Edge Trust section shows non-zero `Unknown` column, or the NULL-count psql query above returns > 0. | Run `projectlens index-backfill-provenance`. If non-zero rows remain, a writer is not attaching trust fields — add it to the writer table in `docs/internals.md`. |
+| Edge CHECK constraint violation | INSERT fails with `edges_confidence_class_check` or `edges_provenance_check`. | A writer is emitting a value outside the documented vocabulary. Fix the writer or extend the CHECK in a new migration (and document the new producer). |
 
 ## Docs Review Checklist
 

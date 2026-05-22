@@ -65,11 +65,11 @@ The next embedding run picks up knowledge chunks without a separate pipeline.
 
 ### Report And Export
 
-`report` builds a read-only snapshot from storage and inspector/provider probes, then renders Markdown or JSON.
+`report` builds a read-only snapshot from storage and inspector/provider probes, then renders Markdown or JSON. The snapshot includes an `EdgeTrust` block (per-edge-type breakdown of `extracted` / `inferred` / `ambiguous` / unknown counts) produced by `storage.EdgeConfidenceBreakdown`.
 
-`export graph` streams a native-schema JSON graph. It can include all edge types or a comma-separated subset and can optionally include evidence blobs.
+`export graph` streams a native-schema JSON graph at `schema_version: projectlens-graph/v2`. Each edge document carries top-level `provenance` and `confidence_class` fields alongside `source`, `target`, `type`, optional `confidence`, `source_attr`, and `properties`. It can include all edge types or a comma-separated subset and can optionally include evidence blobs. The closure invariant — every edge endpoint resolves to a node in the same document — is enforced by the streamer and asserted by integration tests.
 
-`index-backfill-provenance` is an idempotent maintenance command for databases that already had edge rows before migration 006 added edge provenance and confidence-class metadata. It updates only rows with NULL provenance and uses the fixed edge-type defaults in `cmd/projectlens/main.go`.
+`index-backfill-provenance` is an idempotent maintenance command for databases with edge rows that pre-date migration 006 or that were written by older/broken writers. It performs partial-field repair via `COALESCE`: rows are touched when **either** `provenance` or `confidence_class` is NULL, and an already-set value on the other column is preserved (not overwritten). Per-edge-type defaults live in `cmd/projectlens/main.go::edgeProvenanceDefaults`. Re-runs against a fully-filled set update zero rows.
 
 ## Storage Model
 
@@ -90,6 +90,31 @@ erDiagram
 ```
 
 The actual `edges` table is polymorphic. It stores `source_type`, `source_id`, `target_type`, `target_id`, `edge_type`, `properties`, `confidence`, `provenance`, and `confidence_class` instead of enforcing one foreign-key pair. That lets the same table hold calls, implements, datastore references, co-change coupling, document links, and knowledge anchors.
+
+### Edge Trust
+
+Every edge carries two text-enum axes alongside the numeric `confidence` score:
+
+| Column | Vocabulary | Meaning |
+|---|---|---|
+| `provenance` | `parser`, `callgraph`, `sql_scanner`, `history`, `knowledge`, `docs` | Which producer wrote the edge. |
+| `confidence_class` | `extracted`, `inferred`, `ambiguous` | Graphify-style epistemic strength of the claim. |
+
+Both are CHECK-constrained (migrations 006 and 007). Adding a new producer requires extending the `provenance` CHECK in the same migration that adds the writer.
+
+Writers and their defaults (see `cmd/projectlens/main.go::edgeProvenanceDefaults` and per-package writer code):
+
+| Writer call site | Edge type(s) | Provenance | Confidence class |
+|---|---|---|---|
+| `internal/indexer/indexer.go::edgeProvenance` | `calls` | `callgraph` | `inferred` |
+| `internal/indexer/indexer.go::edgeProvenance` | `implements`, `imports` | `parser` | `extracted` |
+| `internal/history/indexer.go` | `co_changes` | `history` | `inferred` |
+| `internal/datastore/indexer.go` | `reads_table`, `writes_table` | `sql_scanner` | `extracted` |
+| `internal/storage/knowledge.go` | `knowledge_about` | `knowledge` | `extracted` |
+
+`internal/graph/graph.go` returns graph values only; it does not write storage. The indexer is the boundary that translates graph edges into `storage.EdgeRecord`.
+
+`storage.EdgeConfidenceBreakdown` powers the report's Edge Trust section and the consistency invariant: `SELECT COUNT(*) FROM edges WHERE provenance IS NULL OR confidence_class IS NULL` must be 0 after `index-backfill-provenance` (or any fresh index run).
 
 ### Table Overview
 
@@ -136,12 +161,12 @@ Tool behavior:
 |---|---|
 | `find_symbol` | Symbol lexical lookup, optional kind filter. |
 | `search_go_context` | Retrieval router across indexed code and available context. |
-| `get_symbol_context` | Symbol lookup plus callers, callees, implementors, and related knowledge. |
+| `get_symbol_context` | Symbol lookup plus callers, callees, implementors, related knowledge. Edge-bearing hits carry `provenance` + `confidence_class`; payload includes top-level `Trust.worst_class`. |
 | `get_package_summary` | Summary and exported symbol lookup plus related knowledge. |
-| `get_table_context` | Datastore table lookup plus reader/writer edge resolution. |
+| `get_table_context` | Datastore table lookup plus reader/writer edge resolution. Edge hits carry `provenance` + `confidence_class`; payload includes `Trust.worst_class`. |
 | `index_status` | Index state, git state, and provider probes. |
 | `get_change_history` | File or symbol history lookup. |
-| `get_coupling` | Co-change file coupling lookup. |
+| `get_coupling` | Co-change file coupling lookup. Entries carry `provenance` + `confidence_class`; payload includes `Trust.worst_class`. |
 | `save_knowledge` | Knowledge row, chunk, and anchor-edge write. |
 | `search_knowledge` | Knowledge vector/metadata/anchor search. |
 
