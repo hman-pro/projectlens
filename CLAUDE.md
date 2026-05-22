@@ -101,6 +101,7 @@ them. When changing a skill or hook in a way users need to notice, update
 - **Claude for default summarization**: quality-first package summaries, with OpenAI fallback.
 - **Provider abstraction**: embedding and summarization providers are config-driven and constructor-injected.
 - **Polymorphic edge graph**: one table represents calls, implementations, datastore references, coupling, document links, and knowledge anchors.
+- **Two-axis edge trust**: every edge carries `provenance` (parser, callgraph, sql_scanner, history, knowledge, docs) and `confidence_class` (extracted, inferred, ambiguous), in addition to the numeric `confidence` score. Both are CHECK-constrained — new producers must extend the CHECK in the same migration. Graphify-style vocabulary; see `docs/2026-05-22-confidence-and-provenance-design.md`.
 - **SCIP-style symbol IDs**: debuggable hierarchical text IDs for cross-referencing.
 - **Symbol-based chunking**: chunks follow Go symbols instead of arbitrary token windows.
 - **halfvec(1024)**: smaller/faster vector index for the current embedding model.

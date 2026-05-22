@@ -1,113 +1,139 @@
 # ProjectLens
 
-**A memory and search layer for your codebase that any AI coding assistant can plug into.**
+**A local memory and search layer for Go codebases that AI coding assistants can share.**
 
-ProjectLens reads your Go project — the code, the database, the change history, and your docs — and turns it into a single place an AI agent can ask questions about. It speaks [MCP](https://modelcontextprotocol.io) (Model Context Protocol), so it works with **any MCP-compatible agent**: Claude, Cursor, Codex, and more. The agent connects once and gets a shared brain for your repo.
+ProjectLens indexes your code, database shape, git history, summaries, embeddings, and captured project knowledge into Postgres, then serves it through [MCP](https://modelcontextprotocol.io). Claude, Codex, Cursor, and other MCP-capable agents can ask grounded questions about the repo instead of re-reading files and rebuilding context every session.
 
-> **New here? Read on.**
-> **Understanding the system?** → [`docs/architecture.md`](docs/architecture.md)
-> **Running or troubleshooting it?** → [`docs/operations.md`](docs/operations.md)
-> **Wiring an agent into your repo?** → [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md)
-> **Contributing to ProjectLens itself?** → [`CLAUDE.md`](CLAUDE.md)
+Your source stays on your machine. Agents talk to the ProjectLens MCP server, and the server answers from a local index.
 
----
+## Start Here
+
+| Need | Read |
+|---|---|
+| Set it up quickly | [Quick Start](#quick-start) |
+| Wire an agent into a target repo | [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) |
+| Understand the architecture | [`docs/architecture.md`](docs/architecture.md) |
+| Run CLI, TUI, Docker, reports, or troubleshooting | [`docs/operations.md`](docs/operations.md) |
+| Work on ProjectLens internals | [`CLAUDE.md`](CLAUDE.md), then [`docs/internals.md`](docs/internals.md) |
 
 ## Why It Exists
 
-AI assistants forget. Every new chat starts from zero — the agent has to re-read files, re-trace call graphs, and re-guess at architecture. On a large monorepo this is slow, expensive, and often wrong.
+AI assistants forget. Every new chat starts cold, so the agent has to grep, re-open files, infer call paths, and guess which conventions matter. On a large monorepo, that is slow, expensive, and easy to get wrong.
 
-ProjectLens does the reading once, keeps the result in a database, and lets agents ask focused questions:
+ProjectLens does the reading once and keeps the result queryable:
+
+- Find symbols, packages, callers, callees, and interface implementations.
+- Trace which Go code reads or writes a database table.
+- Search code semantically when the exact symbol name is unknown.
+- Check index freshness before trusting an answer.
+- Look up recent git history and files that tend to change together.
+- Capture durable lessons during a session and surface them later.
+
+## What It Can Answer
+
+Examples an agent can answer through ProjectLens:
 
 - *"Where is supplier funding approval implemented?"*
 - *"Which Go code writes to the `supplier_funding` table?"*
-- *"What changed in the supplier onboarding package recently, and what tends to change with it?"*
-- *"Summarise the `service/supplier` package."*
+- *"What calls `ReserveInventory`, and what does it call?"*
+- *"What changed in the supplier onboarding package recently?"*
+- *"If I edit this file, what historically changes with it?"*
+- *"What lessons have we saved about this package?"*
 
-The agent gets a precise answer in milliseconds instead of grepping through thousands of files.
+The MCP server exposes 10 tools for these workflows. The authoritative tool list and the CLI/TUI command guide live in [`docs/operations.md`](docs/operations.md).
 
 ## What Gets Indexed
 
-Four layers of intelligence, all searchable together:
+| Layer | Indexed State | Used For |
+|---|---|---|
+| Code | Go files, packages, symbols, signatures, docs, chunks, call/interface graph | Symbol lookup, dependency tracing, semantic code search |
+| Datastore | PostgreSQL schemas, migration-derived tables, SQL references in Go code | Table context and read/write flow |
+| History | Git commits per file/symbol, co-change coupling | Recent-change context and impact hints |
+| Knowledge | Durable lessons, conventions, decisions, how-tos, anchored to code/data where possible | Agent memory that survives sessions |
+| Embeddings and summaries | Vectorized chunks plus package/file summaries | Natural-language retrieval and high-level package context |
 
-| Layer | What's Indexed | How It's Queried |
-|-------|---------------|-----------------|
-| **Code** | Functions, types, methods, call graph, interfaces | Symbol lookup, semantic search, dependency tracing |
-| **Datastore** | PostgreSQL schemas, SQL queries in Go code | "What code reads/writes the `supplier_funding` table?" |
-| **History** | Git commits per file, co-change coupling | "What changed in supplier code recently?", "What changes with it?" |
-| **Docs / knowledge** | Captured lessons today; Confluence/Jira ingestion is planned | Unified search across code and business context |
-
-For the component map, data layers, and indexing/query diagrams, see
-[`docs/architecture.md`](docs/architecture.md). For the detailed storage
-and pipeline internals, see [`docs/internals.md`](docs/internals.md).
+Confluence/Jira-style document ingestion is represented in the storage model and planned as future runtime behavior; captured knowledge is the current docs/knowledge path.
 
 ## Quick Start
 
-The setup has two phases: **index your repo once** (slow, but you only do it when things change), then **point your agent at it** (fast, used every conversation).
+The normal flow is: start Postgres, index a target Go repo, start the MCP server, then connect your agent.
 
 ### Prerequisites
 
 - Go 1.26+
-- PostgreSQL 16 with [pgvector](https://github.com/pgvector/pgvector) extension
-- Docker + Docker Compose (easiest way to get Postgres running)
-- An `ANTHROPIC_API_KEY` for the default summarizer (Claude Sonnet). Embeddings use local Ollama by default and need no key. An `OPENAI_API_KEY` is only required if you switch either provider to OpenAI in `configs/index.yaml`.
+- Docker + Docker Compose
+- PostgreSQL 16 with [pgvector](https://github.com/pgvector/pgvector) extension, provided by the included Docker Compose setup
+- `ANTHROPIC_API_KEY` for the default summarizer
+- Optional `OPENAI_API_KEY` only if `configs/index.yaml` uses OpenAI for embeddings or summarization
 
-### 1. Start the database
+### 1. Start Postgres
 
 ```bash
 cp .env.example .env
-# Edit .env — set ANTHROPIC_API_KEY (OPENAI_API_KEY only needed if you swap providers)
+# Edit .env and set ANTHROPIC_API_KEY.
 
 cd docker && docker compose up -d
 ```
 
-This starts Postgres with pgvector on port 5433.
+This starts Postgres with pgvector on host port `5433`.
 
-### 2. Index your repo
+### 2. Index A Repo
 
 ```bash
 export $(grep -v '^#' .env | xargs)
-
-# One command runs all stages
 make index-all REPO=/path/to/your/go/monorepo
 ```
 
-That's the slow part — it parses every Go file, scans migrations, walks git history, summarizes packages, and embeds everything. For a monorepo this takes a while the first time but only minutes for incremental updates.
+The first run parses Go code, scans datastore references, walks git history, summarizes packages, and embeds missing chunks. Incremental runs are much faster.
 
-### 3. Start the MCP server
+### 3. Start The MCP Server
 
 ```bash
-make build-mcp && ./bin/projectlens-mcp
+make build-mcp
+./bin/projectlens-mcp
 ```
 
-The server listens on `http://localhost:8484/mcp`.
+Default endpoint:
 
-### 4. Connect your agent
+```text
+http://localhost:8484/mcp
+```
 
-The URL above is everything any MCP-compatible agent needs. Per-agent config (Claude Code, Cursor, Codex, others) plus optional **skills** and **hooks** that make the agent reliably reach for ProjectLens are documented in [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md).
+### 4. Connect An Agent
 
-A first-test prompt to confirm wiring:
+Use [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) for Claude Code, Cursor, Codex, and other MCP clients.
 
-> *"Use projectlens to find where supplier funding approval is implemented."*
+A quick wiring check:
 
-The agent should call `find_symbol` or `search_go_context` and return real results.
+> Use projectlens to find where supplier funding approval is implemented.
 
-## What Your Agent Can Do
+The agent should call `find_symbol` or `search_go_context` and return indexed results.
 
-The MCP server exposes 10 tools. You don't invoke them directly — the
-agent picks the right one based on what you're asking for. The current
-tool list, CLI commands, TUI actions, report/export commands, and
-troubleshooting guide live in [`docs/operations.md`](docs/operations.md).
+## Daily Use
+
+Most operator commands are exposed through the Makefile:
+
+```bash
+make help
+make status
+make reindex REPO=/path/to/repo
+make tui
+make mcp
+make cli ARGS="report --top 10"
+```
+
+For raw CLI commands, TUI keys, Docker targets, report/export usage, MCP tools, migrations, writer-lock behavior, and troubleshooting, see [`docs/operations.md`](docs/operations.md).
 
 ## Documentation
 
-| Doc | For |
+| Doc | Purpose |
 |---|---|
-| [`README.md`](README.md) (this file) | First-time visitors — what, why, and how to get started |
-| [`docs/architecture.md`](docs/architecture.md) | First-time maintainers and agents — component map and data layers |
-| [`docs/operations.md`](docs/operations.md) | Operators and contributors — commands, TUI, MCP, Docker, troubleshooting |
-| [`docs/internals.md`](docs/internals.md) | Contributors — indexing pipeline, storage model, MCP query flow |
-| [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) | Users wiring agents into their repo — per-agent config, skills, hooks |
-| [`CLAUDE.md`](CLAUDE.md) | Contributors and maintainers — repo-specific conventions and update rules |
+| [`README.md`](README.md) | Product entrypoint and quick start |
+| [`docs/architecture.md`](docs/architecture.md) | Runtime components, data layers, and system diagrams |
+| [`docs/operations.md`](docs/operations.md) | Commands, TUI, MCP, Docker, migrations, and troubleshooting |
+| [`docs/internals.md`](docs/internals.md) | Indexing pipeline, storage model, MCP query flow, and TUI job execution |
+| [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) | Per-agent MCP config, skills, hooks, and verification |
+| [`CLAUDE.md`](CLAUDE.md) | Maintainer conventions and source-of-truth rules |
 | [`docs/plans/`](docs/plans/) | Design and implementation history |
 
 ## License
