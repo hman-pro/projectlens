@@ -5,6 +5,8 @@
 ProjectLens reads your Go project — the code, the database, the change history, and your docs — and turns it into a single place an AI agent can ask questions about. It speaks [MCP](https://modelcontextprotocol.io) (Model Context Protocol), so it works with **any MCP-compatible agent**: Claude, Cursor, Codex, and more. The agent connects once and gets a shared brain for your repo.
 
 > **New here? Read on.**
+> **Understanding the system?** → [`docs/architecture.md`](docs/architecture.md)
+> **Running or troubleshooting it?** → [`docs/operations.md`](docs/operations.md)
 > **Wiring an agent into your repo?** → [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md)
 > **Contributing to ProjectLens itself?** → [`CLAUDE.md`](CLAUDE.md)
 
@@ -32,35 +34,11 @@ Four layers of intelligence, all searchable together:
 | **Code** | Functions, types, methods, call graph, interfaces | Symbol lookup, semantic search, dependency tracing |
 | **Datastore** | PostgreSQL schemas, SQL queries in Go code | "What code reads/writes the `supplier_funding` table?" |
 | **History** | Git commits per file, co-change coupling | "What changed in supplier code recently?", "What changes with it?" |
-| **Docs** | Confluence pages, Jira tickets *(planned)* | Unified search across code and business context |
+| **Docs / knowledge** | Captured lessons today; Confluence/Jira ingestion is planned | Unified search across code and business context |
 
-## How It Fits In
-
-```
-        ┌──────────────────────────────────────────────┐
-        │   Any MCP-capable agent                      │
-        │   (Claude · Cursor · Codex · ...)            │
-        └──────────────────────┬───────────────────────┘
-                               │ MCP (Streamable HTTP)
-                    ┌──────────┴──────────┐
-                    │     MCP Server      │  10 tools
-                    │     (Go/HTTP)       │
-                    └──────────┬──────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-        ┌─────┴─────┐    ┌─────┴─────┐    ┌─────┴─────┐
-        │  Lexical  │    │  Vector   │    │   Graph   │
-        │  Search   │    │  Search   │    │ Traversal │
-        └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
-              └────────────────┼────────────────┘
-                          ┌────┴────┐
-                          │Postgres │
-                          │+pgvector│  14 tables
-                          └─────────┘
-```
-
-The agent never talks to your code directly — it talks to the MCP server, which serves pre-digested answers from a local Postgres database. Your source code stays on your machine.
+For the component map, data layers, and indexing/query diagrams, see
+[`docs/architecture.md`](docs/architecture.md). For the detailed storage
+and pipeline internals, see [`docs/internals.md`](docs/internals.md).
 
 ## Quick Start
 
@@ -115,35 +93,21 @@ The agent should call `find_symbol` or `search_go_context` and return real resul
 
 ## What Your Agent Can Do
 
-The MCP server exposes 10 tools. You don't invoke them directly — the agent picks the right one based on what you're asking for.
-
-| Tool | When the agent reaches for it |
-|------|---|
-| `find_symbol` | "Find a Go symbol named X" |
-| `search_go_context` | "How does Y work?" (natural language across code + docs + tables) |
-| `get_symbol_context` | "Who calls X? What does X call? What implements interface I?" |
-| `get_package_summary` | "What does package P do?" |
-| `get_table_context` | "What columns does table T have? Which Go code reads/writes it?" |
-| `get_change_history` | "When was X last changed? What's the recent history?" |
-| `get_coupling` | "If I edit X, what else should I touch?" |
-| `index_status` | "Is the index fresh?" |
-| `save_knowledge` | "Remember that we don't import X from Y." |
-| `search_knowledge` | "What lessons do we have about Z?" |
-
-Two extra read-only CLI commands ship alongside the MCP server (run from your shell, not from the agent):
-
-| Command | What it does |
-|---|---|
-| `projectlens report` | Generate a Markdown or JSON summary of the indexed state |
-| `projectlens export graph` | Stream a portable JSON graph dump (nodes + edges) |
+The MCP server exposes 10 tools. You don't invoke them directly — the
+agent picks the right one based on what you're asking for. The current
+tool list, CLI commands, TUI actions, report/export commands, and
+troubleshooting guide live in [`docs/operations.md`](docs/operations.md).
 
 ## Documentation
 
 | Doc | For |
 |---|---|
 | [`README.md`](README.md) (this file) | First-time visitors — what, why, and how to get started |
+| [`docs/architecture.md`](docs/architecture.md) | First-time maintainers and agents — component map and data layers |
+| [`docs/operations.md`](docs/operations.md) | Operators and contributors — commands, TUI, MCP, Docker, troubleshooting |
+| [`docs/internals.md`](docs/internals.md) | Contributors — indexing pipeline, storage model, MCP query flow |
 | [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) | Users wiring agents into their repo — per-agent config, skills, hooks |
-| [`CLAUDE.md`](CLAUDE.md) | Contributors and maintainers — architecture, schema, dev workflow |
+| [`CLAUDE.md`](CLAUDE.md) | Contributors and maintainers — repo-specific conventions and update rules |
 | [`docs/plans/`](docs/plans/) | Design and implementation history |
 
 ## License

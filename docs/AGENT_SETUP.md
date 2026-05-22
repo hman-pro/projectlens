@@ -5,7 +5,10 @@ guide** — you've already followed the [Quick Start](../README.md#quick-start)
 and your MCP server is running at `http://localhost:8484/mcp`.
 
 If you're here to **contribute** to ProjectLens itself, see
-[`CLAUDE.md`](../CLAUDE.md) instead.
+[`CLAUDE.md`](../CLAUDE.md) instead. If you need the system map before
+wiring an agent, see [`architecture.md`](architecture.md). For daily
+server, CLI, TUI, Docker, and troubleshooting commands, see
+[`operations.md`](operations.md).
 
 ---
 
@@ -198,6 +201,9 @@ not deep-merge automatically.
 
 ## How It All Fits Together
 
+This section covers agent-side wiring. The full runtime architecture lives in
+[`architecture.md`](architecture.md).
+
 ```
 ┌────────────────────────────────────────────────────────────┐
 │                       Your IDE / Agent                     │
@@ -259,6 +265,11 @@ to end:
 ---
 
 ## Troubleshooting
+
+This section focuses on agent setup. General operational failures such as
+database connection errors, provider failures, stale index state, writer-lock
+busy errors, and missing TUI binaries are covered in
+[`operations.md#troubleshooting`](operations.md#troubleshooting).
 
 ### The agent isn't using ProjectLens
 
