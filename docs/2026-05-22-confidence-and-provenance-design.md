@@ -3,7 +3,7 @@
 Date: 2026-05-22
 Status: design/spec for Phase 2 of `docs/2026-05-21-graphify-comparison.md` (Confidence + Provenance).
 Predecessor: `docs/2026-05-21-graphify-comparison.md` (esp. sections "Graph Model and Confidence", "Phase 2").
-Successor priority: `docs/2026-05-21-next-priorities.md` (Run Observability remains the synthesis #2 if this work deferred).
+Successor priority: `docs/tasks.md` (Run Observability remains the synthesis #2 if this work deferred).
 
 ## Goal
 

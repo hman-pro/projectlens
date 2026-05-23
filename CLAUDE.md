@@ -28,7 +28,8 @@ link there.
 | [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) | End users wiring an agent into their repo | Per-agent MCP config, skills install, hooks install |
 | `CLAUDE.md` (this file) | Contributors and maintainers | Maintainer conventions, source-of-truth rules, design rationale |
 | [`docs/plans/`](docs/plans/) | Maintainers | Design and implementation history |
-| `docs/YYYY-MM-DD-*.md` | Maintainers | Dated planning artifacts, comparisons, lessons, and priority lists. Start with [`docs/2026-05-21-next-priorities.md`](docs/2026-05-21-next-priorities.md). |
+| [`docs/tasks.md`](docs/tasks.md) | Maintainers | Canonical current task list, priorities, parked work, and next actions |
+| `docs/YYYY-MM-DD-*.md` | Maintainers | Dated planning artifacts, comparisons, lessons, and historical priority inputs |
 
 When updating something user-visible, update the owning doc and cross-link
 instead of copy-pasting. Examples:

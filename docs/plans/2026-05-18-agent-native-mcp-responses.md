@@ -33,17 +33,17 @@
 
 ---
 
-## Task 1: Park backlog (already done in this commit)
+## Task 1: Park backlog (superseded by task list)
 
-The backlog file `docs/plans/backlog.md` was created in the same commit that introduced this plan. No further action — listed here only so the plan is self-describing.
+The old backlog entry has since been folded into `docs/tasks.md`. No further action — listed here only so the plan is self-describing.
 
-- [x] **Step 1: Verify backlog file exists**
+- [x] **Step 1: Verify task list exists**
 
 ```bash
-test -f docs/plans/backlog.md && head -5 docs/plans/backlog.md
+test -f docs/tasks.md && head -5 docs/tasks.md
 ```
 
-Expected: prints the first 5 lines of the backlog header.
+Expected: prints the first 5 lines of the task list header.
 
 ---
 
@@ -183,7 +183,7 @@ Expected: PASS for all three tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/mcpserver/types.go internal/mcpserver/types_test.go docs/plans/2026-05-18-agent-native-mcp-responses.md docs/plans/backlog.md
+git add internal/mcpserver/types.go internal/mcpserver/types_test.go docs/plans/2026-05-18-agent-native-mcp-responses.md docs/tasks.md
 git commit -m "feat(mcpserver): introduce shared structured response envelopes"
 ```
 
@@ -1599,4 +1599,4 @@ Expected: a JSON array containing at least one `ProviderHealth` entry with a `st
 - Coverage: each of the eight existing tools (`find_symbol`, `search_go_context`, `get_symbol_context`, `get_package_summary`, `get_table_context`, `get_change_history`, `get_coupling`, `index_status`) plus the two knowledge tools (`save_knowledge`, `search_knowledge`) gets one structured-output task. Provider health lands in Task 6 alongside `index_status`. Skill docs land in Task 14.
 - Backwards-compatibility: every handler still returns the same text block via the `fallbackText` argument of `NewToolResultStructured`. Older clients that only read `result.Content[0].Text` keep working.
 - Type consistency: `SymbolHit` is defined once in Task 7 and reused across Tasks 8, 9, 11, 12. Field names `evidence`, `package_name`, `signature` match across payloads.
-- Out of scope (parked in `docs/plans/backlog.md`): the end-to-end smoke test, LightRAG integration, and any new index-stage work.
+- Out of scope (parked in `docs/tasks.md`): the end-to-end smoke test, LightRAG integration, and any new index-stage work.
