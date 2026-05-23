@@ -78,7 +78,8 @@ cli: build-cli ## Run the CLI (use ARGS="...")
 # Indexer shortcuts (require REPO=... or REPO_PATH env, and DB_URL)
 # ────────────────────────────────────────────────────────────────────
 .PHONY: bootstrap reindex reindex-full reindex-dry status query \
-        index-all index-history index-datastore index-embed index-summarize
+        index-all index-history index-datastore index-embed index-summarize \
+        graph-export graph-gephi
 
 bootstrap: build-cli ## Bootstrap (init DB + full index)
 	./$(CLI) bootstrap --repo "$(REPO)" --db "$(DB_URL)"
@@ -113,6 +114,19 @@ index-embed: build-cli ## Embed missing chunks
 
 index-summarize: build-cli ## Summarize missing packages
 	./$(CLI) index-summarize --db "$(DB_URL)"
+
+# Graph export and conversion
+GRAPH_JSON   ?= projectlens-graph.json
+GRAPH_OUT    ?= projectlens.graphml
+GRAPH_EDGES  ?= all
+GRAPH_FORMAT ?= graphml
+PYTHON       ?= python3
+
+graph-export: build-cli ## Export graph JSON (GRAPH_JSON, GRAPH_EDGES=all|calls,implements,...)
+	./$(CLI) export graph --edges $(GRAPH_EDGES) --out "$(GRAPH_JSON)" --db "$(DB_URL)"
+
+graph-gephi: ## Convert graph JSON to GraphML/GEXF for Gephi (GRAPH_JSON, GRAPH_OUT, GRAPH_FORMAT, EDGES)
+	$(PYTHON) scripts/graph_to_gephi.py "$(GRAPH_JSON)" -o "$(GRAPH_OUT)" -f $(GRAPH_FORMAT) $(if $(EDGES),-e $(EDGES))
 
 # ────────────────────────────────────────────────────────────────────
 # Docker

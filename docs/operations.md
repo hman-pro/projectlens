@@ -115,6 +115,29 @@ make cli ARGS="export graph --edges calls,implements --include-evidence"
 
 `export graph --edges` accepts `all` or a comma-separated edge type list. `--include-evidence` includes `properties.evidence` blobs.
 
+Convenience Make targets wrap the export and Gephi conversion:
+
+```bash
+make graph-export                                            # writes projectlens-graph.json
+make graph-export GRAPH_EDGES=calls,implements GRAPH_JSON=calls.json
+make graph-gephi                                             # projectlens-graph.json -> projectlens.graphml
+make graph-gephi EDGES=calls,implements GRAPH_OUT=calls.graphml
+make graph-gephi GRAPH_FORMAT=gexf GRAPH_OUT=graph.gexf
+```
+
+`graph-gephi` calls `scripts/graph_to_gephi.py`, which converts the JSON export to GraphML (default) or GEXF for Gephi, Cytoscape, or any GraphML-aware viewer. Variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GRAPH_JSON` | `projectlens-graph.json` | Input/output path for `graph-export`; input for `graph-gephi`. |
+| `GRAPH_OUT` | `projectlens.graphml` | Output path for `graph-gephi`. |
+| `GRAPH_FORMAT` | `graphml` | `graphml` or `gexf`. |
+| `GRAPH_EDGES` | `all` | Edge types passed to `export graph --edges`. |
+| `EDGES` | unset | Edge-type filter applied during conversion (comma list, e.g. `calls,implements`). |
+| `PYTHON` | `python3` | Python interpreter. Use a venv with `PYTHON=.venv/bin/python`. |
+
+Requires `pip install networkx`. The script drops nodes with no edges after filtering; pass `--keep-isolated` (via direct invocation) to retain them. Once a `.graphml` is written, open it in Gephi (`File -> Open`), run a ForceAtlas2 layout, then color nodes by `type` and size by degree.
+
 ### TUI
 
 ```bash
