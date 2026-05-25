@@ -88,3 +88,87 @@ func TestContextItemUpsertAndDelete(t *testing.T) {
 		t.Fatalf("deleted_at not set: %+v", got)
 	}
 }
+
+func TestContextItemCascadeDeletesVersionsAndChunks(t *testing.T) {
+	db := connectForIntegration(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("ctx-cas-%d", time.Now().UnixNano())
+	t.Cleanup(func() { cleanupContextMarker(t, db, marker) })
+
+	src := &ContextSourceRecord{SourceType: "github", Namespace: "f", DisplayName: "i", ExternalKey: "github:" + marker, Metadata: []byte(`{}`), Enabled: true}
+	if err := db.UpsertContextSource(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	item := &ContextItemRecord{SourceID: src.ID, ItemType: "github_pr", ExternalID: marker + "#1", Metadata: []byte(`{}`)}
+	if err := db.UpsertContextItem(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	ver := &ContextItemVersionRecord{ItemID: item.ID, ContentHash: marker + "-h", BodyText: "b", Redaction: []byte(`{}`), Metadata: []byte(`{}`)}
+	if _, err := db.UpsertContextItemVersion(ctx, ver); err != nil {
+		t.Fatal(err)
+	}
+	anchor := "github.pr." + marker
+	chunk := &ContextChunkRecord{
+		ItemVersionID:  ver.ID,
+		ChunkKey:       "ord-0",
+		ChunkAnchorID:  anchor + "#ordinal/0",
+		SourceAnchorID: anchor,
+		ChunkIndex:     0,
+		ContentHash:    marker + "-c1",
+		Metadata:       []byte(`{}`),
+	}
+	if err := db.UpsertContextChunk(ctx, chunk); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hard delete the item to exercise ON DELETE CASCADE on versions and chunks.
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM context_items WHERE id=$1`, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	var vCount, cCount int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM context_item_versions WHERE id=$1`, ver.ID).Scan(&vCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM context_chunks WHERE id=$1`, chunk.ID).Scan(&cCount); err != nil {
+		t.Fatal(err)
+	}
+	if vCount != 0 || cCount != 0 {
+		t.Fatalf("cascade failed: versions=%d chunks=%d", vCount, cCount)
+	}
+}
+
+func TestContextParticipantIdentityOnly(t *testing.T) {
+	db := connectForIntegration(t)
+	ctx := context.Background()
+
+	marker := fmt.Sprintf("ctx-io-%d", time.Now().UnixNano())
+	t.Cleanup(func() { cleanupContextMarker(t, db, marker) })
+
+	src := &ContextSourceRecord{SourceType: "slack", Namespace: "x", DisplayName: "x", ExternalKey: "slack:" + marker, Metadata: []byte(`{}`), Enabled: true}
+	if err := db.UpsertContextSource(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	item := &ContextItemRecord{SourceID: src.ID, ItemType: "slack_thread", ExternalID: marker, Metadata: []byte(`{}`)}
+	if err := db.UpsertContextItem(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	id := &PersonIdentityRecord{Provider: "slack", ExternalAccountID: marker + "-u", Metadata: []byte(`{}`)}
+	if err := db.UpsertPersonIdentity(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+
+	// person_id intentionally nil — ambiguous identity, per spec.
+	p := &ContextParticipantRecord{
+		ItemID:     item.ID,
+		IdentityID: &id.ID,
+		Role:       "participant",
+		Metadata:   []byte(`{}`),
+	}
+	if err := db.UpsertContextParticipant(ctx, p); err != nil {
+		t.Fatalf("identity-only participant: %v", err)
+	}
+	if p.ID == 0 {
+		t.Fatal("participant id not set")
+	}
+}
