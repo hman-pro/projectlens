@@ -35,22 +35,14 @@ func ConnectScoped(ctx context.Context, databaseURL, storageSchema string) (*DB,
 	if err != nil {
 		return nil, fmt.Errorf("storage: parse config: %w", err)
 	}
-	quoted := QuoteSchema(storageSchema)
+	// AfterConnect runs once per physical connection (not per checkout), which
+	// is the right hook for pinning search_path: pgxpool caches the resulting
+	// conn so every borrow inherits the scope without re-issuing the SET.
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		var exists bool
-		if err := conn.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)`,
-			storageSchema,
-		).Scan(&exists); err != nil {
-			return fmt.Errorf("storage: check schema %q: %w", storageSchema, err)
+		if err := AssertSchemaExists(ctx, conn, storageSchema); err != nil {
+			return err
 		}
-		if !exists {
-			return fmt.Errorf("storage: schema %q does not exist; run `projectlens migrate --project <slug>` first", storageSchema)
-		}
-		if _, err := conn.Exec(ctx, "SET search_path TO "+quoted+",public"); err != nil {
-			return fmt.Errorf("storage: set search_path %q: %w", storageSchema, err)
-		}
-		return nil
+		return PinSearchPath(ctx, conn, storageSchema)
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
