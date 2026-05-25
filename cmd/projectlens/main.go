@@ -39,6 +39,8 @@ func main() {
 	rootCmd.PersistentFlags().String("config", "configs/index.yaml", "path to config file")
 	rootCmd.PersistentFlags().String("db", "", "database URL override")
 	rootCmd.PersistentFlags().String("repo", "", "repository path override")
+	rootCmd.PersistentFlags().String("project", "", "project slug from the registry")
+	rootCmd.PersistentFlags().String("projects", "configs/projects.yaml", "path to project registry YAML")
 
 	rootCmd.AddCommand(
 		newCensusCmd(),
