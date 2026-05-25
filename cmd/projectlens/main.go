@@ -61,6 +61,7 @@ func main() {
 		newIndexBackfillProvenanceCmd(),
 		newUnlockCmd(),
 		newMigrateCmd(),
+		newProjectsCmd(),
 	)
 
 	if os.Getenv("PROJECTLENS_DEBUG_HOLD_LOCK") == "1" {
