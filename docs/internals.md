@@ -136,6 +136,23 @@ Writers and their defaults (see `cmd/projectlens/main.go::edgeProvenanceDefaults
 | `index_locks` | Advisory-lock holder metadata for mutating indexer commands. |
 | `schema_migrations` | Applied migration tracker created by the storage migrator. |
 
+### Context graph tables (added in migration 009)
+
+Migration 009 adds the Phase 1 context graph layer. The schema and design
+rules live in
+[`docs/superpowers/specs/2026-05-25-context-graph-data-model-design.md`](superpowers/specs/2026-05-25-context-graph-data-model-design.md).
+Tables: `context_sources`, `context_source_state`, `people`,
+`person_identities`, `context_items`, `context_item_versions`,
+`context_chunks`, `context_participants`. Phase 1 ships schema + storage
+APIs only; importers, edge writers, native chunk linkage, and the
+`context` run stage land in later phases.
+
+**Storage caveats / deviations from spec wording:**
+
+1. `context_participants.source_role` is `NOT NULL DEFAULT ''` (spec used nullable). The unique constraint is `UNIQUE NULLS NOT DISTINCT (item_id, identity_id, person_id, role, source_role)` and includes `person_id` so person-only rows also dedup. A CHECK enforces `person_id IS NOT NULL OR identity_id IS NOT NULL`.
+2. `ContextParticipantRecord.IsCurrent` is `*bool` so the column's `DEFAULT TRUE` applies when callers leave it unset. Pass `&falseVar` for explicit false.
+3. Same-hash version reingest does not refresh item metadata inside `UpsertContextItemVersion`. Importers MUST call `UpsertContextItem` with fresh metadata before each `UpsertContextItemVersion` call. The version helper handles body lineage only.
+
 ## MCP Query Flow
 
 ```mermaid
