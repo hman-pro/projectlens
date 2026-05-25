@@ -33,6 +33,16 @@ func TestSanitizeErrText(t *testing.T) {
 			want: "dial failed postgres://user:[REDACTED]@db.internal:5432/repo",
 		},
 		{
+			name: "authorization basic credential consumed fully",
+			in:   "401: Authorization: Basic dXNlcjpwYXNz",
+			want: "401: Authorization: [REDACTED]",
+		},
+		{
+			name: "authorization stops at line boundary",
+			in:   "rejected\nAuthorization: Bearer leaked-token\nnext-line",
+			want: "rejected\nAuthorization: [REDACTED]\nnext-line",
+		},
+		{
 			name: "no secrets passthrough",
 			in:   "history: latest timestamp: context canceled",
 			want: "history: latest timestamp: context canceled",

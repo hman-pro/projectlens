@@ -67,7 +67,10 @@ var errRedactors = []struct {
 	repl string
 }{
 	{regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._\-]+`), "Bearer [REDACTED]"},
-	{regexp.MustCompile(`(?i)authorization:\s*[^\s,]+`), "Authorization: [REDACTED]"},
+	// Capture the whole header value through end-of-line or terminator chars so
+	// schemes like "Basic" don't leave the base64 credential exposed after the
+	// scheme keyword.
+	{regexp.MustCompile(`(?i)authorization:\s*[^\r\n"]*`), "Authorization: [REDACTED]"},
 	{regexp.MustCompile(`sk-ant-[A-Za-z0-9_\-]+`), "sk-ant-[REDACTED]"},
 	{regexp.MustCompile(`sk-[A-Za-z0-9]{16,}`), "sk-[REDACTED]"},
 	{regexp.MustCompile(`(postgres(?:ql)?://[^:]+):[^@]+@`), "$1:[REDACTED]@"},

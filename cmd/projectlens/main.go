@@ -625,14 +625,17 @@ func newIndexEmbedCmd() *cobra.Command {
 			return recordStageRun(ctx, db, repoPath, "embed", providers,
 				func() (stageOutcome, error) {
 					s, err := embed.EmbedMissing(ctx, db, embedder)
-					return stageOutcome{
-						FilesProcessed: s.Chunks,
-						Metrics: map[string]any{
-							"chunks":  s.Chunks,
-							"tokens":  s.Tokens,
-							"batches": s.Batches,
-						},
-					}, err
+					m := map[string]any{"chunks": s.Chunks}
+					// Omit tokens/batches until the embed pipeline measures
+					// them — recording zero would imply a measured 0 rather
+					// than "not measured".
+					if s.Tokens > 0 {
+						m["tokens"] = s.Tokens
+					}
+					if s.Batches > 0 {
+						m["batches"] = s.Batches
+					}
+					return stageOutcome{FilesProcessed: s.Chunks, Metrics: m}, err
 				})
 		})
 	return cmd
@@ -653,14 +656,14 @@ func newIndexSummarizeCmd() *cobra.Command {
 			return recordStageRun(ctx, db, repoPath, "summarize", providers,
 				func() (stageOutcome, error) {
 					s, err := summarize.SummarizeMissing(ctx, db, summarizer)
-					return stageOutcome{
-						FilesProcessed: s.Packages,
-						Metrics: map[string]any{
-							"packages":  s.Packages,
-							"summaries": s.Summaries,
-							"tokens":    s.Tokens,
-						},
-					}, err
+					m := map[string]any{
+						"packages":  s.Packages,
+						"summaries": s.Summaries,
+					}
+					if s.Tokens > 0 {
+						m["tokens"] = s.Tokens
+					}
+					return stageOutcome{FilesProcessed: s.Packages, Metrics: m}, err
 				})
 		})
 	return cmd
@@ -794,14 +797,14 @@ func newIndexAllCmd() *cobra.Command {
 				if err := recordStageRun(ctx, db, repoPath, "summarize", providers,
 					func() (stageOutcome, error) {
 						s, err := summarize.SummarizeMissing(ctx, db, summarizer)
-						return stageOutcome{
-							FilesProcessed: s.Packages,
-							Metrics: map[string]any{
-								"packages":  s.Packages,
-								"summaries": s.Summaries,
-								"tokens":    s.Tokens,
-							},
-						}, err
+						m := map[string]any{
+							"packages":  s.Packages,
+							"summaries": s.Summaries,
+						}
+						if s.Tokens > 0 {
+							m["tokens"] = s.Tokens
+						}
+						return stageOutcome{FilesProcessed: s.Packages, Metrics: m}, err
 					}); err != nil {
 					logger.Warn("summarization failed", "err", err)
 				}
@@ -815,14 +818,17 @@ func newIndexAllCmd() *cobra.Command {
 			if err := recordStageRun(ctx, db, repoPath, "embed", embedProviders,
 				func() (stageOutcome, error) {
 					s, err := embed.EmbedMissing(ctx, db, embedder)
-					return stageOutcome{
-						FilesProcessed: s.Chunks,
-						Metrics: map[string]any{
-							"chunks":  s.Chunks,
-							"tokens":  s.Tokens,
-							"batches": s.Batches,
-						},
-					}, err
+					m := map[string]any{"chunks": s.Chunks}
+					// Omit tokens/batches until the embed pipeline measures
+					// them — recording zero would imply a measured 0 rather
+					// than "not measured".
+					if s.Tokens > 0 {
+						m["tokens"] = s.Tokens
+					}
+					if s.Batches > 0 {
+						m["batches"] = s.Batches
+					}
+					return stageOutcome{FilesProcessed: s.Chunks, Metrics: m}, err
 				}); err != nil {
 				logger.Warn("embedding failed", "err", err)
 			}
