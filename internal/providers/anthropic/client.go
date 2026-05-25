@@ -8,6 +8,7 @@ import (
 	"os"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
+	"github.com/hman-pro/projectlens/internal/providers/identity"
 	"github.com/hman-pro/projectlens/internal/providers/openai"
 )
 
@@ -62,4 +63,12 @@ func (c *Client) GeneratePackageSummary(ctx context.Context, packageName string,
 	}
 
 	return block.Text, nil
+}
+
+// SummaryIdentity returns the provider identity for the summarization role.
+func (c *Client) SummaryIdentity() identity.ProviderIdentity {
+	return identity.ProviderIdentity{
+		Vendor: "anthropic",
+		Model:  c.model,
+	}
 }

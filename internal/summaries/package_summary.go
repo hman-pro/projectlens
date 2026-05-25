@@ -7,12 +7,14 @@ import (
 
 	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/parser"
+	"github.com/hman-pro/projectlens/internal/providers/identity"
 )
 
 // PackageSummarizer generates a summary for a single package given its name
 // and exported symbol signatures. This interface allows mocking in tests.
 type PackageSummarizer interface {
 	GeneratePackageSummary(ctx context.Context, packageName string, exportedSymbols []string) (string, error)
+	SummaryIdentity() identity.ProviderIdentity
 }
 
 // GeneratePackageSummaries produces an LLM-generated summary for each package

@@ -751,11 +751,7 @@ func buildProviders(cfg *config.Config) (embeddings.Embedder, summaries.PackageS
 		if cfg.OpenAIKey == "" {
 			return nil, nil, fmt.Errorf("OPENAI_API_KEY required when embeddings.provider is 'openai'")
 		}
-		if cfg.Embeddings.Dimensions > 0 {
-			embedder = openai.NewClientWithDims(cfg.OpenAIKey, cfg.Embeddings.Dimensions)
-		} else {
-			embedder = openai.NewClient(cfg.OpenAIKey)
-		}
+		embedder = openai.NewClientWithModels(cfg.OpenAIKey, "", cfg.Embeddings.Model, cfg.Embeddings.Dimensions)
 	default:
 		return nil, nil, fmt.Errorf("unknown embeddings provider: %s", cfg.Embeddings.Provider)
 	}
@@ -768,7 +764,7 @@ func buildProviders(cfg *config.Config) (embeddings.Embedder, summaries.PackageS
 		if cfg.OpenAIKey == "" {
 			return nil, nil, fmt.Errorf("OPENAI_API_KEY required when summarization.provider is 'openai'")
 		}
-		summarizer = openai.NewClient(cfg.OpenAIKey)
+		summarizer = openai.NewClientWithModels(cfg.OpenAIKey, cfg.Summarization.Model, "", 0)
 	default:
 		return nil, nil, fmt.Errorf("unknown summarization provider: %s", cfg.Summarization.Provider)
 	}

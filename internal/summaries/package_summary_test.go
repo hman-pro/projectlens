@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hman-pro/projectlens/internal/parser"
+	"github.com/hman-pro/projectlens/internal/providers/identity"
 )
 
 // mockSummarizer records calls and returns canned responses.
@@ -25,6 +26,10 @@ func (m *mockSummarizer) GeneratePackageSummary(_ context.Context, packageName s
 		ExportedSymbols: exportedSymbols,
 	})
 	return fmt.Sprintf("Summary of %s with %d symbols.", packageName, len(exportedSymbols)), nil
+}
+
+func (m *mockSummarizer) SummaryIdentity() identity.ProviderIdentity {
+	return identity.ProviderIdentity{}
 }
 
 func TestGeneratePackageSummaries_OnlyExportedSymbols(t *testing.T) {
@@ -184,6 +189,10 @@ type errorSummarizer struct{}
 
 func (e *errorSummarizer) GeneratePackageSummary(_ context.Context, packageName string, _ []string) (string, error) {
 	return "", fmt.Errorf("API error for %s", packageName)
+}
+
+func (e *errorSummarizer) SummaryIdentity() identity.ProviderIdentity {
+	return identity.ProviderIdentity{}
 }
 
 func TestGeneratePackageSummaries_PropagatesError(t *testing.T) {

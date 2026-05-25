@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/hman-pro/projectlens/internal/providers/identity"
 )
 
 // Client implements the Embedder interface using a local Ollama instance.
@@ -104,6 +106,21 @@ func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, e
 // mcpserver.ProviderHealth.Provider. Stable identifier; do not
 // change without coordinating with the MCP server.
 func (c *Client) ProviderName() string { return "ollama" }
+
+// knownOllamaDims maps well-known Ollama embedding model names to their output
+// dimension counts. Models not listed here get Dimensions=0 (unknown).
+var knownOllamaDims = map[string]int{
+	"mxbai-embed-large": 1024,
+}
+
+// EmbedIdentity returns the provider identity for the embedding role.
+func (c *Client) EmbedIdentity() identity.ProviderIdentity {
+	return identity.ProviderIdentity{
+		Vendor:     "ollama",
+		Model:      c.model,
+		Dimensions: knownOllamaDims[c.model],
+	}
+}
 
 // Ping checks if the Ollama server is reachable.
 func (c *Client) Ping(ctx context.Context) error {

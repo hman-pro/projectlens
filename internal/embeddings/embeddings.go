@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/hman-pro/projectlens/internal/logger"
+	"github.com/hman-pro/projectlens/internal/providers/identity"
 )
 
 // batchSize is the maximum number of texts sent per EmbedBatch call.
@@ -28,6 +29,7 @@ type EmbeddingResult struct {
 // type satisfies this interface implicitly via its EmbedBatch method.
 type Embedder interface {
 	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
+	EmbedIdentity() identity.ProviderIdentity
 }
 
 // EmbedChunks takes a list of chunk content strings, calls embedder.EmbedBatch

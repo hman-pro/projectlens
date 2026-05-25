@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/hman-pro/projectlens/internal/providers/identity"
 )
 
 // mockEmbedder records calls and returns deterministic vectors.
@@ -22,6 +24,8 @@ func (m *mockEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]floa
 	return results, nil
 }
 
+func (m *mockEmbedder) EmbedIdentity() identity.ProviderIdentity { return identity.ProviderIdentity{} }
+
 // errorEmbedder always returns an error.
 type errorEmbedder struct {
 	err error
@@ -29,6 +33,10 @@ type errorEmbedder struct {
 
 func (e *errorEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	return nil, e.err
+}
+
+func (e *errorEmbedder) EmbedIdentity() identity.ProviderIdentity {
+	return identity.ProviderIdentity{}
 }
 
 func TestEmbedChunks_SmallBatch(t *testing.T) {
