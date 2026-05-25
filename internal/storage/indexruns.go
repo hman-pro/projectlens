@@ -20,19 +20,19 @@ type RunProviders struct {
 
 // IndexRunRecord maps to a row in the index_runs table.
 type IndexRunRecord struct {
-	ID                 int64          `json:"id"`
-	StartedAt          time.Time      `json:"started_at"`
-	CompletedAt        *time.Time     `json:"completed_at,omitempty"`
-	CommitSHA          string         `json:"commit_sha"`
-	FilesProcessed     int            `json:"files_processed"`
-	SymbolsExtracted   int            `json:"symbols_extracted"`
-	EdgesCreated       int            `json:"edges_created"`
-	Status             string         `json:"status"`
-	Stage              string         `json:"stage"`
-	ErrorText          string         `json:"error_text,omitempty"`
-	ProviderEmbed      string         `json:"provider_embed,omitempty"`
-	ProviderSummarize  string         `json:"provider_summarize,omitempty"`
-	Metrics            map[string]any `json:"metrics,omitempty"`
+	ID                int64          `json:"id"`
+	StartedAt         time.Time      `json:"started_at"`
+	CompletedAt       *time.Time     `json:"completed_at,omitempty"`
+	CommitSHA         string         `json:"commit_sha"`
+	FilesProcessed    int            `json:"files_processed"`
+	SymbolsExtracted  int            `json:"symbols_extracted"`
+	EdgesCreated      int            `json:"edges_created"`
+	Status            string         `json:"status"`
+	Stage             string         `json:"stage"`
+	ErrorText         string         `json:"error_text,omitempty"`
+	ProviderEmbed     string         `json:"provider_embed,omitempty"`
+	ProviderSummarize string         `json:"provider_summarize,omitempty"`
+	Metrics           map[string]any `json:"metrics,omitempty"`
 }
 
 // GitRefRecord maps to a row in the git_refs table.

@@ -2,6 +2,7 @@ package runs
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,13 +28,13 @@ func (m *Model) View() string {
 		idx := m.tbl.Cursor()
 		if idx >= 0 && idx < len(m.snap.Runs) {
 			b.WriteString("\n")
-			b.WriteString(detailPanel(m.snap.Runs[idx]))
+			b.WriteString(m.detailPanel(m.snap.Runs[idx]))
 		}
 	}
 	return b.String()
 }
 
-func detailPanel(r store.IndexRun) string {
+func (m *Model) detailPanel(r store.IndexRun) string {
 	var b strings.Builder
 	b.WriteString(theme.TitleStyle().Render("─ Run detail ─\n"))
 	fmt.Fprintf(&b, "ID:        %d\n", r.ID)
@@ -48,5 +49,42 @@ func detailPanel(r store.IndexRun) string {
 	commit = commit[:min(len(commit), 7)]
 	fmt.Fprintf(&b, "Commit:    %s   Stage: %s   Status: %s\n", commit, r.Stage, r.Status)
 	fmt.Fprintf(&b, "Files: %d   Symbols: %d   Edges: %d\n", r.FilesProcessed, r.SymbolsExtracted, r.EdgesCreated)
+
+	// Providers line
+	if r.ProviderEmbed != "" || r.ProviderSummarize != "" {
+		var parts []string
+		if r.ProviderEmbed != "" {
+			parts = append(parts, "embed="+r.ProviderEmbed)
+		}
+		if r.ProviderSummarize != "" {
+			parts = append(parts, "sum="+r.ProviderSummarize)
+		}
+		fmt.Fprintf(&b, "Providers: %s\n", strings.Join(parts, " "))
+	}
+
+	// Metrics line
+	if len(r.Metrics) > 0 {
+		keys := make([]string, 0, len(r.Metrics))
+		for k := range r.Metrics {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var kvs []string
+		for _, k := range keys {
+			kvs = append(kvs, fmt.Sprintf("%s=%v", k, r.Metrics[k]))
+		}
+		fmt.Fprintf(&b, "Metrics:   %s\n", strings.Join(kvs, " "))
+	}
+
+	// Error line
+	if r.ErrorText != "" {
+		errLine := r.ErrorText
+		maxWidth := m.w - len("Error:    ")
+		if maxWidth > 10 && len(errLine) > maxWidth {
+			errLine = errLine[:maxWidth] + "…"
+		}
+		b.WriteString(theme.StatusStyle("error").Render("Error:    "+errLine) + "\n")
+	}
+
 	return b.String()
 }

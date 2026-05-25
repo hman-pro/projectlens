@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -203,7 +204,11 @@ func (s *PG) Runs(ctx context.Context, limit int) (RunsSnapshot, error) {
 	}
 	const q = `
 		SELECT id, started_at, completed_at, commit_sha, stage, status,
-		       files_processed, symbols_extracted, edges_created
+		       files_processed, symbols_extracted, edges_created,
+		       COALESCE(provider_embed, ''),
+		       COALESCE(provider_summarize, ''),
+		       metrics,
+		       COALESCE(error_text, '')
 		FROM index_runs ORDER BY id DESC LIMIT $1
 	`
 	rows, err := s.pool.Query(ctx, q, limit)
@@ -215,13 +220,21 @@ func (s *PG) Runs(ctx context.Context, limit int) (RunsSnapshot, error) {
 	for rows.Next() {
 		var r IndexRun
 		var completed sql.NullTime
+		var metricsRaw []byte
 		if err := rows.Scan(&r.ID, &r.StartedAt, &completed, &r.CommitSHA, &r.Stage, &r.Status,
-			&r.FilesProcessed, &r.SymbolsExtracted, &r.EdgesCreated); err != nil {
+			&r.FilesProcessed, &r.SymbolsExtracted, &r.EdgesCreated,
+			&r.ProviderEmbed, &r.ProviderSummarize, &metricsRaw, &r.ErrorText); err != nil {
 			return RunsSnapshot{}, fmt.Errorf("store: runs scan: %w", err)
 		}
 		if completed.Valid {
 			t := completed.Time
 			r.CompletedAt = &t
+		}
+		trimmed := strings.TrimSpace(string(metricsRaw))
+		if trimmed != "" && trimmed != "{}" {
+			if err := json.Unmarshal(metricsRaw, &r.Metrics); err != nil {
+				r.Metrics = nil // best-effort; ignore parse errors
+			}
 		}
 		runs = append(runs, r)
 	}

@@ -52,15 +52,19 @@ type StorageSnapshot struct {
 }
 
 type IndexRun struct {
-	ID               int64
-	StartedAt        time.Time
-	CompletedAt      *time.Time
-	CommitSHA        string
-	Stage            string
-	Status           string
-	FilesProcessed   int
-	SymbolsExtracted int
-	EdgesCreated     int
+	ID                int64
+	StartedAt         time.Time
+	CompletedAt       *time.Time
+	CommitSHA         string
+	Stage             string
+	Status            string
+	FilesProcessed    int
+	SymbolsExtracted  int
+	EdgesCreated      int
+	ProviderEmbed     string         // NEW
+	ProviderSummarize string         // NEW
+	Metrics           map[string]any // NEW
+	ErrorText         string         // NEW
 }
 
 func (r IndexRun) Duration() time.Duration {
