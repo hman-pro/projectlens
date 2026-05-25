@@ -56,15 +56,18 @@ func runMultiProject(ctx context.Context, projectsPath string, port int) error {
 	cleanups := []func(){}
 
 	for _, p := range reg.Projects {
+		mount := "/" + p.Slug + "/mcp"
 		rt, err := projects.Resolve(ctx, reg, p.Slug)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warn: project %q not ready: %v\n", p.Slug, err)
+			stub := mcpserver.NotReadyHandler(p.Slug, err)
+			mux.Handle(mount, stub)
+			mux.Handle(mount+"/", stub)
 			continue
 		}
 		cleanups = append(cleanups, rt.Close)
 
 		srv := buildProjectServer(rt, port)
-		mount := "/" + p.Slug + "/mcp"
 		handler := srv.Handler()
 		mux.Handle(mount, http.StripPrefix(mount, handler))
 		mux.Handle(mount+"/", http.StripPrefix(mount, handler))
