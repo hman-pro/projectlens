@@ -7,7 +7,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/tui/jobs"
 )
 
-func TestBuildArgs_AppendsConfigDBRepo(t *testing.T) {
+func TestBuildArgs_LegacyAppendsConfigDBRepo(t *testing.T) {
 	target := jobs.RunnerTarget{
 		BinaryPath:  "/bin/projectlens",
 		ConfigPath:  "/etc/index.yaml",
@@ -23,7 +23,48 @@ func TestBuildArgs_AppendsConfigDBRepo(t *testing.T) {
 		"--repo", "/repos/ingest",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("BuildArgs mismatch\n got: %v\nwant: %v", got, want)
+		t.Fatalf("legacy BuildArgs mismatch\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestBuildArgs_ProjectMode(t *testing.T) {
+	target := jobs.RunnerTarget{
+		ConfigPath:   "/c",
+		DatabaseURL:  "/d",
+		RepoPath:     "/r-ignored", // not appended in project mode
+		ProjectSlug:  "ingest",
+		ProjectsPath: "configs/projects.yaml",
+	}
+	spec := jobs.Spec{Args: []string{"reindex"}}
+	got := jobs.BuildArgs(spec, target)
+	want := []string{
+		"reindex",
+		"--config", "/c",
+		"--db", "/d",
+		"--project", "ingest",
+		"--projects", "configs/projects.yaml",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("project BuildArgs mismatch\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestBuildArgs_ProjectModeWithoutProjectsPath(t *testing.T) {
+	target := jobs.RunnerTarget{
+		ConfigPath:  "/c",
+		DatabaseURL: "/d",
+		ProjectSlug: "ingest",
+	}
+	spec := jobs.Spec{Args: []string{"reindex"}}
+	got := jobs.BuildArgs(spec, target)
+	want := []string{
+		"reindex",
+		"--config", "/c",
+		"--db", "/d",
+		"--project", "ingest",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("project (no projects path) mismatch\n got: %v\nwant: %v", got, want)
 	}
 }
 

@@ -60,8 +60,10 @@ func (s Spec) Valid() bool {
 // process targeting the same database, repo, and config the TUI is
 // currently rendering.
 type RunnerTarget struct {
-	BinaryPath  string
-	ConfigPath  string
-	DatabaseURL string
-	RepoPath    string
+	BinaryPath   string
+	ConfigPath   string
+	DatabaseURL  string
+	RepoPath     string
+	ProjectSlug  string // when non-empty, child CLI gets --project <slug>
+	ProjectsPath string // when non-empty, child CLI gets --projects <path>
 }
