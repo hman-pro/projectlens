@@ -176,15 +176,28 @@ func newReindexCmd() *cobra.Command {
 func newMigrateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "migrate",
-		Short: "Apply pending SQL migrations against the configured database",
+		Short: "Apply pending SQL migrations (per project schema when --project is set)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, _, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
+			}
+			projectMode, err := validateMutex(cmd)
+			if err != nil {
+				return err
+			}
+			if projectMode {
+				if err := migrateProjectSchemaFromFlags(ctx, cmd); err != nil {
+					return err
+				}
+				slug, _ := cmd.Flags().GetString("project")
+				fmt.Printf("migrations up to date (project %s)\n", slug)
+				return nil
+			}
+			// Legacy path.
+			cfg, _, err := loadCmdConfig(cmd)
+			if err != nil {
+				return err
 			}
 			db, err := storage.Connect(ctx, cfg.DatabaseURL)
 			if err != nil {
@@ -194,7 +207,7 @@ func newMigrateCmd() *cobra.Command {
 			if err := db.Migrate(ctx, findMigrationsDir()); err != nil {
 				return fmt.Errorf("running migrations: %w", err)
 			}
-			fmt.Println("migrations up to date")
+			fmt.Println("migrations up to date (public schema)")
 			return nil
 		},
 	}

@@ -79,3 +79,7 @@ func TestKnowledgeDeleteRejectsProjectAndRepo(t *testing.T) {
 func TestKnowledgeSearchRejectsProjectAndRepo(t *testing.T) {
 	expectMutex(t, runWithFlags(t, newKnowledgeSearchCmd, "q", "--project", "foo", "--repo", "/tmp"))
 }
+
+func TestMigrateRejectsProjectAndRepo(t *testing.T) {
+	expectMutex(t, runWithFlags(t, newMigrateCmd, "--project", "foo", "--repo", "/tmp"))
+}
