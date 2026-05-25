@@ -16,7 +16,7 @@ var stageMissingAction = map[string]string{
 	"datastore": "run projectlens index-datastore",
 }
 
-func deriveDegradation(stages map[string]indexstate.StageFreshness, providers []indexstate.ProviderHealth) []StageDegradation {
+func deriveDegradation(stages map[string]StageDetail, providers []indexstate.ProviderHealth) []StageDegradation {
 	var out []StageDegradation
 	for _, s := range stageOrder {
 		st, ok := stages[s]
@@ -52,7 +52,7 @@ func deriveDegradation(stages map[string]indexstate.StageFreshness, providers []
 	return out
 }
 
-func stageHealthy(stages map[string]indexstate.StageFreshness, stage string) bool {
+func stageHealthy(stages map[string]StageDetail, stage string) bool {
 	st, ok := stages[stage]
 	if !ok {
 		return false

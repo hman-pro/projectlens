@@ -13,19 +13,19 @@ import (
 // Report is the typed summary returned by Builder.Build. Renderers turn
 // this into Markdown or JSON; the builder never formats output.
 type Report struct {
-	GeneratedAt  time.Time                            `json:"generated_at"`
-	RepoPath     string                               `json:"repo_path,omitempty"`
-	Git          indexstate.GitState                  `json:"git"`
-	Stages       map[string]indexstate.StageFreshness `json:"stages"`
-	Providers    []indexstate.ProviderHealth          `json:"providers"`
-	TopPackages  []storage.PackageStat                `json:"top_packages"`
-	TopTables    []storage.TableStat                  `json:"top_tables"`
-	HighCoupling []storage.CouplingPair               `json:"high_coupling"`
-	EdgeTrust    []storage.EdgeConfidenceStat         `json:"edge_trust"`
-	Knowledge    KnowledgeInventory                   `json:"knowledge"`
-	Degraded     []StageDegradation                   `json:"degraded"`
-	Suggestions  []AgentQuestion                      `json:"suggestions"`
-	WriterActive bool                                 `json:"writer_active"`
+	GeneratedAt  time.Time                    `json:"generated_at"`
+	RepoPath     string                       `json:"repo_path,omitempty"`
+	Git          indexstate.GitState          `json:"git"`
+	Stages       map[string]StageDetail       `json:"stages"`
+	Providers    []indexstate.ProviderHealth  `json:"providers"`
+	TopPackages  []storage.PackageStat        `json:"top_packages"`
+	TopTables    []storage.TableStat          `json:"top_tables"`
+	HighCoupling []storage.CouplingPair       `json:"high_coupling"`
+	EdgeTrust    []storage.EdgeConfidenceStat `json:"edge_trust"`
+	Knowledge    KnowledgeInventory           `json:"knowledge"`
+	Degraded     []StageDegradation           `json:"degraded"`
+	Suggestions  []AgentQuestion              `json:"suggestions"`
+	WriterActive bool                         `json:"writer_active"`
 }
 
 type KnowledgeInventory struct {
@@ -78,7 +78,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	r := &Report{
 		GeneratedAt: time.Now().UTC(),
 		RepoPath:    b.repoPath,
-		Stages:      map[string]indexstate.StageFreshness{},
+		Stages:      map[string]StageDetail{},
 		Knowledge:   KnowledgeInventory{CountsByCategory: map[string]int{}},
 	}
 
@@ -87,18 +87,28 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		return nil, fmt.Errorf("report: latest runs: %w", err)
 	}
 	for stage, run := range byStage {
-		st := indexstate.StageFreshness{
+		freshness := indexstate.StageFreshness{
 			Stage:          stage,
 			Status:         run.Status,
 			CommitSHA:      run.CommitSHA,
 			StartedAt:      run.StartedAt.Format(time.RFC3339),
 			FilesProcessed: run.FilesProcessed,
 		}
-		if run.CompletedAt != nil {
-			st.CompletedAt = run.CompletedAt.Format(time.RFC3339)
-			st.AgeMinutes = time.Since(*run.CompletedAt).Minutes()
+		detail := StageDetail{
+			StageFreshness: freshness,
+			Providers: StageProviders{
+				Embed:     run.ProviderEmbed,
+				Summarize: run.ProviderSummarize,
+			},
+			Metrics: run.Metrics,
+			Error:   run.ErrorText,
 		}
-		r.Stages[stage] = st
+		if run.CompletedAt != nil {
+			detail.CompletedAt = run.CompletedAt.Format(time.RFC3339)
+			detail.AgeMinutes = time.Since(*run.CompletedAt).Minutes()
+			detail.DurationSeconds = run.CompletedAt.Sub(run.StartedAt).Seconds()
+		}
+		r.Stages[stage] = detail
 	}
 
 	r.Providers = b.inspector.ProbeProviders(ctx)

@@ -3,8 +3,10 @@ package report
 import (
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 // MarkdownRenderer writes the Report as Markdown intended for direct
@@ -29,17 +31,43 @@ func (MarkdownRenderer) Render(w io.Writer, r *Report) error {
 	}
 	fmt.Fprintf(&b, "**Writer active:** %s\n\n", yesNo(r.WriterActive))
 
-	b.WriteString("## Index Freshness\n\n")
-	b.WriteString("| Stage | Status | Completed | Age (min) | Files |\n")
-	b.WriteString("|-------|--------|-----------|-----------|-------|\n")
-	for _, s := range []string{"code", "summarize", "embed", "history", "datastore"} {
+	b.WriteString("## Stages\n\n")
+	b.WriteString("| Stage | Status | Last Run (UTC) | Age | Provider | Metrics | Error |\n")
+	b.WriteString("|-------|--------|----------------|-----|----------|---------|-------|\n")
+	// Render known stages first in canonical order, then any extras alphabetically.
+	knownOrder := []string{"code", "embed", "summarize", "history", "datastore"}
+	seen := make(map[string]bool)
+	var extraStages []string
+	for _, s := range knownOrder {
+		seen[s] = true
+	}
+	for s := range r.Stages {
+		if !seen[s] {
+			extraStages = append(extraStages, s)
+		}
+	}
+	sort.Strings(extraStages)
+	allStages := append(knownOrder, extraStages...)
+	for _, s := range allStages {
 		st, ok := r.Stages[s]
 		if !ok {
-			fmt.Fprintf(&b, "| %s | (none) | | | |\n", s)
+			fmt.Fprintf(&b, "| %s | (none) | | | | | |\n", s)
 			continue
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %.0f | %d |\n",
-			st.Stage, st.Status, st.CompletedAt, st.AgeMinutes, st.FilesProcessed)
+		lastRun := ""
+		if st.CompletedAt != "" {
+			if t, err := time.Parse(time.RFC3339, st.CompletedAt); err == nil {
+				lastRun = t.UTC().Format("2006-01-02 15:04 MST")
+			} else {
+				lastRun = st.CompletedAt
+			}
+		}
+		age := formatAge(st.AgeMinutes)
+		provider := formatStageProviders(st.Providers)
+		metrics := formatMetrics(st.Metrics)
+		errCell := formatError(st.Error)
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n",
+			s, st.Status, lastRun, age, provider, metrics, errCell)
 	}
 	b.WriteString("\n")
 
@@ -148,4 +176,68 @@ func yesNo(b bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+// formatAge converts AgeMinutes to a human-readable string like "12m", "2h", "3d".
+// Returns an empty string when age is zero (stage not completed yet).
+func formatAge(ageMinutes float64) string {
+	if ageMinutes <= 0 {
+		return ""
+	}
+	mins := int(math.Round(ageMinutes))
+	if mins < 60 {
+		return fmt.Sprintf("%dm", mins)
+	}
+	hours := mins / 60
+	if hours < 48 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dd", hours/24)
+}
+
+// formatStageProviders renders the provider cell. Returns "-" when both fields
+// are empty.
+func formatStageProviders(p StageProviders) string {
+	var parts []string
+	if p.Embed != "" {
+		parts = append(parts, "embed="+p.Embed)
+	}
+	if p.Summarize != "" {
+		parts = append(parts, "sum="+p.Summarize)
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatMetrics renders the metrics map as sorted "key=value" pairs joined by
+// spaces. Returns "-" when the map is nil or empty.
+func formatMetrics(m map[string]any) string {
+	if len(m) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = fmt.Sprintf("%s=%v", k, m[k])
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatError truncates error text to 200 chars with an ellipsis suffix.
+// Returns an empty string when errText is empty.
+func formatError(errText string) string {
+	if errText == "" {
+		return ""
+	}
+	const maxLen = 200
+	if len(errText) <= maxLen {
+		return errText
+	}
+	return errText[:maxLen] + "…"
 }

@@ -7,10 +7,19 @@ import (
 	"github.com/hman-pro/projectlens/internal/storage"
 )
 
-func TestDeriveDegradation_MissingStagesUseRealCommands(t *testing.T) {
-	stages := map[string]indexstate.StageFreshness{
-		"code": {Stage: "code", Status: "completed", AgeMinutes: 5},
+// freshStages is a test helper that wraps StageFreshness values in StageDetail.
+func freshStages(pairs map[string]indexstate.StageFreshness) map[string]StageDetail {
+	out := make(map[string]StageDetail, len(pairs))
+	for k, v := range pairs {
+		out[k] = StageDetail{StageFreshness: v}
 	}
+	return out
+}
+
+func TestDeriveDegradation_MissingStagesUseRealCommands(t *testing.T) {
+	stages := freshStages(map[string]indexstate.StageFreshness{
+		"code": {Stage: "code", Status: "completed", AgeMinutes: 5},
+	})
 	got := deriveDegradation(stages, nil)
 	wantSuggested := map[string]string{
 		"summarize": "run projectlens index-summarize",
@@ -33,7 +42,7 @@ func TestDeriveDegradation_MissingStagesUseRealCommands(t *testing.T) {
 }
 
 func TestDeriveDegradation_MissingCodeUsesReindex(t *testing.T) {
-	got := deriveDegradation(map[string]indexstate.StageFreshness{}, nil)
+	got := deriveDegradation(map[string]StageDetail{}, nil)
 	for _, d := range got {
 		if d.Stage == "code" {
 			if d.SuggestedAction != "run projectlens reindex" {
@@ -46,13 +55,13 @@ func TestDeriveDegradation_MissingCodeUsesReindex(t *testing.T) {
 }
 
 func TestDeriveDegradation_ProviderErrorAndNotConfigured(t *testing.T) {
-	stages := map[string]indexstate.StageFreshness{
+	stages := freshStages(map[string]indexstate.StageFreshness{
 		"code":      {Stage: "code", Status: "completed"},
 		"summarize": {Stage: "summarize", Status: "completed"},
 		"embed":     {Stage: "embed", Status: "completed"},
 		"history":   {Stage: "history", Status: "completed"},
 		"datastore": {Stage: "datastore", Status: "completed"},
-	}
+	})
 	providers := []indexstate.ProviderHealth{
 		{Role: "embedder", Provider: "ollama", State: "reachable"},
 		{Role: "summarizer", Provider: "anthropic", State: "error", Error: "rate limited"},
@@ -77,13 +86,13 @@ func TestDeriveDegradation_ProviderErrorAndNotConfigured(t *testing.T) {
 }
 
 func TestDeriveDegradation_StageOlderThan24h(t *testing.T) {
-	stages := map[string]indexstate.StageFreshness{
+	stages := freshStages(map[string]indexstate.StageFreshness{
 		"code":      {Stage: "code", Status: "completed", AgeMinutes: 25 * 60},
 		"summarize": {Stage: "summarize", Status: "completed", AgeMinutes: 10},
 		"embed":     {Stage: "embed", Status: "completed", AgeMinutes: 10},
 		"history":   {Stage: "history", Status: "completed", AgeMinutes: 10},
 		"datastore": {Stage: "datastore", Status: "completed", AgeMinutes: 10},
-	}
+	})
 	got := deriveDegradation(stages, nil)
 	for _, d := range got {
 		if d.Stage == "code" && d.SuggestedAction == "run projectlens reindex" {
@@ -95,11 +104,11 @@ func TestDeriveDegradation_StageOlderThan24h(t *testing.T) {
 
 func TestDeriveSuggestions_OnlyForHealthyStages(t *testing.T) {
 	r := &Report{
-		Stages: map[string]indexstate.StageFreshness{
+		Stages: freshStages(map[string]indexstate.StageFreshness{
 			"datastore": {Stage: "datastore", Status: "completed", AgeMinutes: 5},
 			"history":   {Stage: "history", Status: "completed", AgeMinutes: 5},
 			"code":      {Stage: "code", Status: "completed", AgeMinutes: 5},
-		},
+		}),
 		TopTables:    []storage.TableStat{{Schema: "public", Name: "orders"}},
 		HighCoupling: []storage.CouplingPair{{FileA: "a.go", FileB: "b.go", CoChangeCount: 5}},
 		TopPackages:  []storage.PackageStat{{ImportPath: "pkg/a", SymbolCount: 3, FileCount: 2}},

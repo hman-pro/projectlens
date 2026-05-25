@@ -15,8 +15,8 @@ func fixtureReport() *Report {
 		GeneratedAt: time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC),
 		RepoPath:    "/tmp/repo",
 		Git:         indexstate.GitState{Head: "abc123", Dirty: true},
-		Stages: map[string]indexstate.StageFreshness{
-			"code": {Stage: "code", Status: "completed", AgeMinutes: 5},
+		Stages: map[string]StageDetail{
+			"code": {StageFreshness: indexstate.StageFreshness{Stage: "code", Status: "completed", AgeMinutes: 5}},
 		},
 		Providers:    []indexstate.ProviderHealth{{Role: "embedder", Provider: "ollama", State: "reachable"}},
 		TopPackages:  []storage.PackageStat{{ImportPath: "pkg/a", SymbolCount: 3, FileCount: 2}},

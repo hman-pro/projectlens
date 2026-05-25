@@ -14,7 +14,7 @@ func TestMarkdownRenderer_SectionsPresent(t *testing.T) {
 	s := buf.String()
 	for _, header := range []string{
 		"# ProjectLens Report",
-		"## Index Freshness",
+		"## Stages",
 		"## Providers",
 		"## Top Packages",
 		"## Top Datastore Tables",
