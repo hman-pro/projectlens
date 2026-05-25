@@ -111,20 +111,16 @@ look live).`,
 			if !force {
 				return fmt.Errorf("refusing to unlock without --force")
 			}
-			cfg, _, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
+				return err
 			}
-			defer db.Close()
-			return writelock.ForceUnlock(ctx, db)
+			defer cs.Close()
+			return writelock.ForceUnlock(ctx, cs.DB())
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "required acknowledgement")

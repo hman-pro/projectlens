@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hman-pro/projectlens/internal/export"
-	"github.com/hman-pro/projectlens/internal/storage"
 )
 
 func newExportCmd() *cobra.Command {
@@ -41,15 +40,14 @@ func newExportGraphCmd() *cobra.Command {
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			cfg, repoPath, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
+			cfg := cs.Config()
+			repoPath := cs.RepoPath()
 
 			insp := buildInspector(cfg, db, repoPath)
 

@@ -207,16 +207,12 @@ func newStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			run, err := db.GetLatestRun(ctx)
 			if err != nil {
@@ -260,16 +256,12 @@ func newInspectSymbolCmd() *cobra.Command {
 			ctx := context.Background()
 			symbolName := args[0]
 
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			results, err := retrieval.LexicalSearch(ctx, db, symbolName, 10)
 			if err != nil {
@@ -360,16 +352,12 @@ func newInspectPackageCmd() *cobra.Command {
 			ctx := context.Background()
 			packageName := args[0]
 
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			summary, err := db.GetSummaryByPackage(ctx, packageName)
 			if err != nil {
@@ -419,16 +407,13 @@ func newQueryCmd() *cobra.Command {
 			ctx := context.Background()
 			queryText := args[0]
 
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
+			cfg := cs.Config()
 
 			var embedder retrieval.QueryEmbedder
 			switch cfg.Embeddings.Provider {
