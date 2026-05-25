@@ -56,12 +56,12 @@ func TestContextSourceUpsertAndState(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	cur := "2026-05-25T00:00:00Z"
 	st := &ContextSourceStateRecord{
-		SourceID:           src.ID,
-		Stream:             "prs",
-		CursorKind:         "updated_at",
-		CursorValue:        &cur,
-		LastSuccessfulAt:   &now,
-		Metadata:           []byte(`{}`),
+		SourceID:         src.ID,
+		Stream:           "prs",
+		CursorKind:       "updated_at",
+		CursorValue:      &cur,
+		LastSuccessfulAt: &now,
+		Metadata:         []byte(`{}`),
 	}
 	if err := db.UpsertContextSourceState(ctx, st); err != nil {
 		t.Fatalf("upsert state: %v", err)

@@ -9,13 +9,13 @@ import (
 
 // ContextParticipantRecord maps to a row in context_participants.
 type ContextParticipantRecord struct {
-	ID         int64           `json:"id"`
-	ItemID     int64           `json:"item_id"`
-	PersonID   *int64          `json:"person_id,omitempty"`
-	IdentityID *int64          `json:"identity_id,omitempty"`
-	Role       string          `json:"role"`
-	SourceRole *string         `json:"source_role,omitempty"`
-	OccurredAt *time.Time      `json:"occurred_at,omitempty"`
+	ID         int64      `json:"id"`
+	ItemID     int64      `json:"item_id"`
+	PersonID   *int64     `json:"person_id,omitempty"`
+	IdentityID *int64     `json:"identity_id,omitempty"`
+	Role       string     `json:"role"`
+	SourceRole *string    `json:"source_role,omitempty"`
+	OccurredAt *time.Time `json:"occurred_at,omitempty"`
 	// IsCurrent is *bool so the SQL `NOT NULL DEFAULT TRUE` applies when nil.
 	// Set to &falseVar to explicitly write false.
 	IsCurrent   *bool           `json:"is_current,omitempty"`
