@@ -99,6 +99,50 @@ Default endpoint:
 http://localhost:8484/mcp
 ```
 
+### Configuration: Multiple Projects
+
+By default ProjectLens runs in single-project mode against the `public`
+Postgres schema. To index several repositories from the same Postgres
+database, drop a registry at `configs/projects.yaml`:
+
+```yaml
+database_url: postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable
+default_project: projectlens
+projects:
+  - slug: projectlens
+    storage_schema: projectlens
+    repo_path: /Users/you/source/projectlens
+    config_path: configs/index.yaml
+  - slug: ingest
+    storage_schema: ingest
+    repo_path: /Users/you/source/example-org/ingest
+```
+
+See [`configs/projects.example.yaml`](configs/projects.example.yaml) for an
+annotated template. Each project gets its own Postgres schema; the
+`pgvector` extension stays global in `public`.
+
+With the registry in place, write commands take `--project <slug>`:
+
+```bash
+./bin/projectlens migrate --project projectlens
+./bin/projectlens index-all --project projectlens
+```
+
+`--project` and the legacy `--repo` flag are mutually exclusive. Omit
+both (and the registry) to keep the single-project flow.
+
+The MCP server then mounts one endpoint per project:
+
+```text
+http://localhost:8484/projectlens/mcp
+http://localhost:8484/ingest/mcp
+```
+
+Full details — registry validation, MCP routing (404 / 503), TUI env vars,
+and per-project commands — live in
+[`docs/operations.md#projects`](docs/operations.md#projects).
+
 ### 4. Connect An Agent
 
 Use [`docs/AGENT_SETUP.md`](docs/AGENT_SETUP.md) for Claude Code, Cursor, Codex, and other MCP clients.

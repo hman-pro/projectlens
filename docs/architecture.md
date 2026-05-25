@@ -51,6 +51,43 @@ flowchart LR
 | Summaries | `summaries`, file heuristic summaries | `index-summarize`, code indexer | package context, reports, MCP responses |
 | Runs and locks | `index_runs`, `index_locks` | all mutating indexer commands | `status`, `index_status`, TUI pipeline/jobs |
 
+### Multi-Project Storage Layout
+
+ProjectLens can host several Go repositories in a single Postgres database
+by giving each project its own storage schema. When `configs/projects.yaml`
+is present, the same process serves N MCP mounts — one Streamable HTTP
+endpoint per registered project — backed by one schema each.
+
+```mermaid
+flowchart LR
+    MCP["projectlens-mcp<br/>one process"]
+    Mount1["/projectlens/mcp"]
+    Mount2["/ingest/mcp"]
+    DB[("Postgres 16<br/>pgvector (public)")]
+    SchemaA[("schema: projectlens<br/>files, symbols, edges, ...")]
+    SchemaB[("schema: ingest<br/>files, symbols, edges, ...")]
+
+    MCP --> Mount1
+    MCP --> Mount2
+    Mount1 --> SchemaA
+    Mount2 --> SchemaB
+    SchemaA --> DB
+    SchemaB --> DB
+```
+
+Identity (`slug`, `storage_schema`, `repo_path`) lives in the project
+registry (`configs/projects.yaml`, parsed by
+[`internal/projects/`](../internal/projects/)). The multi-mount HTTP layer
+in [`cmd/projectlens-mcp/main.go`](../cmd/projectlens-mcp/main.go) resolves
+one `projects.Runtime` per project, each owning a
+`storage.ConnectScoped` pgxpool pinned to its schema via `AfterConnect`.
+
+Without a registry, ProjectLens falls back to legacy single-project mode:
+one MCP mount at `/mcp` against the `public` schema. See
+[`docs/operations.md`](operations.md#projects) for usage and the
+[`docs/internals.md`](internals.md#per-project-schema-isolation) section
+for `ConnectScoped` / `MigrateInSchema` mechanics.
+
 Edges carry two trust axes alongside the numeric `confidence` score:
 
 - `provenance` — which producer wrote the edge (`parser`, `callgraph`, `sql_scanner`, `history`, `knowledge`, `docs`).
@@ -112,6 +149,7 @@ Use these files before updating docs or behavior:
 | TUI navigation keys | `internal/tui/app/keys.go` |
 | TUI action keys | `internal/tui/jobs/registry.go` |
 | Schema | `migrations/*.up.sql` |
+| Project registry | `configs/projects.yaml` (example: `configs/projects.example.yaml`) + `internal/projects/` |
 | Edge trust vocabulary and writer rules | `docs/2026-05-22-confidence-and-provenance-design.md` |
 | Agent setup | `agent/` and `docs/AGENT_SETUP.md` |
 

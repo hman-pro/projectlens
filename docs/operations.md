@@ -272,15 +272,114 @@ Docker environment:
 | `PROJECTLENS_DB_PORT` | Host Postgres port, default `5433`. |
 | `PROJECTLENS_MCP_PORT` | Host MCP port, default `8484`. |
 
+### Projects
+
+ProjectLens supports indexing several Go repositories from a single Postgres
+database by giving each project its own storage schema. The single-process
+MCP server then mounts one endpoint per project under `/{slug}/mcp`.
+
+If no `configs/projects.yaml` is present, ProjectLens runs in legacy
+single-project mode against the `public` schema — `--repo` / `REPO_PATH`
+keep working as before and the MCP server keeps serving `/mcp`.
+
+#### Project registry
+
+The registry lives at `configs/projects.yaml`. The shape (see
+[`configs/projects.example.yaml`](../configs/projects.example.yaml)) is:
+
+```yaml
+database_url: postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable
+default_project: projectlens
+projects:
+  - slug: projectlens              # lowercase URL/CLI identifier
+    storage_schema: projectlens    # Postgres schema (must match ^[a-z][a-z0-9_]*$, not `public`/`pg_*`)
+    repo_path: /Users/you/source/projectlens
+    config_path: configs/index.yaml   # optional; provider/indexing settings
+```
+
+Each project gets its own Postgres schema. `repo_path` and `storage_schema`
+always come from the registry; `config_path` supplies indexing/provider
+settings only, never identity.
+
+Inspect the registry:
+
+```bash
+./bin/projectlens projects list --projects configs/projects.yaml
+./bin/projectlens projects validate --projects configs/projects.yaml
+```
+
+`--projects` defaults to `configs/projects.yaml`; pass it only when the
+registry lives elsewhere.
+
+#### Project-aware write commands
+
+Every mutating CLI (`bootstrap`, `reindex`, `index-all`, `index-datastore`,
+`index-history`, `index-embed`, `index-summarize`, `index-backfill-provenance`,
+`migrate`, `unlock`) accepts `--project <slug>`:
+
+```bash
+./bin/projectlens migrate --project projectlens
+./bin/projectlens bootstrap --project projectlens
+./bin/projectlens index-all --project projectlens
+./bin/projectlens reindex --project projectlens
+```
+
+`--project` and `--repo` are mutually exclusive — the CLI rejects requests
+that pass both. Omit `--project` and skip `configs/projects.yaml` to keep
+the legacy `--repo`/`public` flow.
+
+`projectlens migrate --project <slug>` creates the schema if missing,
+records `schema_migrations` rows inside that schema, and is idempotent.
+The `pgvector` extension is database-global (lives in `public`); only the
+project tables are schema-local.
+
+#### MCP routing
+
+When `configs/projects.yaml` exists, `projectlens-mcp` mounts one MCP
+endpoint per project:
+
+```text
+http://localhost:8484/projectlens/mcp
+http://localhost:8484/<slug>/mcp
+```
+
+Without a registry, the server keeps the legacy `http://localhost:8484/mcp`
+mount. Behavior summary:
+
+| Request | Response |
+|---|---|
+| `/{slug}/mcp` where `<slug>` is registered and migrated | Streamable HTTP MCP for that project. |
+| `/{slug}/mcp` where `<slug>` is registered but the storage schema is missing | HTTP 503 with a JSON `hint` pointing at `projectlens migrate --project <slug>`. |
+| Any other path (unknown slug or stray URL) | HTTP 404. |
+
+A broken project does not prevent the other endpoints from serving.
+
+The MCP server is local-only and unauthenticated; do not expose it to a
+network you do not control.
+
+#### TUI
+
+The TUI honors two environment variables:
+
+| Variable | Effect |
+|---|---|
+| `PROJECT` | Resolves the active project slug. If unset, the TUI falls back to `default_project` from the registry, or to legacy mode when no registry exists. |
+| `PROJECTS_PATH` | Overrides the registry path (default `configs/projects.yaml`). |
+
+The TUI threads `--project <slug>` into every job it launches, so writer-
+lock and migration semantics match the CLI path.
+
 ### Migration
 
 ```bash
 make migrate
 # or
 ./bin/projectlens migrate --db "$DATABASE_URL"
+# or per project
+./bin/projectlens migrate --project <slug>
 ```
 
-`bootstrap` also applies migrations before indexing. Use `migrate` to catch up an existing database without reindexing.
+`bootstrap` also applies migrations before indexing. Use `migrate` to catch up an existing database without reindexing. With `--project`, migrations run inside the project's storage schema; without it, the legacy `public` schema is used.
 
 `index-backfill-provenance` is an idempotent post-migration repair command for edge rows that pre-date migration 006 or were written by older/broken producers. It performs partial-field repair via `COALESCE` — rows are touched when **either** `provenance` or `confidence_class` is NULL, and an already-set value on the other column is preserved. Per-edge-type defaults live in `cmd/projectlens/main.go::edgeProvenanceDefaults`; see `docs/2026-05-22-confidence-and-provenance-design.md` for the design rationale and full vocabulary. Re-runs on a fully-filled set update zero rows.
 

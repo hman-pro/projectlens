@@ -2,7 +2,8 @@
 
 How to wire ProjectLens into your AI coding assistant. This is the **end-user
 guide** — you've already followed the [Quick Start](../README.md#quick-start)
-and your MCP server is running at `http://localhost:8484/mcp`.
+and your MCP server is running on `http://localhost:8484` (path depends on
+single- vs. multi-project mode — see [Connect Your Agent](#connect-your-agent)).
 
 If you're here to **contribute** to ProjectLens itself, see
 [`CLAUDE.md`](../CLAUDE.md) instead. If you need the system map before
@@ -26,14 +27,39 @@ server, CLI, TUI, Docker, and troubleshooting commands, see
 ## Connect Your Agent
 
 ProjectLens works with any agent that supports the [Model Context
-Protocol](https://modelcontextprotocol.io). The exact configuration step
-depends on which agent you use, but the URL is always the same:
-**`http://localhost:8484/mcp`** (Streamable HTTP transport).
+Protocol](https://modelcontextprotocol.io). The MCP URL depends on whether
+you've set up a project registry:
+
+| Mode | URL shape |
+|---|---|
+| Multi-project (`configs/projects.yaml` present) | `http://localhost:8484/<slug>/mcp` — one endpoint per registered project. |
+| Legacy single-project (no registry) | `http://localhost:8484/mcp`. |
+
+See [`docs/operations.md#projects`](operations.md#projects) for the
+registry format and per-project commands.
 
 ### Claude Code
 
 Add to your Claude Code MCP configuration (typically `~/.claude.json` or per-
-project `.claude/mcp.json`):
+project `.claude/mcp.json`). Replace `<slug>` with the project slug from
+`configs/projects.yaml`:
+
+```json
+{
+  "mcpServers": {
+    "projectlens": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:8484/<slug>/mcp"]
+    }
+  }
+}
+```
+
+To wire multiple projects, register multiple servers (`projectlens-foo`,
+`projectlens-bar`) each pointing at its own `/{slug}/mcp` URL.
+
+**Legacy single-project mode.** If you have not created
+`configs/projects.yaml`, use the legacy URL instead:
 
 ```json
 {
@@ -46,15 +72,17 @@ project `.claude/mcp.json`):
 }
 ```
 
-A ready-to-copy version lives at [`agent/claude/mcp-config.json`](../agent/claude/mcp-config.json).
+A ready-to-copy legacy version lives at
+[`agent/claude/mcp-config.json`](../agent/claude/mcp-config.json).
 
 ### Cursor
 
 Settings → MCP → **Add new MCP server**. Fill in:
 
-- **Name:** `projectlens`
+- **Name:** `projectlens` (or `projectlens-<slug>` when running multiple projects)
 - **Type:** `streamable-http`
-- **URL:** `http://localhost:8484/mcp`
+- **URL:** `http://localhost:8484/<slug>/mcp` (multi-project) or
+  `http://localhost:8484/mcp` (legacy single-project mode)
 
 Cursor will list the 10 ProjectLens tools the next time you open the agent
 panel.
@@ -69,13 +97,16 @@ implicitly).
    in the config and skip the global install.
 2. Add to `~/.codex/config.toml` (see
    [`agent/codex/config.toml.snippet`](../agent/codex/config.toml.snippet)
-   in this repo):
+   in this repo). Replace `<slug>` with the project slug:
 
    ```toml
    [mcp_servers.projectlens]
    command = "npx"
-   args = ["-y", "mcp-remote", "http://localhost:8484/mcp"]
+   args = ["-y", "mcp-remote", "http://localhost:8484/<slug>/mcp"]
    ```
+
+   **Legacy single-project mode** — use `http://localhost:8484/mcp` instead
+   of `/<slug>/mcp` when no `configs/projects.yaml` is present.
 
 3. Restart Codex. The 10 ProjectLens tools appear in the tool list.
 
@@ -99,9 +130,10 @@ audit trail distinguishes agents.
 
 Any client that supports Streamable HTTP MCP works (Cline, Continue,
 Windsurf, Zed, custom agents built on the Anthropic / OpenAI SDKs, ...).
-Point it at `http://localhost:8484/mcp` — that one URL is everything the
-agent needs. The server exposes 10 tools the agent loop can call like any
-function-calling tool.
+Point it at `http://localhost:8484/<slug>/mcp` (multi-project mode) or
+`http://localhost:8484/mcp` (legacy single-project mode) — that one URL
+is everything the agent needs. The server exposes 10 tools the agent loop
+can call like any function-calling tool.
 
 ---
 
@@ -273,9 +305,13 @@ busy errors, and missing TUI binaries are covered in
 
 ### The agent isn't using ProjectLens
 
-- Confirm the MCP server is reachable: `curl http://localhost:8484/mcp`
+- Confirm the MCP server is reachable: `curl http://localhost:8484/<slug>/mcp`
+  (multi-project) or `curl http://localhost:8484/mcp` (legacy single-project)
   should respond (probably with a 405 or upgrade hint — that's fine, it
-  means the port is open and the server is alive).
+  means the port is open and the server is alive). HTTP 503 from a
+  multi-project URL means the schema has not been migrated yet — run
+  `projectlens migrate --project <slug>`. HTTP 404 means the slug is not
+  registered in `configs/projects.yaml`.
 - Confirm the agent sees the tools. In Claude Code, run `/mcp` and look
   for `projectlens` with 10 tools.
 - Confirm the skill is installed: `ls .claude/skills/use-projectlens/SKILL.md`.
