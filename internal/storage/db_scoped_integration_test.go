@@ -40,7 +40,16 @@ func TestConnectScopedSetsSearchPath(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `SHOW search_path`).Scan(&sp); err != nil {
 		t.Fatalf("show search_path: %v", err)
 	}
-	if sp != `"ri_scopetest", public` && sp != `"ri_scopetest",public` {
+	// Postgres normalizes SHOW search_path: it drops quotes around identifiers
+	// that don't need them and may add a space after the comma. Accept all
+	// equivalent forms — what matters is the schema appears first then public.
+	want := map[string]bool{
+		`"ri_scopetest", public`: true,
+		`"ri_scopetest",public`:  true,
+		`ri_scopetest, public`:   true,
+		`ri_scopetest,public`:    true,
+	}
+	if !want[sp] {
 		t.Fatalf("search_path = %q; want ri_scopetest first then public", sp)
 	}
 }
