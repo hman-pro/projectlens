@@ -25,9 +25,17 @@ type EngineConfig struct {
 	MigrationPaths []string `yaml:"migration_paths"`
 }
 
-// IndexDatastore runs the full datastore indexing pipeline. Returns the
-// number of datastore_tables upserted.
-func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Config) (int, error) {
+// Stats holds the counters produced by a single IndexDatastore run.
+type Stats struct {
+	Migrations int
+	Tables     int
+	SQLFiles   int
+	TableRefs  int
+}
+
+// IndexDatastore runs the full datastore indexing pipeline. Returns Stats
+// describing the run.
+func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Config) (Stats, error) {
 	startTime := time.Now()
 	logger.Step("Datastore indexing")
 
@@ -38,13 +46,13 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 			fullPattern := filepath.Join(repoPath, pattern)
 			matches, err := filepath.Glob(fullPattern)
 			if err != nil {
-				return 0, fmt.Errorf("datastore: glob %s: %w", pattern, err)
+				return Stats{}, fmt.Errorf("datastore: glob %s: %w", pattern, err)
 			}
 			sort.Strings(matches)
 			for _, path := range matches {
 				data, err := os.ReadFile(path)
 				if err != nil {
-					return 0, fmt.Errorf("datastore: read %s: %w", path, err)
+					return Stats{}, fmt.Errorf("datastore: read %s: %w", path, err)
 				}
 				relPath, _ := filepath.Rel(repoPath, path)
 				allMigrations = append(allMigrations, MigrationFile{
@@ -72,7 +80,7 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 			Columns: columnsJSON,
 		}
 		if err := db.UpsertDatastoreTable(ctx, rec); err != nil {
-			return 0, fmt.Errorf("datastore: upsert table %s: %w", fullName, err)
+			return Stats{}, fmt.Errorf("datastore: upsert table %s: %w", fullName, err)
 		}
 		// Get the ID back by looking it up.
 		stored, err := db.GetDatastoreTableByName(ctx, fullName, "postgres")
@@ -86,6 +94,7 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 
 	// Step 3: Scan Go source files for SQL references.
 	var allRefs []SQLRef
+	sqlFilesScanned := 0
 	for _, pattern := range cfg.SQLScanPaths {
 		fullPattern := filepath.Join(repoPath, pattern)
 		matches, err := filepath.Glob(fullPattern)
@@ -104,6 +113,7 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 			relPath, _ := filepath.Rel(repoPath, path)
 			refs := ScanGoFile(relPath, data)
 			allRefs = append(allRefs, refs...)
+			sqlFilesScanned++
 		}
 	}
 	logger.Info("scanned Go files", "sql_references", len(allRefs))
@@ -142,7 +152,7 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 
 	if len(edges) > 0 {
 		if err := db.InsertEdges(ctx, edges); err != nil {
-			return 0, fmt.Errorf("datastore: insert edges: %w", err)
+			return Stats{}, fmt.Errorf("datastore: insert edges: %w", err)
 		}
 	}
 	logger.Info("created reads_table/writes_table edges", "count", len(edges))
@@ -183,7 +193,12 @@ func IndexDatastore(ctx context.Context, db *storage.DB, repoPath string, cfg Co
 	logger.Info("created table chunks", "count", chunksCreated)
 
 	logger.Info("datastore indexing complete", "elapsed", time.Since(startTime).Round(time.Millisecond))
-	return len(tableIDMap), nil
+	return Stats{
+		Migrations: len(allMigrations),
+		Tables:     len(tableIDMap),
+		SQLFiles:   sqlFilesScanned,
+		TableRefs:  len(edges),
+	}, nil
 }
 
 // isTestFile returns true if the path ends with _test.go.

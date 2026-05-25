@@ -549,7 +549,8 @@ func newIndexDatastoreCmd() *cobra.Command {
 			}
 
 			return recordStageRun(ctx, db, repoPath, "datastore", func() (int, error) {
-				return datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
+				s, err := datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
+				return s.Tables, err
 			})
 		})
 	return cmd
@@ -565,13 +566,14 @@ func newIndexHistoryCmd() *cobra.Command {
 	cmd.RunE = withWriteLock("index-history",
 		func(ctx context.Context, _ *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error {
 			return recordStageRun(ctx, db, repoPath, "history", func() (int, error) {
-				return history.IndexHistory(ctx, db, repoPath, history.Config{
+				s, err := history.IndexHistory(ctx, db, repoPath, history.Config{
 					WindowMonths:         cfg.History.WindowMonths,
 					MinCommitsPerFile:    cfg.History.MinCommitsPerFile,
 					CouplingMinCoChanges: cfg.History.CouplingMinCoChanges,
 					CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
 					FullReindex:          full,
 				})
+				return s.Commits, err
 			})
 		})
 	return cmd
@@ -589,7 +591,8 @@ func newIndexEmbedCmd() *cobra.Command {
 				return fmt.Errorf("initializing providers: %w", err)
 			}
 			return recordStageRun(ctx, db, repoPath, "embed", func() (int, error) {
-				return embed.EmbedMissing(ctx, db, embedder)
+				s, err := embed.EmbedMissing(ctx, db, embedder)
+				return s.Chunks, err
 			})
 		})
 	return cmd
@@ -607,7 +610,8 @@ func newIndexSummarizeCmd() *cobra.Command {
 				return fmt.Errorf("initializing providers: %w", err)
 			}
 			return recordStageRun(ctx, db, repoPath, "summarize", func() (int, error) {
-				return summarize.SummarizeMissing(ctx, db, summarizer)
+				s, err := summarize.SummarizeMissing(ctx, db, summarizer)
+				return s.Packages, err
 			})
 		})
 	return cmd
@@ -696,7 +700,8 @@ func newIndexAllCmd() *cobra.Command {
 			}
 			dsCfg.SQLScanPaths = cfg.Datastore.SQLScanPaths
 			if err := recordStageRun(ctx, db, repoPath, "datastore", func() (int, error) {
-				return datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
+				s, err := datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
+				return s.Tables, err
 			}); err != nil {
 				logger.Warn("datastore indexing failed", "err", err)
 			}
@@ -710,7 +715,8 @@ func newIndexAllCmd() *cobra.Command {
 				CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
 			}
 			if err := recordStageRun(ctx, db, repoPath, "history", func() (int, error) {
-				return history.IndexHistory(ctx, db, repoPath, hCfg)
+				s, err := history.IndexHistory(ctx, db, repoPath, hCfg)
+				return s.Commits, err
 			}); err != nil {
 				logger.Warn("history indexing failed", "err", err)
 			}
@@ -719,7 +725,8 @@ func newIndexAllCmd() *cobra.Command {
 			logger.Stage("Stage 4: Summarize")
 			if summarizer != nil {
 				if err := recordStageRun(ctx, db, repoPath, "summarize", func() (int, error) {
-					return summarize.SummarizeMissing(ctx, db, summarizer)
+					s, err := summarize.SummarizeMissing(ctx, db, summarizer)
+					return s.Packages, err
 				}); err != nil {
 					logger.Warn("summarization failed", "err", err)
 				}
@@ -730,7 +737,8 @@ func newIndexAllCmd() *cobra.Command {
 			// Stage 5: Embed (only missing)
 			logger.Stage("Stage 5: Embed")
 			if err := recordStageRun(ctx, db, repoPath, "embed", func() (int, error) {
-				return embed.EmbedMissing(ctx, db, embedder)
+				s, err := embed.EmbedMissing(ctx, db, embedder)
+				return s.Chunks, err
 			}); err != nil {
 				logger.Warn("embedding failed", "err", err)
 			}
