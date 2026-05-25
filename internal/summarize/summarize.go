@@ -10,20 +10,27 @@ import (
 	"github.com/hman-pro/projectlens/internal/summaries"
 )
 
+// Stats holds the counters produced by a single SummarizeMissing run.
+type Stats struct {
+	Packages  int
+	Summaries int
+	Tokens    int
+}
+
 // SummarizeMissing finds packages without summaries and generates them.
-// Returns the number of packages successfully summarized (heuristic + LLM).
-func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.PackageSummarizer) (int, error) {
+// Returns Stats describing the run.
+func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.PackageSummarizer) (Stats, error) {
 	startTime := time.Now()
 	logger.Step("Summarize missing packages")
 
 	allPackages, err := db.GetDistinctPackageNames(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("summarize: get packages: %w", err)
+		return Stats{}, fmt.Errorf("summarize: get packages: %w", err)
 	}
 
 	existing, err := db.GetAllSummaryPackageNames(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("summarize: get existing summaries: %w", err)
+		return Stats{}, fmt.Errorf("summarize: get existing summaries: %w", err)
 	}
 
 	existingSet := make(map[string]bool, len(existing))
@@ -40,7 +47,7 @@ func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.
 
 	if len(missing) == 0 {
 		logger.Info("all packages already have summaries — nothing to do")
-		return 0, nil
+		return Stats{Packages: len(allPackages)}, nil
 	}
 
 	logger.Info("found packages missing summaries", "count", len(missing))
@@ -97,5 +104,8 @@ func SummarizeMissing(ctx context.Context, db *storage.DB, summarizer summaries.
 	}
 
 	logger.Info("summarized packages", "count", summarized, "elapsed", time.Since(startTime).Round(time.Millisecond))
-	return summarized, nil
+	return Stats{
+		Packages:  len(allPackages),
+		Summaries: summarized,
+	}, nil
 }

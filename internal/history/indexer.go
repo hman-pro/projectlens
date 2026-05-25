@@ -33,9 +33,16 @@ type Config struct {
 // to avoid slow git-log invocations for every low-activity file.
 const maxBackfillFiles = 100
 
-// IndexHistory runs the full history indexing pipeline. Returns the number
-// of commits ingested for indexed files.
-func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Config) (int, error) {
+// Stats holds the counters produced by a single IndexHistory run.
+type Stats struct {
+	Commits         int
+	FileHistoryRows int
+	CouplingPairs   int
+}
+
+// IndexHistory runs the full history indexing pipeline. Returns Stats
+// describing the run.
+func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Config) (Stats, error) {
 	startTime := time.Now()
 	logger.Step("History indexing")
 
@@ -48,7 +55,7 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 	if !cfg.FullReindex {
 		last, ok, err := db.GetLatestFileHistoryTimestamp(ctx)
 		if err != nil {
-			return 0, fmt.Errorf("history: latest timestamp: %w", err)
+			return Stats{}, fmt.Errorf("history: latest timestamp: %w", err)
 		}
 		if ok {
 			since := last.Add(-incrementalSafetyMargin).UTC().Format(time.RFC3339)
@@ -62,14 +69,14 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 	}
 	commits, err := ParseGitLog(repoPath, window)
 	if err != nil {
-		return 0, fmt.Errorf("history: parse git log: %w", err)
+		return Stats{}, fmt.Errorf("history: parse git log: %w", err)
 	}
 	logger.Info("found commits in window", "count", len(commits))
 
 	// Step 2: Load indexed file paths from DB
 	files, err := db.ListFiles(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("history: list files: %w", err)
+		return Stats{}, fmt.Errorf("history: list files: %w", err)
 	}
 	fileIDMap := make(map[string]int64) // path -> file DB ID
 	for _, f := range files {
@@ -174,7 +181,7 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 	logger.Info("computing co-change coupling from DB...")
 	windowCommits, err := db.ListCommitsInWindow(ctx, cfg.WindowMonths)
 	if err != nil {
-		return 0, fmt.Errorf("history: list commits in window: %w", err)
+		return Stats{}, fmt.Errorf("history: list commits in window: %w", err)
 	}
 	adapted := make([]Commit, len(windowCommits))
 	for i, w := range windowCommits {
@@ -213,17 +220,21 @@ func IndexHistory(ctx context.Context, db *storage.DB, repoPath string, cfg Conf
 	// in a pgx.BeginFunc transaction.
 	removed, err := db.DeleteEdgesByType(ctx, "file", "file", "co_changes")
 	if err != nil {
-		return 0, fmt.Errorf("history: clear coupling edges: %w", err)
+		return Stats{}, fmt.Errorf("history: clear coupling edges: %w", err)
 	}
 	logger.Info("cleared stale coupling edges", "count", removed)
 
 	if len(edges) > 0 {
 		if err := db.InsertEdges(ctx, edges); err != nil {
-			return 0, fmt.Errorf("history: insert coupling edges: %w", err)
+			return Stats{}, fmt.Errorf("history: insert coupling edges: %w", err)
 		}
 	}
 	logger.Info("stored co-change coupling edges", "count", len(edges))
 
 	logger.Info("history indexing complete", "elapsed", time.Since(startTime).Round(time.Millisecond))
-	return len(filteredCommits), nil
+	return Stats{
+		Commits:         len(filteredCommits),
+		FileHistoryRows: historyCount,
+		CouplingPairs:   len(pairs),
+	}, nil
 }
