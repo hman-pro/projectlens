@@ -1,0 +1,19 @@
+# configs/projects.example.yaml
+# Copy to configs/projects.yaml and edit. The MCP server and CLI default to
+# configs/projects.yaml when --projects is not passed.
+database_url: postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable
+
+# Optional. Used by the TUI when no --project is given.
+default_project: projectlens
+
+projects:
+  - slug: projectlens
+    storage_schema: projectlens
+    repo_path: /Users/you/source/projectlens
+    # config_path is optional; supplies indexing/provider settings, not identity.
+    config_path: configs/index.yaml
+
+  # - slug: ingest
+  #   storage_schema: ingest
+  #   repo_path: /Users/you/source/example-org/ingest
+  #   config_path: configs/ingest.yaml
