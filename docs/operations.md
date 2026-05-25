@@ -113,6 +113,8 @@ make cli ARGS="export graph --edges calls,implements --include-evidence"
 
 `report --format` accepts `markdown` or `json`; without `--format`, it is inferred from `--out` or defaults to Markdown on stdout.
 
+Each stage is rendered under `## Stages` with status, last run age, the provider identity used (`embed=openai:text-embedding-3-large@1024 sum=anthropic:claude-sonnet-4-6`), a sorted `key=value` metrics summary, and the (sanitized, 200-char-clipped in Markdown / full in JSON) `error_text` from the most recent failure. Stage trust comes from migration 008; see [`docs/internals.md`](internals.md) for the schema.
+
 `export graph --edges` accepts `all` or a comma-separated edge type list. `--include-evidence` includes `properties.evidence` blobs.
 
 Convenience Make targets wrap the export and Gephi conversion:

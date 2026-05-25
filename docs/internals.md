@@ -126,7 +126,7 @@ Writers and their defaults (see `cmd/projectlens/main.go::edgeProvenanceDefaults
 | `embeddings` | Halfvec embeddings keyed by chunk and model version. |
 | `summaries` | Package summaries keyed by package name. |
 | `edges` | Polymorphic graph relationships. |
-| `index_runs` | Per-stage run status, commit, processed counts, timings. |
+| `index_runs` | Per-stage run status, commit, processed counts, timings. Migration 008 added `error_text`, `provider_embed`, `provider_summarize`, and a `metrics JSONB` column for per-stage detail. `files_processed` continues to carry a representative count per stage as a TUI compatibility shim; rich detail lives in `metrics`. Provider strings come from each client's role-specific `Identity()` method (see `internal/providers/identity`) — config is intent, the client is truth. `error_text` is sanitized (Bearer tokens, `sk-*`, `Authorization:`, Postgres URL passwords) and truncated to 4 KB. |
 | `git_refs` | Branch to commit mapping. |
 | `datastore_tables` | Tables, engines, schemas, columns, and source migration files. |
 | `documents` | External document metadata/body for planned docs ingestion. |
