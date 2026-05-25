@@ -1,0 +1,10 @@
+database_url: postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable
+default_project: ingest
+projects:
+  - slug: ingest
+    storage_schema: ingest
+    repo_path: /tmp/ingest
+  - slug: projectlens
+    storage_schema: projectlens
+    repo_path: /tmp/projectlens
+    config_path: configs/projectlens.yaml

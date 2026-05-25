@@ -1,0 +1,8 @@
+database_url: postgres://x/y
+projects:
+  - slug: a
+    storage_schema: shared
+    repo_path: /tmp/a
+  - slug: b
+    storage_schema: shared
+    repo_path: /tmp/b
