@@ -27,7 +27,7 @@ func AssertSchemaExists(ctx context.Context, conn *pgx.Conn, schema string) erro
 		return fmt.Errorf("storage: check schema %q: %w", schema, err)
 	}
 	if !exists {
-		return fmt.Errorf("storage schema %q does not exist; run `projectlens migrate --project <slug>` first", schema)
+		return fmt.Errorf("storage: schema %q does not exist; run `projectlens migrate --project <slug>` first", schema)
 	}
 	return nil
 }
