@@ -11,6 +11,14 @@ var (
 	schemaPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 )
 
+var reservedSchemas = map[string]bool{
+	"public":             true,
+	"information_schema": true,
+	"pg_catalog":         true,
+	"pg_toast":           true,
+	"pg_temp":            true,
+}
+
 // ValidateSlug enforces the project slug shape used in CLI flags and MCP URL paths.
 func ValidateSlug(s string) error {
 	if s == "" {
@@ -30,8 +38,8 @@ func ValidateStorageSchema(s string) error {
 	if !schemaPattern.MatchString(s) {
 		return fmt.Errorf("invalid storage_schema %q: must match %s", s, schemaPattern)
 	}
-	if s == "public" {
-		return fmt.Errorf("storage_schema %q is reserved (used for legacy single-project installs)", s)
+	if reservedSchemas[s] {
+		return fmt.Errorf("storage_schema %q is a reserved Postgres schema name", s)
 	}
 	if strings.HasPrefix(s, "pg_") {
 		return fmt.Errorf("storage_schema %q starts with reserved prefix pg_", s)

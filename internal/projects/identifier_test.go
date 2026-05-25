@@ -33,6 +33,7 @@ func TestValidateStorageSchema(t *testing.T) {
 		{"a1_2", true},
 		{"", false},
 		{"public", false},
+		{"information_schema", false},
 		{"pg_anything", false},
 		{"1leading", false},
 		{"with-dash", false},
