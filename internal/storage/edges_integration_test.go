@@ -409,9 +409,9 @@ func TestBackfillProvenance_PartialRepair(t *testing.T) {
 	}
 	defer rows.Close()
 	type row struct {
-		src, tgt   int64
-		etype      string
-		prov, cls  *string
+		src, tgt  int64
+		etype     string
+		prov, cls *string
 	}
 	var got []row
 	for rows.Next() {

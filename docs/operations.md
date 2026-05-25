@@ -136,7 +136,33 @@ make graph-gephi GRAPH_FORMAT=gexf GRAPH_OUT=graph.gexf
 | `EDGES` | unset | Edge-type filter applied during conversion (comma list, e.g. `calls,implements`). |
 | `PYTHON` | `python3` | Python interpreter. Use a venv with `PYTHON=.venv/bin/python`. |
 
-Requires `pip install networkx`. The script drops nodes with no edges after filtering; pass `--keep-isolated` (via direct invocation) to retain them. Once a `.graphml` is written, open it in Gephi (`File -> Open`), run a ForceAtlas2 layout, then color nodes by `type` and size by degree.
+Requires `pip install networkx`. The script drops nodes with no edges after filtering; pass `--keep-isolated` (via direct invocation) to retain them.
+
+Once a `.graphml` or `.gexf` is written, open it in Gephi (`File -> Open`) and start with a filtered view instead of the full graph:
+
+- Layout with ForceAtlas2 or OpenOrd.
+- Color nodes by `type` or `attr_package`.
+- Size nodes by degree or PageRank.
+- Hide low-degree nodes before labeling.
+- Label only selected or high-degree nodes.
+
+Useful slices:
+
+| Edge filter | Shows |
+|---|---|
+| `calls,implements` | Code dependency shape. |
+| `co_changes` | Historical coupling. |
+| `knowledge_about` | Agent memory and knowledge anchors. |
+| `reads_table,writes_table` | Code-to-datastore access, when those edges are present in the export. |
+
+For docs, pair a Gephi screenshot with a small legend:
+
+| Shape | Edge types |
+|---|---|
+| `symbol -> symbol` | `calls`, `implements`, `imports` |
+| `file -> file` | `co_changes` |
+| `symbol -> table` | `reads_table`, `writes_table` |
+| `knowledge -> target` | `knowledge_about` |
 
 ### TUI
 

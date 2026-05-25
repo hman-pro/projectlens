@@ -508,24 +508,38 @@ func repoCommitSHA(repoPath string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// stageOutcome is what each stage callback returns to recordStageRun: a
+// representative items-processed count for the legacy files_processed
+// column (TUI pipeline/list compatibility) and a full metrics map for
+// the new metrics JSONB column.
+type stageOutcome struct {
+	FilesProcessed int
+	Metrics        map[string]any
+}
+
 // recordStageRun runs fn and writes an index_runs row for the given
-// stage capturing start/end, completed/failed status, and the count of
-// items processed. The fn's error is propagated unchanged; recording
-// failures are logged only.
-func recordStageRun(_ context.Context, db *storage.DB, repoPath, stage string, fn func() (int, error)) error {
+// stage capturing start/end, completed/failed status, provider identity,
+// metrics, and (on failure) the error message. The fn's error is
+// propagated unchanged; recording failures are logged only.
+func recordStageRun(_ context.Context, db *storage.DB, repoPath, stage string,
+	providers storage.RunProviders,
+	fn func() (stageOutcome, error)) error {
 	start := time.Now()
 	commit := repoCommitSHA(repoPath)
-	count, runErr := fn()
+	out, runErr := fn()
 	status := "completed"
+	errText := ""
 	if runErr != nil {
 		status = "failed"
+		errText = runErr.Error()
 	}
 	// Use a background context for the bookkeeping write: if fn was
 	// cancelled by Ctrl+C or a parent timeout, ctx is already done
 	// and a "failed" row would never reach the database.
 	bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := db.RecordStageRun(bg, commit, stage, status, start, time.Now(), count); err != nil {
+	if err := db.RecordStageRun(bg, commit, stage, status, start, time.Now(),
+		out.FilesProcessed, providers, out.Metrics, errText); err != nil {
 		logger.Warn("record stage run failed", "stage", stage, "err", err)
 	}
 	return runErr
@@ -548,10 +562,19 @@ func newIndexDatastoreCmd() *cobra.Command {
 				})
 			}
 
-			return recordStageRun(ctx, db, repoPath, "datastore", func() (int, error) {
-				s, err := datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
-				return s.Tables, err
-			})
+			return recordStageRun(ctx, db, repoPath, "datastore", storage.RunProviders{},
+				func() (stageOutcome, error) {
+					s, err := datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
+					return stageOutcome{
+						FilesProcessed: s.Tables,
+						Metrics: map[string]any{
+							"migrations": s.Migrations,
+							"tables":     s.Tables,
+							"sql_files":  s.SQLFiles,
+							"table_refs": s.TableRefs,
+						},
+					}, err
+				})
 		})
 	return cmd
 }
@@ -565,16 +588,24 @@ func newIndexHistoryCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&full, "full", false, "Reparse the entire history window instead of incremental since last run")
 	cmd.RunE = withWriteLock("index-history",
 		func(ctx context.Context, _ *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error {
-			return recordStageRun(ctx, db, repoPath, "history", func() (int, error) {
-				s, err := history.IndexHistory(ctx, db, repoPath, history.Config{
-					WindowMonths:         cfg.History.WindowMonths,
-					MinCommitsPerFile:    cfg.History.MinCommitsPerFile,
-					CouplingMinCoChanges: cfg.History.CouplingMinCoChanges,
-					CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
-					FullReindex:          full,
+			return recordStageRun(ctx, db, repoPath, "history", storage.RunProviders{},
+				func() (stageOutcome, error) {
+					s, err := history.IndexHistory(ctx, db, repoPath, history.Config{
+						WindowMonths:         cfg.History.WindowMonths,
+						MinCommitsPerFile:    cfg.History.MinCommitsPerFile,
+						CouplingMinCoChanges: cfg.History.CouplingMinCoChanges,
+						CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
+						FullReindex:          full,
+					})
+					return stageOutcome{
+						FilesProcessed: s.Commits,
+						Metrics: map[string]any{
+							"commits":           s.Commits,
+							"file_history_rows": s.FileHistoryRows,
+							"coupling_pairs":    s.CouplingPairs,
+						},
+					}, err
 				})
-				return s.Commits, err
-			})
 		})
 	return cmd
 }
@@ -590,10 +621,19 @@ func newIndexEmbedCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initializing providers: %w", err)
 			}
-			return recordStageRun(ctx, db, repoPath, "embed", func() (int, error) {
-				s, err := embed.EmbedMissing(ctx, db, embedder)
-				return s.Chunks, err
-			})
+			providers := storage.RunProviders{Embed: embedder.EmbedIdentity().String()}
+			return recordStageRun(ctx, db, repoPath, "embed", providers,
+				func() (stageOutcome, error) {
+					s, err := embed.EmbedMissing(ctx, db, embedder)
+					return stageOutcome{
+						FilesProcessed: s.Chunks,
+						Metrics: map[string]any{
+							"chunks":  s.Chunks,
+							"tokens":  s.Tokens,
+							"batches": s.Batches,
+						},
+					}, err
+				})
 		})
 	return cmd
 }
@@ -609,10 +649,19 @@ func newIndexSummarizeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initializing providers: %w", err)
 			}
-			return recordStageRun(ctx, db, repoPath, "summarize", func() (int, error) {
-				s, err := summarize.SummarizeMissing(ctx, db, summarizer)
-				return s.Packages, err
-			})
+			providers := storage.RunProviders{Summarize: summarizer.SummaryIdentity().String()}
+			return recordStageRun(ctx, db, repoPath, "summarize", providers,
+				func() (stageOutcome, error) {
+					s, err := summarize.SummarizeMissing(ctx, db, summarizer)
+					return stageOutcome{
+						FilesProcessed: s.Packages,
+						Metrics: map[string]any{
+							"packages":  s.Packages,
+							"summaries": s.Summaries,
+							"tokens":    s.Tokens,
+						},
+					}, err
+				})
 		})
 	return cmd
 }
@@ -699,10 +748,19 @@ func newIndexAllCmd() *cobra.Command {
 				})
 			}
 			dsCfg.SQLScanPaths = cfg.Datastore.SQLScanPaths
-			if err := recordStageRun(ctx, db, repoPath, "datastore", func() (int, error) {
-				s, err := datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
-				return s.Tables, err
-			}); err != nil {
+			if err := recordStageRun(ctx, db, repoPath, "datastore", storage.RunProviders{},
+				func() (stageOutcome, error) {
+					s, err := datastore.IndexDatastore(ctx, db, repoPath, dsCfg)
+					return stageOutcome{
+						FilesProcessed: s.Tables,
+						Metrics: map[string]any{
+							"migrations": s.Migrations,
+							"tables":     s.Tables,
+							"sql_files":  s.SQLFiles,
+							"table_refs": s.TableRefs,
+						},
+					}, err
+				}); err != nil {
 				logger.Warn("datastore indexing failed", "err", err)
 			}
 
@@ -714,20 +772,37 @@ func newIndexAllCmd() *cobra.Command {
 				CouplingMinCoChanges: cfg.History.CouplingMinCoChanges,
 				CouplingMaxFiles:     cfg.History.CouplingMaxFiles,
 			}
-			if err := recordStageRun(ctx, db, repoPath, "history", func() (int, error) {
-				s, err := history.IndexHistory(ctx, db, repoPath, hCfg)
-				return s.Commits, err
-			}); err != nil {
+			if err := recordStageRun(ctx, db, repoPath, "history", storage.RunProviders{},
+				func() (stageOutcome, error) {
+					s, err := history.IndexHistory(ctx, db, repoPath, hCfg)
+					return stageOutcome{
+						FilesProcessed: s.Commits,
+						Metrics: map[string]any{
+							"commits":           s.Commits,
+							"file_history_rows": s.FileHistoryRows,
+							"coupling_pairs":    s.CouplingPairs,
+						},
+					}, err
+				}); err != nil {
 				logger.Warn("history indexing failed", "err", err)
 			}
 
 			// Stage 4: Summarize (only missing)
 			logger.Stage("Stage 4: Summarize")
 			if summarizer != nil {
-				if err := recordStageRun(ctx, db, repoPath, "summarize", func() (int, error) {
-					s, err := summarize.SummarizeMissing(ctx, db, summarizer)
-					return s.Packages, err
-				}); err != nil {
+				providers := storage.RunProviders{Summarize: summarizer.SummaryIdentity().String()}
+				if err := recordStageRun(ctx, db, repoPath, "summarize", providers,
+					func() (stageOutcome, error) {
+						s, err := summarize.SummarizeMissing(ctx, db, summarizer)
+						return stageOutcome{
+							FilesProcessed: s.Packages,
+							Metrics: map[string]any{
+								"packages":  s.Packages,
+								"summaries": s.Summaries,
+								"tokens":    s.Tokens,
+							},
+						}, err
+					}); err != nil {
 					logger.Warn("summarization failed", "err", err)
 				}
 			} else {
@@ -736,10 +811,19 @@ func newIndexAllCmd() *cobra.Command {
 
 			// Stage 5: Embed (only missing)
 			logger.Stage("Stage 5: Embed")
-			if err := recordStageRun(ctx, db, repoPath, "embed", func() (int, error) {
-				s, err := embed.EmbedMissing(ctx, db, embedder)
-				return s.Chunks, err
-			}); err != nil {
+			embedProviders := storage.RunProviders{Embed: embedder.EmbedIdentity().String()}
+			if err := recordStageRun(ctx, db, repoPath, "embed", embedProviders,
+				func() (stageOutcome, error) {
+					s, err := embed.EmbedMissing(ctx, db, embedder)
+					return stageOutcome{
+						FilesProcessed: s.Chunks,
+						Metrics: map[string]any{
+							"chunks":  s.Chunks,
+							"tokens":  s.Tokens,
+							"batches": s.Batches,
+						},
+					}, err
+				}); err != nil {
 				logger.Warn("embedding failed", "err", err)
 			}
 

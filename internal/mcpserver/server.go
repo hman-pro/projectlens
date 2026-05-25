@@ -28,7 +28,7 @@ type Server struct {
 	router     *retrieval.Router
 	port       int
 	repoPath   string
-	summarizer SummarizerProber    // optional; may be nil
+	summarizer SummarizerProber // optional; may be nil
 	inspector  indexstate.Inspector
 }
 

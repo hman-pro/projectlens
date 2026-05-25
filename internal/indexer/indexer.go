@@ -25,11 +25,13 @@ import (
 
 // Indexer ties together all pipeline stages and stores results in the database.
 type Indexer struct {
-	db         *storage.DB
-	embedder   embeddings.Embedder
-	summarizer summaries.PackageSummarizer
-	repo       string // path to the target repo
-	cfg        classifier.Config
+	db                *storage.DB
+	embedder          embeddings.Embedder
+	summarizer        summaries.PackageSummarizer
+	repo              string // path to the target repo
+	cfg               classifier.Config
+	embedIdentity     string // captured from embedder.EmbedIdentity() at construction
+	summarizeIdentity string // captured from summarizer.SummaryIdentity()
 }
 
 // Stats records what the pipeline produced.
@@ -45,13 +47,20 @@ type Stats struct {
 // New creates an Indexer. The embedder and summarizer may be nil if embedding
 // and summarization should be skipped (e.g. dry-run or tests).
 func New(db *storage.DB, embedder embeddings.Embedder, summarizer summaries.PackageSummarizer, repoPath string, cfg classifier.Config) *Indexer {
-	return &Indexer{
+	idx := &Indexer{
 		db:         db,
 		embedder:   embedder,
 		summarizer: summarizer,
 		repo:       repoPath,
 		cfg:        cfg,
 	}
+	if embedder != nil {
+		idx.embedIdentity = embedder.EmbedIdentity().String()
+	}
+	if summarizer != nil {
+		idx.summarizeIdentity = summarizer.SummaryIdentity().String()
+	}
+	return idx
 }
 
 // workItem tracks a census file entry together with the reason it was selected.
@@ -62,7 +71,7 @@ type workItem struct {
 
 // Run executes the full indexing pipeline. When full is true every handwritten
 // file is processed; otherwise only new or changed files are included.
-func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
+func (idx *Indexer) Run(ctx context.Context, full bool) (_ *Stats, runErr error) {
 	pipelineStart := time.Now()
 	stats := &Stats{}
 
@@ -139,7 +148,9 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		now := time.Now()
 		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = idx.db.RecordStageRun(bg, commitSHA, "code", "completed", now, now, 0)
+		_ = idx.db.RecordStageRun(bg, commitSHA, "code", "completed", now, now, 0,
+			storage.RunProviders{Embed: idx.embedIdentity, Summarize: idx.summarizeIdentity},
+			nil, "")
 		return stats, nil
 	}
 
@@ -155,7 +166,10 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		return nil, fmt.Errorf("indexer: git branch: %w", err)
 	}
 
-	runID, err := idx.db.StartRun(ctx, commitSHA)
+	runID, err := idx.db.StartRun(ctx, commitSHA, storage.RunProviders{
+		Embed:     idx.embedIdentity,
+		Summarize: idx.summarizeIdentity,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("indexer: start run: %w", err)
 	}
@@ -169,7 +183,11 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		if !runCompleted {
 			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_ = idx.db.FailRun(cleanup, runID)
+			msg := ""
+			if runErr != nil {
+				msg = runErr.Error()
+			}
+			_ = idx.db.FailRun(cleanup, runID, msg)
 		}
 	}()
 
@@ -477,7 +495,11 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		}
 		stats.PackagesSummarized = len(pkgSummaries)
 		logger.Info("summarized packages", "count", stats.PackagesSummarized, "elapsed", time.Since(stepStart).Round(time.Millisecond))
-		if err := idx.db.RecordStageRun(ctx, commitSHA, "summarize", "completed", summarizeStart, time.Now(), stats.PackagesSummarized); err != nil {
+		if err := idx.db.RecordStageRun(ctx, commitSHA, "summarize", "completed",
+			summarizeStart, time.Now(), stats.PackagesSummarized,
+			storage.RunProviders{Summarize: idx.summarizeIdentity},
+			map[string]any{"packages": len(pkgSymMap) + skipped, "summaries": stats.PackagesSummarized},
+			""); err != nil {
 			logger.Warn("record summarize stage run failed", "err", err)
 		}
 	} else {
@@ -516,7 +538,11 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 		}
 		stats.ChunksEmbedded = len(embResults)
 		logger.Info("embedded chunks", "count", stats.ChunksEmbedded, "elapsed", time.Since(stepStart).Round(time.Millisecond))
-		if err := idx.db.RecordStageRun(ctx, commitSHA, "embed", "completed", embedStart, time.Now(), stats.ChunksEmbedded); err != nil {
+		if err := idx.db.RecordStageRun(ctx, commitSHA, "embed", "completed",
+			embedStart, time.Now(), stats.ChunksEmbedded,
+			storage.RunProviders{Embed: idx.embedIdentity},
+			map[string]any{"chunks": stats.ChunksEmbedded},
+			""); err != nil {
 			logger.Warn("record embed stage run failed", "err", err)
 		}
 	} else if idx.embedder == nil {
@@ -525,7 +551,14 @@ func (idx *Indexer) Run(ctx context.Context, full bool) (*Stats, error) {
 
 	// ── Step 10: Complete ───────────────────────────────────────────────
 	logger.Step("Step 10: Complete")
-	if err := idx.db.CompleteRun(ctx, runID, stats.FilesProcessed, stats.SymbolsExtracted, stats.EdgesCreated); err != nil {
+	if err := idx.db.CompleteRun(ctx, runID,
+		stats.FilesProcessed, stats.SymbolsExtracted, stats.EdgesCreated,
+		map[string]any{
+			"files":   stats.FilesProcessed,
+			"symbols": stats.SymbolsExtracted,
+			"edges":   stats.EdgesCreated,
+			"chunks":  stats.ChunksCreated,
+		}); err != nil {
 		return nil, fmt.Errorf("indexer: complete run: %w", err)
 	}
 	runCompleted = true
