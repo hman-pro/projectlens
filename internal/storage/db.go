@@ -109,6 +109,74 @@ func (db *DB) Migrate(ctx context.Context, migrationsDir string) error {
 	return nil
 }
 
+// MigrateInSchema runs all .up.sql files in migrationsDir inside the given
+// storage schema. The pgvector extension is database-global and is created
+// in public; project tables live in the storage schema. Schema_migrations
+// bookkeeping is created inside the storage schema.
+//
+// storageSchema MUST already be vetted by projects.ValidateStorageSchema.
+func (db *DB) MigrateInSchema(ctx context.Context, migrationsDir, storageSchema string) error {
+	if storageSchema == "" {
+		return fmt.Errorf("storage: MigrateInSchema requires storage_schema")
+	}
+	quoted := QuoteSchema(storageSchema)
+
+	// 1. Ensure pgvector exists at database scope (idempotent).
+	if _, err := db.Pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
+		return fmt.Errorf("storage: create extension vector: %w", err)
+	}
+	// 2. Create the storage schema if missing.
+	if _, err := db.Pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+quoted); err != nil {
+		return fmt.Errorf("storage: create schema %s: %w", quoted, err)
+	}
+
+	// Acquire one connection and pin its search_path for all subsequent statements.
+	conn, err := db.Pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("storage: acquire conn: %w", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "SET search_path TO "+quoted+",public"); err != nil {
+		return fmt.Errorf("storage: set search_path: %w", err)
+	}
+
+	// 3. Bookkeeping table inside the storage schema.
+	const createTracker = `CREATE TABLE IF NOT EXISTS schema_migrations (
+		name TEXT PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`
+	if _, err := conn.Exec(ctx, createTracker); err != nil {
+		return fmt.Errorf("storage: create migration tracker in %s: %w", quoted, err)
+	}
+
+	files, err := ReadMigrationFiles(migrationsDir)
+	if err != nil {
+		return fmt.Errorf("storage: migrate: %w", err)
+	}
+
+	for _, mf := range files {
+		var exists bool
+		if err := conn.QueryRow(ctx,
+			"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name = $1)", mf.Name,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("storage: check migration %s in %s: %w", mf.Name, quoted, err)
+		}
+		if exists {
+			continue
+		}
+		sql := mf.SQL
+		if _, err := conn.Exec(ctx, sql); err != nil {
+			return fmt.Errorf("storage: migrate %s in %s: %w", mf.Name, quoted, err)
+		}
+		if _, err := conn.Exec(ctx,
+			"INSERT INTO schema_migrations (name) VALUES ($1)", mf.Name,
+		); err != nil {
+			return fmt.Errorf("storage: record migration %s in %s: %w", mf.Name, quoted, err)
+		}
+	}
+	return nil
+}
+
 // MigrationFile holds a single parsed migration.
 type MigrationFile struct {
 	Name string
