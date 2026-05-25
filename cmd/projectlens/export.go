@@ -49,6 +49,10 @@ func newExportGraphCmd() *cobra.Command {
 			cfg := cs.Config()
 			repoPath := cs.RepoPath()
 
+			if slug := cs.Slug(); slug != "" {
+				fmt.Fprintf(os.Stderr, "project: %s (storage_schema=%s)\n", slug, cs.StorageSchema())
+			}
+
 			insp := buildInspector(cfg, db, repoPath)
 
 			return writeExport(out, func(w io.Writer) error {

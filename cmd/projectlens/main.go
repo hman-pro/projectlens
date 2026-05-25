@@ -234,6 +234,9 @@ func newStatusCmd() *cobra.Command {
 			}
 
 			if run == nil {
+				if slug := cs.Slug(); slug != "" {
+					fmt.Printf("project: %s (storage_schema=%s)\n", slug, cs.StorageSchema())
+				}
 				fmt.Println("No index runs found. Run 'projectlens bootstrap' first.")
 				return nil
 			}
@@ -246,6 +249,9 @@ func newStatusCmd() *cobra.Command {
 
 			staleness := formatStaleness(run.StartedAt)
 
+			if slug := cs.Slug(); slug != "" {
+				fmt.Printf("project: %s (storage_schema=%s)\n", slug, cs.StorageSchema())
+			}
 			fmt.Println("ProjectLens Status")
 			fmt.Println("─────────────────")
 			fmt.Printf("Last indexed:     %s\n", ts)

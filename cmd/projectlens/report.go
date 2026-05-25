@@ -43,6 +43,10 @@ func newReportCmd() *cobra.Command {
 			cfg := cs.Config()
 			repoPath := cs.RepoPath()
 
+			if slug := cs.Slug(); slug != "" {
+				fmt.Fprintf(os.Stderr, "project: %s (storage_schema=%s)\n", slug, cs.StorageSchema())
+			}
+
 			insp := buildInspector(cfg, db, repoPath)
 
 			r, err := report.NewBuilder(db, insp, repoPath, report.Options{TopN: topN}).Build(ctx)
