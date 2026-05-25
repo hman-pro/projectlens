@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
@@ -147,4 +148,18 @@ func (s *Server) MCPServer() *server.MCPServer {
 		mcpServer.AddTool(r.tool, withTimeout(handlerTimeout, r.handler))
 	}
 	return mcpServer
+}
+
+// Handler returns an http.Handler that serves this Server's MCP tools over
+// Streamable HTTP at the caller-supplied mount point. Each invocation creates
+// a fresh MCPServer + session manager so multiple projects can be mounted
+// independently in one process.
+func (s *Server) Handler() http.Handler {
+	mcpServer := server.NewMCPServer("projectlens", "1.0.0",
+		server.WithHooks(s.loggingHooks()),
+	)
+	for _, r := range s.toolRegistry() {
+		mcpServer.AddTool(r.tool, withTimeout(handlerTimeout, r.handler))
+	}
+	return server.NewStreamableHTTPServer(mcpServer)
 }
