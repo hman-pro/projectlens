@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hman-pro/projectlens/internal/config"
+	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/projects"
 	"github.com/hman-pro/projectlens/internal/storage"
 )
@@ -63,7 +64,9 @@ func (c *CmdStorage) StorageSchema() string {
 	return "public"
 }
 
-// Close releases resources.
+// Close releases resources. When cleanup is set it owns the full teardown
+// (including restoring the package-level logger and closing the underlying
+// resource); otherwise we fall back to closing whichever handle is set.
 func (c *CmdStorage) Close() {
 	if c == nil {
 		return
@@ -106,7 +109,15 @@ func openCmdStorage(ctx context.Context, cmd *cobra.Command) (*CmdStorage, error
 		if err != nil {
 			return nil, err
 		}
-		return &CmdStorage{Runtime: rt}, nil
+		cs := &CmdStorage{Runtime: rt}
+		restore := logger.Bind(cs.Slug(), cs.StorageSchema())
+		cs.cleanup = func() {
+			restore()
+			if cs.Runtime != nil {
+				cs.Runtime.Close()
+			}
+		}
+		return cs, nil
 	}
 	cfg, repoPath, err := loadCmdConfig(cmd)
 	if err != nil {
@@ -116,7 +127,15 @@ func openCmdStorage(ctx context.Context, cmd *cobra.Command) (*CmdStorage, error
 	if err != nil {
 		return nil, fmt.Errorf("connecting to database: %w", err)
 	}
-	return &CmdStorage{LegacyDB: db, LegacyCfg: cfg, LegacyRepo: repoPath}, nil
+	cs := &CmdStorage{LegacyDB: db, LegacyCfg: cfg, LegacyRepo: repoPath}
+	restore := logger.Bind(cs.Slug(), cs.StorageSchema())
+	cs.cleanup = func() {
+		restore()
+		if cs.LegacyDB != nil {
+			cs.LegacyDB.Close()
+		}
+	}
+	return cs, nil
 }
 
 // resolveProjectRuntime opens a scoped runtime for the --project. Callers

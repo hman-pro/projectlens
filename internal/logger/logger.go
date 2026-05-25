@@ -57,3 +57,29 @@ func progressStr(current, total int) string {
 	}
 	return fmt.Sprintf("%d/%d (%d%%)", current, total, pct)
 }
+
+// WithProject returns a derived logger carrying project_slug + storage_schema.
+// Pass empty strings to get the current L unchanged. Use when the caller has
+// a logger reference and wants per-call scope.
+func WithProject(slug, schema string) *log.Logger {
+	if slug == "" && schema == "" {
+		return L
+	}
+	return L.With("project_slug", slug, "storage_schema", schema)
+}
+
+// Bind rebinds the package-level L to a derived logger that carries
+// project_slug + storage_schema. Returns a restore function that the
+// caller MUST defer. Bind is intended for one-shot CLI commands so
+// package-level helpers and indexer stage callbacks inherit the project
+// fields without each call site needing a logger handle.
+//
+// Bind is NOT safe from concurrent server contexts — the MCP server must
+// instead pass a scoped logger explicitly through its handlers. CLI
+// processes run one command per process, so the rebind window is the whole
+// process lifetime and there is no contention.
+func Bind(slug, schema string) (restore func()) {
+	prev := L
+	L = WithProject(slug, schema)
+	return func() { L = prev }
+}

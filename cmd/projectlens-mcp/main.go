@@ -119,7 +119,8 @@ func buildProjectServer(rt *projects.Runtime, port int) *mcpserver.Server {
 	}
 	router := retrieval.NewRouter(rt.DB, embedder)
 	return mcpserver.New(rt.DB, router, port, rt.RepoPath).
-		WithSummarizer(newSummarizerProber(cfg))
+		WithSummarizer(newSummarizerProber(cfg)).
+		WithProjectIdentity(rt.Slug, rt.StorageSchema)
 }
 
 // runLegacySingle preserves the original single-project behavior used when
