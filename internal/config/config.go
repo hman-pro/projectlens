@@ -75,25 +75,29 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Environment variable overrides.
-	if v := os.Getenv("DATABASE_URL"); v != "" {
-		cfg.DatabaseURL = v
-	}
-	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
-		cfg.OpenAIKey = v
-	}
-	if v := os.Getenv("REPO_PATH"); v != "" {
-		cfg.RepoPath = v
-	}
-	if v := os.Getenv("OLLAMA_ENDPOINT"); v != "" {
-		cfg.Embeddings.Endpoint = v
-	}
+	applyEnvAndDefaults(&cfg)
+	return &cfg, nil
+}
 
-	// Set defaults for new config sections.
+// NewWithDefaults returns a Config populated only from environment
+// variables and built-in defaults. Used when a project registry entry
+// omits config_path — the file-less path must still yield a runnable
+// provider configuration.
+func NewWithDefaults() *Config {
+	cfg := &Config{}
+	applyEnvAndDefaults(cfg)
+	return cfg
+}
+
+func applyEnvAndDefaults(cfg *Config) {
+	// Defaults first — env overrides win last so OLLAMA_ENDPOINT is not
+	// clobbered by the embeddings-provider default block.
 	if cfg.Embeddings.Provider == "" {
 		cfg.Embeddings.Provider = "ollama"
 		cfg.Embeddings.Model = "mxbai-embed-large"
 		cfg.Embeddings.Dimensions = 1024
+	}
+	if cfg.Embeddings.Endpoint == "" {
 		cfg.Embeddings.Endpoint = "http://localhost:11434"
 	}
 	if cfg.Summarization.Provider == "" {
@@ -101,7 +105,6 @@ func Load(path string) (*Config, error) {
 		cfg.Summarization.Model = "claude-sonnet-4-6"
 	}
 
-	// History defaults.
 	if cfg.History.WindowMonths == 0 {
 		cfg.History.WindowMonths = 12
 	}
@@ -115,5 +118,16 @@ func Load(path string) (*Config, error) {
 		cfg.History.CouplingMaxFiles = 20
 	}
 
-	return &cfg, nil
+	if v := os.Getenv("DATABASE_URL"); v != "" {
+		cfg.DatabaseURL = v
+	}
+	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
+		cfg.OpenAIKey = v
+	}
+	if v := os.Getenv("REPO_PATH"); v != "" {
+		cfg.RepoPath = v
+	}
+	if v := os.Getenv("OLLAMA_ENDPOINT"); v != "" {
+		cfg.Embeddings.Endpoint = v
+	}
 }

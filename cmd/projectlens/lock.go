@@ -20,8 +20,8 @@ type LockedCmd func(ctx context.Context, cmd *cobra.Command, db *storage.DB, cfg
 // acquireOrExit takes the writer lock or, on ErrBusy, prints the
 // holder's identity to stderr and exits with code 75 (sysexits
 // EX_TEMPFAIL).
-func acquireOrExit(ctx context.Context, db *storage.DB, cmdName string) (*writelock.Lock, error) {
-	lock, err := writelock.Acquire(ctx, db, cmdName)
+func acquireOrExit(ctx context.Context, db *storage.DB, cmdName, schema string) (*writelock.Lock, error) {
+	lock, err := writelock.Acquire(ctx, db, cmdName, schema)
 	if err != nil {
 		if be, ok := err.(writelock.ErrBusy); ok {
 			fmt.Fprintln(os.Stderr, be.Error())
@@ -45,7 +45,7 @@ func withWriteLock(cmdName string, run LockedCmd) func(*cobra.Command, []string)
 			return err
 		}
 		defer cs.Close()
-		lock, err := acquireOrExit(ctx, cs.DB(), cmdName)
+		lock, err := acquireOrExit(ctx, cs.DB(), cmdName, cs.StorageSchema())
 		if err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ func withWriteLockAfterMigrate(cmdName string, run LockedCmd) func(*cobra.Comman
 				return fmt.Errorf("running migrations: %w", err)
 			}
 		}
-		lock, err := acquireOrExit(ctx, cs.DB(), cmdName)
+		lock, err := acquireOrExit(ctx, cs.DB(), cmdName, cs.StorageSchema())
 		if err != nil {
 			return err
 		}
@@ -120,7 +120,7 @@ look live).`,
 				return err
 			}
 			defer cs.Close()
-			return writelock.ForceUnlock(ctx, cs.DB())
+			return writelock.ForceUnlock(ctx, cs.DB(), cs.StorageSchema())
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "required acknowledgement")

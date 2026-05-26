@@ -20,7 +20,7 @@ func TestKnowledgeDelete_DoesNotRaceIndexerScan(t *testing.T) {
 	ctx := context.Background()
 
 	// Acquire the writer lock to simulate index-embed running.
-	lock, err := writelock.Acquire(ctx, db, "test-knowledge-race")
+	lock, err := writelock.Acquire(ctx, db, "test-knowledge-race", "public")
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}

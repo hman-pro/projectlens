@@ -22,19 +22,21 @@ import (
 // releases locks held by that fresh connection — never the holder's.
 // Killing the holder's backend is the only way to force a session-
 // scoped advisory lock to drop from outside the holder's own session.
-func ForceUnlock(ctx context.Context, db *storage.DB) error {
+func ForceUnlock(ctx context.Context, db *storage.DB, schema string) error {
 	conn, err := db.Pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("writelock: acquire conn: %w", err)
 	}
 	defer conn.Release()
 
+	lockID := LockIDFor(schema)
+
 	var clientPID, backendPID int
 	var host, cmd string
 	var started time.Time
 	switch err := conn.QueryRow(ctx, `
 		SELECT client_pid, backend_pid, hostname, cmd, started_at FROM index_locks
-		WHERE lock_id = $1`, LockID).
+		WHERE lock_id = $1`, lockID).
 		Scan(&clientPID, &backendPID, &host, &cmd, &started); {
 	case err == nil:
 		log.Printf("writelock: force-unlocking holder client_pid=%d backend_pid=%d host=%s cmd=%q started=%s",
@@ -56,7 +58,7 @@ func ForceUnlock(ctx context.Context, db *storage.DB) error {
 	}
 
 	if _, err := conn.Exec(ctx,
-		`DELETE FROM index_locks WHERE lock_id = $1`, LockID); err != nil {
+		`DELETE FROM index_locks WHERE lock_id = $1`, lockID); err != nil {
 		return fmt.Errorf("writelock: delete row: %w", err)
 	}
 	return nil

@@ -8,10 +8,10 @@ import (
 )
 
 // IsWriterActive reports whether a live writer currently holds the
-// advisory lock. A row in index_locks alone is not enough — its
-// backend_pid must still appear in pg_stat_activity, mirroring the
+// per-schema advisory lock. A row in index_locks alone is not enough —
+// its backend_pid must still appear in pg_stat_activity, mirroring the
 // liveness check used in Acquire to reap stale rows.
-func IsWriterActive(ctx context.Context, db *storage.DB) (bool, error) {
+func IsWriterActive(ctx context.Context, db *storage.DB, schema string) (bool, error) {
 	const q = `
 		SELECT EXISTS(
 			SELECT 1
@@ -23,7 +23,7 @@ func IsWriterActive(ctx context.Context, db *storage.DB) (bool, error) {
 		)
 	`
 	var active bool
-	if err := db.Pool.QueryRow(ctx, q, LockID).Scan(&active); err != nil {
+	if err := db.Pool.QueryRow(ctx, q, LockIDFor(schema)).Scan(&active); err != nil {
 		return false, fmt.Errorf("writelock: is active: %w", err)
 	}
 	return active, nil

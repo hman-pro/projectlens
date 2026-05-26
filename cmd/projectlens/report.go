@@ -49,7 +49,9 @@ func newReportCmd() *cobra.Command {
 
 			insp := buildInspector(cfg, db, repoPath)
 
-			r, err := report.NewBuilder(db, insp, repoPath, report.Options{TopN: topN}).Build(ctx)
+			r, err := report.NewBuilder(db, insp, repoPath, report.Options{TopN: topN}).
+				WithSchema(cs.StorageSchema()).
+				Build(ctx)
 			if err != nil {
 				return err
 			}

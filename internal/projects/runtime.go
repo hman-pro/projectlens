@@ -39,7 +39,7 @@ func LoadProjectConfig(p Project, databaseURL string) (*config.Config, error) {
 		}
 		cfg = c
 	} else {
-		cfg = &config.Config{}
+		cfg = config.NewWithDefaults()
 	}
 	cfg.RepoPath = p.RepoPath
 	cfg.DatabaseURL = databaseURL

@@ -12,8 +12,18 @@ func TestLockID_IsStableNonZero(t *testing.T) {
 	if writelock.LockID == 0 {
 		t.Fatal("LockID must be non-zero")
 	}
-	if writelock.LockID < 1_000_000 {
-		t.Errorf("LockID = %d, want a large constant", writelock.LockID)
+	// LockIDFor is deterministic; calling it twice for the same schema
+	// must return identical values so a second process keys onto the
+	// same advisory lock.
+	if writelock.LockIDFor("public") != writelock.LockID {
+		t.Errorf("LockID drifted: LockID=%d LockIDFor(public)=%d",
+			writelock.LockID, writelock.LockIDFor("public"))
+	}
+	if writelock.LockIDFor("project_a") == writelock.LockIDFor("project_b") {
+		t.Error("LockIDFor produced collision across distinct schemas")
+	}
+	if writelock.LockIDFor("project_a") == writelock.LockIDFor("public") {
+		t.Error("LockIDFor produced collision against public")
 	}
 }
 
