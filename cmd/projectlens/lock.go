@@ -20,8 +20,8 @@ type LockedCmd func(ctx context.Context, cmd *cobra.Command, db *storage.DB, cfg
 // acquireOrExit takes the writer lock or, on ErrBusy, prints the
 // holder's identity to stderr and exits with code 75 (sysexits
 // EX_TEMPFAIL).
-func acquireOrExit(ctx context.Context, db *storage.DB, cmdName string) (*writelock.Lock, error) {
-	lock, err := writelock.Acquire(ctx, db, cmdName)
+func acquireOrExit(ctx context.Context, db *storage.DB, cmdName, schema string) (*writelock.Lock, error) {
+	lock, err := writelock.Acquire(ctx, db, cmdName, schema)
 	if err != nil {
 		if be, ok := err.(writelock.ErrBusy); ok {
 			fmt.Fprintln(os.Stderr, be.Error())
@@ -36,27 +36,21 @@ func acquireOrExit(ctx context.Context, db *storage.DB, cmdName string) (*writel
 // writer lock on entry and releases it on exit.
 func withWriteLock(cmdName string, run LockedCmd) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, _ []string) error {
-		cfg, repoPath, err := loadCmdConfig(cmd)
-		if err != nil {
-			return err
-		}
 		ctx := cmd.Context()
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		db, err := storage.Connect(ctx, cfg.DatabaseURL)
+		cs, err := openCmdStorage(ctx, cmd)
 		if err != nil {
-			return fmt.Errorf("connecting to database: %w", err)
+			return err
 		}
-		defer db.Close()
-
-		lock, err := acquireOrExit(ctx, db, cmdName)
+		defer cs.Close()
+		lock, err := acquireOrExit(ctx, cs.DB(), cmdName, cs.StorageSchema())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = lock.Release(context.Background()) }()
-
-		return run(ctx, cmd, db, cfg, repoPath)
+		return run(ctx, cmd, cs.DB(), cs.Config(), cs.RepoPath())
 	}
 }
 
@@ -67,31 +61,36 @@ func withWriteLock(cmdName string, run LockedCmd) func(*cobra.Command, []string)
 // lock and runs the rest of bootstrap under it.
 func withWriteLockAfterMigrate(cmdName string, run LockedCmd) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, _ []string) error {
-		cfg, repoPath, err := loadCmdConfig(cmd)
-		if err != nil {
-			return err
-		}
 		ctx := cmd.Context()
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		db, err := storage.Connect(ctx, cfg.DatabaseURL)
+		// Validate mutex BEFORE any I/O.
+		projectMode, err := validateMutex(cmd)
 		if err != nil {
-			return fmt.Errorf("connecting to database: %w", err)
+			return err
 		}
-		defer db.Close()
-
-		if err := db.Migrate(ctx, findMigrationsDir()); err != nil {
-			return fmt.Errorf("running migrations: %w", err)
+		if projectMode {
+			if err := migrateProjectSchemaFromFlags(ctx, cmd); err != nil {
+				return err
+			}
 		}
-
-		lock, err := acquireOrExit(ctx, db, cmdName)
+		cs, err := openCmdStorage(ctx, cmd)
+		if err != nil {
+			return err
+		}
+		defer cs.Close()
+		if !projectMode {
+			if err := cs.DB().Migrate(ctx, findMigrationsDir()); err != nil {
+				return fmt.Errorf("running migrations: %w", err)
+			}
+		}
+		lock, err := acquireOrExit(ctx, cs.DB(), cmdName, cs.StorageSchema())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = lock.Release(context.Background()) }()
-
-		return run(ctx, cmd, db, cfg, repoPath)
+		return run(ctx, cmd, cs.DB(), cs.Config(), cs.RepoPath())
 	}
 }
 
@@ -112,20 +111,16 @@ look live).`,
 			if !force {
 				return fmt.Errorf("refusing to unlock without --force")
 			}
-			cfg, _, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
+				return err
 			}
-			defer db.Close()
-			return writelock.ForceUnlock(ctx, db)
+			defer cs.Close()
+			return writelock.ForceUnlock(ctx, cs.DB(), cs.StorageSchema())
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "required acknowledgement")

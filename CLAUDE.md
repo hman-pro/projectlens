@@ -58,6 +58,7 @@ Use these before editing docs or behavior:
 | TUI action keys | `internal/tui/jobs/registry.go` |
 | Schema | `migrations/*.up.sql` |
 | Provider config defaults | `configs/index.yaml` |
+| Project registry | `configs/projects.yaml` + `internal/projects/` |
 | Agent skills | `agent/skills/*/SKILL.md` |
 | Claude/Codex wiring | `agent/claude/`, `agent/codex/` |
 
@@ -122,3 +123,5 @@ them. When changing a skill or hook in a way users need to notice, update
 - Keep oversized chunks bounded before embedding.
 - Treat `internal/mcpserver/tools.go` as the authoritative MCP tool list.
 - Treat schema migrations as append-only history unless a migration is still local and intentionally being revised.
+- Storage schemas are quoted via `pgx.Identifier{}.Sanitize()` after passing
+  `projects.ValidateStorageSchema`. Never splice an unvetted schema name into SQL.

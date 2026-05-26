@@ -11,11 +11,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/hman-pro/projectlens/internal/indexstate"
+	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -24,12 +25,14 @@ import (
 
 // Server wraps the dependencies needed by the MCP tool handlers.
 type Server struct {
-	db         *storage.DB
-	router     *retrieval.Router
-	port       int
-	repoPath   string
-	summarizer SummarizerProber // optional; may be nil
-	inspector  indexstate.Inspector
+	db            *storage.DB
+	router        *retrieval.Router
+	port          int
+	repoPath      string
+	summarizer    SummarizerProber // optional; may be nil
+	inspector     indexstate.Inspector
+	slug          string
+	storageSchema string
 }
 
 // New creates a new MCP server with the given dependencies.
@@ -54,6 +57,14 @@ func (s *Server) WithSummarizer(p SummarizerProber) *Server {
 	if di, ok := s.inspector.(*indexstate.DefaultInspector); ok {
 		di.Summarizer = p
 	}
+	return s
+}
+
+// WithProjectIdentity attaches project_slug + storage_schema for log scope
+// inside loggingHooks. Returns the same *Server for chaining.
+func (s *Server) WithProjectIdentity(slug, schema string) *Server {
+	s.slug = slug
+	s.storageSchema = schema
 	return s
 }
 
@@ -84,7 +95,8 @@ func (s *Server) Start(ctx context.Context) error {
 	httpServer := server.NewStreamableHTTPServer(mcpServer)
 
 	addr := fmt.Sprintf(":%d", s.port)
-	log.Printf("projectlens MCP server listening on %s", addr)
+	projLog := logger.WithProject(s.slug, s.storageSchema)
+	projLog.Info("projectlens MCP server listening", "addr", addr)
 
 	// Start in a goroutine so we can wait for context cancellation.
 	errCh := make(chan error, 1)
@@ -94,7 +106,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		log.Println("shutting down MCP server...")
+		projLog.Info("shutting down MCP server")
 		return httpServer.Shutdown(context.Background())
 	case err := <-errCh:
 		return err
@@ -112,7 +124,8 @@ func (s *Server) loggingHooks() *server.Hooks {
 	hooks.AddBeforeCallTool(func(_ context.Context, id any, msg *mcp.CallToolRequest) {
 		starts.Store(id, time.Now())
 		args, _ := json.Marshal(msg.Params.Arguments)
-		log.Printf("tool call  %-25s args=%s", msg.Params.Name, args)
+		projLog := logger.WithProject(s.slug, s.storageSchema)
+		projLog.Info("tool call", "name", msg.Params.Name, "args", string(args))
 	})
 
 	hooks.AddAfterCallTool(func(_ context.Context, id any, msg *mcp.CallToolRequest, _ any) {
@@ -120,20 +133,24 @@ func (s *Server) loggingHooks() *server.Hooks {
 		if t, ok := starts.LoadAndDelete(id); ok {
 			dur = time.Since(t.(time.Time)).Round(time.Millisecond).String()
 		}
-		log.Printf("tool done  %-25s duration=%s", msg.Params.Name, dur)
+		projLog := logger.WithProject(s.slug, s.storageSchema)
+		projLog.Info("tool done", "name", msg.Params.Name, "duration", dur)
 	})
 
 	hooks.AddOnError(func(_ context.Context, id any, method mcp.MCPMethod, _ any, err error) {
 		starts.Delete(id)
-		log.Printf("tool error method=%-25s err=%v", method, err)
+		projLog := logger.WithProject(s.slug, s.storageSchema)
+		projLog.Error("tool error", "method", method, "err", err)
 	})
 
 	hooks.AddOnRegisterSession(func(_ context.Context, _ server.ClientSession) {
-		log.Println("session connected")
+		projLog := logger.WithProject(s.slug, s.storageSchema)
+		projLog.Info("session connected")
 	})
 
 	hooks.AddOnUnregisterSession(func(_ context.Context, _ server.ClientSession) {
-		log.Println("session disconnected")
+		projLog := logger.WithProject(s.slug, s.storageSchema)
+		projLog.Info("session disconnected")
 	})
 
 	return hooks
@@ -147,4 +164,18 @@ func (s *Server) MCPServer() *server.MCPServer {
 		mcpServer.AddTool(r.tool, withTimeout(handlerTimeout, r.handler))
 	}
 	return mcpServer
+}
+
+// Handler returns an http.Handler that serves this Server's MCP tools over
+// Streamable HTTP at the caller-supplied mount point. Each invocation creates
+// a fresh MCPServer + session manager so multiple projects can be mounted
+// independently in one process.
+func (s *Server) Handler() http.Handler {
+	mcpServer := server.NewMCPServer("projectlens", "1.0.0",
+		server.WithHooks(s.loggingHooks()),
+	)
+	for _, r := range s.toolRegistry() {
+		mcpServer.AddTool(r.tool, withTimeout(handlerTimeout, r.handler))
+	}
+	return server.NewStreamableHTTPServer(mcpServer)
 }

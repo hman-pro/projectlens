@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/mcpserver"
+	"github.com/hman-pro/projectlens/internal/projects"
 	"github.com/hman-pro/projectlens/internal/providers/anthropic"
 	"github.com/hman-pro/projectlens/internal/providers/ollama"
 	"github.com/hman-pro/projectlens/internal/providers/openai"
@@ -30,7 +33,100 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Load config from file, with env var overrides.
+	projectsPath := envOr("PROJECTS_PATH", "configs/projects.yaml")
+	port := portFromEnv()
+
+	if _, err := os.Stat(projectsPath); err == nil {
+		return runMultiProject(ctx, projectsPath, port)
+	}
+	return runLegacySingle(ctx, port)
+}
+
+// runMultiProject loads a projects registry and mounts each project's MCP
+// handler under /{slug}/mcp on a single HTTP listener. Resolve failures for
+// an individual project are logged and skipped so the rest of the registry
+// can still come up.
+func runMultiProject(ctx context.Context, projectsPath string, port int) error {
+	reg, err := projects.LoadRegistry(projectsPath)
+	if err != nil {
+		return fmt.Errorf("load registry: %w", err)
+	}
+
+	mux := http.NewServeMux()
+	cleanups := []func(){}
+
+	for _, p := range reg.Projects {
+		mount := "/" + p.Slug + "/mcp"
+		rt, err := projects.Resolve(ctx, reg, p.Slug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warn: project %q not ready: %v\n", p.Slug, err)
+			stub := mcpserver.NotReadyHandler(p.Slug, err)
+			mux.Handle(mount, stub)
+			mux.Handle(mount+"/", stub)
+			continue
+		}
+		cleanups = append(cleanups, rt.Close)
+
+		srv := buildProjectServer(rt, port)
+		handler := srv.Handler()
+		mux.Handle(mount, http.StripPrefix(mount, handler))
+		mux.Handle(mount+"/", http.StripPrefix(mount, handler))
+		log.Printf("mounted %s -> storage_schema=%s repo=%s", mount, p.StorageSchema, p.RepoPath)
+	}
+
+	defer func() {
+		for _, c := range cleanups {
+			c()
+		}
+	}()
+
+	addr := fmt.Sprintf(":%d", port)
+	log.Printf("projectlens MCP server listening on %s", addr)
+	httpSrv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.ListenAndServe() }()
+	select {
+	case <-ctx.Done():
+		log.Println("shutting down MCP server...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return httpSrv.Shutdown(shutdownCtx)
+	case err := <-errCh:
+		if err == http.ErrServerClosed {
+			return nil
+		}
+		return err
+	}
+}
+
+// buildProjectServer constructs a per-project *mcpserver.Server from a
+// resolved Runtime. The port is shared across mounts (used only for log
+// messages and tool metadata).
+func buildProjectServer(rt *projects.Runtime, port int) *mcpserver.Server {
+	cfg := rt.Config
+	var embedder retrieval.QueryEmbedder
+	switch cfg.Embeddings.Provider {
+	case "ollama":
+		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model)
+	case "openai":
+		if cfg.OpenAIKey != "" {
+			if cfg.Embeddings.Dimensions > 0 {
+				embedder = openai.NewClientWithDims(cfg.OpenAIKey, cfg.Embeddings.Dimensions)
+			} else {
+				embedder = openai.NewClient(cfg.OpenAIKey)
+			}
+		}
+	}
+	router := retrieval.NewRouter(rt.DB, embedder)
+	return mcpserver.New(rt.DB, router, port, rt.RepoPath).
+		WithSummarizer(newSummarizerProber(cfg)).
+		WithProjectIdentity(rt.Slug, rt.StorageSchema)
+}
+
+// runLegacySingle preserves the original single-project behavior used when
+// configs/projects.yaml is absent. It loads configs/index.yaml (or
+// CONFIG_PATH) and serves one MCP endpoint at /mcp on the configured port.
+func runLegacySingle(ctx context.Context, port int) error {
 	cfgPath := envOr("CONFIG_PATH", "configs/index.yaml")
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -41,7 +137,6 @@ func run() error {
 		return fmt.Errorf("DATABASE_URL is required (set via env or config)")
 	}
 
-	// Connect to database.
 	db, err := storage.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connecting to database: %w", err)
@@ -53,7 +148,6 @@ func run() error {
 	}
 	log.Println("database connection established")
 
-	// Create embedder for query-time semantic search based on config.
 	var embedder retrieval.QueryEmbedder
 	switch cfg.Embeddings.Provider {
 	case "ollama":
@@ -68,19 +162,20 @@ func run() error {
 		}
 	}
 	router := retrieval.NewRouter(db, embedder)
+	srv := mcpserver.New(db, router, port, cfg.RepoPath).
+		WithSummarizer(newSummarizerProber(cfg))
+	return srv.Start(ctx)
+}
 
-	// Determine port.
+// portFromEnv returns the MCP listen port, honoring MCP_PORT when set.
+func portFromEnv() int {
 	port := 8484
 	if v := os.Getenv("MCP_PORT"); v != "" {
 		if p, err := strconv.Atoi(v); err == nil && p > 0 {
 			port = p
 		}
 	}
-
-	// Create and start MCP server.
-	srv := mcpserver.New(db, router, port, cfg.RepoPath).
-		WithSummarizer(newSummarizerProber(cfg))
-	return srv.Start(ctx)
+	return port
 }
 
 // envOr returns the value of the environment variable named by key, or

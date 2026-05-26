@@ -30,15 +30,12 @@ func newKnowledgeListCmd() *cobra.Command {
 		Short: "List knowledge entries (most recent first)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return err
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			entries, err := db.ListKnowledgeEntries(ctx, storage.KnowledgeListFilters{
 				Category: category, Tag: tag, Limit: limit,
@@ -74,15 +71,12 @@ func newKnowledgeShowCmd() *cobra.Command {
 			}
 
 			ctx := context.Background()
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return err
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			e, err := db.GetKnowledgeEntry(ctx, id)
 			if err != nil {
@@ -110,15 +104,12 @@ func newKnowledgeDeleteCmd() *cobra.Command {
 			}
 
 			ctx := context.Background()
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return err
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			n, err := db.DeleteKnowledgeEntry(ctx, id)
 			if err != nil {
@@ -147,15 +138,12 @@ func newKnowledgeSearchCmd() *cobra.Command {
 			}
 
 			ctx := context.Background()
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return err
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			if anchor != "" {
 				parts := strings.SplitN(anchor, ":", 2)

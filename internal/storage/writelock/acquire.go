@@ -8,18 +8,22 @@ import (
 	"github.com/hman-pro/projectlens/internal/storage"
 )
 
-// Acquire pins a pool connection, takes the advisory lock, inserts the
-// holder row, and returns a handle. Returns ErrBusy if another writer
-// already holds the lock.
+// Acquire pins a pool connection, takes the per-schema advisory lock,
+// inserts the holder row, and returns a handle. Returns ErrBusy if
+// another writer already holds the lock for this schema.
+//
+// schema names the storage schema this writer mutates. The advisory
+// lock and bookkeeping row are keyed by LockIDFor(schema) so writers in
+// different projects do not contend.
 //
 // The acquire flow:
 //  1. Reap stale rows whose backend_pid no longer appears in
 //     pg_stat_activity (crash recovery).
-//  2. SELECT pg_try_advisory_lock(LockID); on false return ErrBusy
-//     populated from the holder row.
+//  2. SELECT pg_try_advisory_lock(LockIDFor(schema)); on false return
+//     ErrBusy populated from the holder row.
 //  3. INSERT bookkeeping row with client_pid (os.Getpid) and
 //     backend_pid (pg_backend_pid()).
-func Acquire(ctx context.Context, db *storage.DB, cmdName string) (*Lock, error) {
+func Acquire(ctx context.Context, db *storage.DB, cmdName, schema string) (*Lock, error) {
 	conn, err := db.Pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("writelock: acquire conn: %w", err)
@@ -31,20 +35,23 @@ func Acquire(ctx context.Context, db *storage.DB, cmdName string) (*Lock, error)
 		}
 	}()
 
-	// 1. Reap stale rows. Match against backend_pid (the Postgres
-	// backend PID) — pg_stat_activity.pid is comparable to
-	// pg_backend_pid(), not to client os.Getpid().
+	lockID := LockIDFor(schema)
+
+	// 1. Reap stale rows for this schema's lock_id. Match against
+	// backend_pid (the Postgres backend PID) — pg_stat_activity.pid is
+	// comparable to pg_backend_pid(), not to client os.Getpid().
 	if _, err := conn.Exec(ctx, `
 		DELETE FROM index_locks
-		WHERE backend_pid NOT IN (SELECT pid FROM pg_stat_activity WHERE pid IS NOT NULL)
-	`); err != nil {
+		WHERE lock_id = $1
+		  AND backend_pid NOT IN (SELECT pid FROM pg_stat_activity WHERE pid IS NOT NULL)
+	`, lockID); err != nil {
 		return nil, fmt.Errorf("writelock: reap stale: %w", err)
 	}
 
 	// 2. Try advisory lock.
 	var got bool
 	if err := conn.QueryRow(ctx,
-		`SELECT pg_try_advisory_lock($1)`, LockID).Scan(&got); err != nil {
+		`SELECT pg_try_advisory_lock($1)`, lockID).Scan(&got); err != nil {
 		return nil, fmt.Errorf("writelock: try lock: %w", err)
 	}
 	if !got {
@@ -53,7 +60,7 @@ func Acquire(ctx context.Context, db *storage.DB, cmdName string) (*Lock, error)
 		// visible), not backend_pid.
 		_ = conn.QueryRow(ctx, `
 			SELECT client_pid, hostname, cmd, started_at FROM index_locks
-			WHERE lock_id = $1`, LockID).
+			WHERE lock_id = $1`, lockID).
 			Scan(&b.HolderPID, &b.HolderHost, &b.HolderCmd, &b.HolderStartedAt)
 		return nil, b
 	}
@@ -66,11 +73,11 @@ func Acquire(ctx context.Context, db *storage.DB, cmdName string) (*Lock, error)
 		INSERT INTO index_locks (lock_id, client_pid, backend_pid, hostname, cmd)
 		VALUES ($1, $2, pg_backend_pid(), $3, $4)
 		RETURNING id
-	`, LockID, clientPID, host, cmdName).Scan(&rowID); err != nil {
-		_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, LockID)
+	`, lockID, clientPID, host, cmdName).Scan(&rowID); err != nil {
+		_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, lockID)
 		return nil, fmt.Errorf("writelock: insert holder: %w", err)
 	}
 
 	success = true
-	return &Lock{conn: conn, rowID: rowID}, nil
+	return &Lock{conn: conn, lockID: lockID, rowID: rowID}, nil
 }

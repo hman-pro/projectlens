@@ -13,13 +13,13 @@ func TestIsWriterActive_TrueWhenHolderLive(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	lock, err := writelock.Acquire(ctx, db, "test-is-active")
+	lock, err := writelock.Acquire(ctx, db, "test-is-active", "public")
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 	defer lock.Release(ctx)
 
-	active, err := writelock.IsWriterActive(ctx, db)
+	active, err := writelock.IsWriterActive(ctx, db, "public")
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestIsWriterActive_FalseWhenNoRow(t *testing.T) {
 	if _, err := db.Pool.Exec(ctx, `DELETE FROM index_locks WHERE lock_id = $1`, writelock.LockID); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	active, err := writelock.IsWriterActive(ctx, db)
+	active, err := writelock.IsWriterActive(ctx, db, "public")
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestIsWriterActive_FalseWhenBackendPidDead(t *testing.T) {
 		_, _ = db.Pool.Exec(ctx, `DELETE FROM index_locks WHERE lock_id = $1`, writelock.LockID)
 	})
 
-	active, err := writelock.IsWriterActive(ctx, db)
+	active, err := writelock.IsWriterActive(ctx, db, "public")
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	_ "github.com/joho/godotenv/autoload"
 
 	"github.com/hman-pro/projectlens/internal/config"
+	"github.com/hman-pro/projectlens/internal/projects"
 	"github.com/hman-pro/projectlens/internal/tui/app"
 	"github.com/hman-pro/projectlens/internal/tui/jobs"
 	"github.com/hman-pro/projectlens/internal/tui/sections"
@@ -37,21 +38,60 @@ func run() error {
 	defer cancel()
 
 	cfgPath := getEnvOr("CONFIG_PATH", "configs/index.yaml")
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	if cfg.DatabaseURL == "" {
-		return fmt.Errorf("DATABASE_URL is required (set in .env or config)")
-	}
+	projectsPath := getEnvOr("PROJECTS_PATH", "configs/projects.yaml")
+	slugEnv := os.Getenv("PROJECT")
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
-	if err != nil {
-		return fmt.Errorf("connect db: %w", err)
-	}
-	defer pool.Close()
+	var (
+		pool        *pgxpool.Pool
+		cfg         *config.Config
+		repoPath    string
+		dbURL       string
+		projectSlug string
+		regPathUsed string
+		runtimeDone = func() {}
+	)
 
-	s := store.NewPG(pool, cfg, cfg.RepoPath)
+	if _, err := os.Stat(projectsPath); err == nil {
+		reg, rerr := projects.LoadRegistry(projectsPath)
+		if rerr != nil {
+			return fmt.Errorf("load registry: %w", rerr)
+		}
+		slug, serr := pickActiveProject(reg, slugEnv)
+		if serr != nil {
+			return serr
+		}
+		rt, rerr := projects.Resolve(ctx, reg, slug)
+		if rerr != nil {
+			return fmt.Errorf("resolve project %q: %w", slug, rerr)
+		}
+		runtimeDone = rt.Close
+		pool = rt.DB.Pool
+		cfg = rt.Config
+		repoPath = rt.RepoPath
+		dbURL = reg.DatabaseURL
+		projectSlug = rt.Slug
+		regPathUsed = projectsPath
+	} else {
+		legacyCfg, lerr := config.Load(cfgPath)
+		if lerr != nil {
+			return fmt.Errorf("load config: %w", lerr)
+		}
+		if legacyCfg.DatabaseURL == "" {
+			return fmt.Errorf("DATABASE_URL is required (set in .env or config)")
+		}
+		p, perr := pgxpool.New(ctx, legacyCfg.DatabaseURL)
+		if perr != nil {
+			return fmt.Errorf("connect db: %w", perr)
+		}
+		runtimeDone = p.Close
+		pool = p
+		cfg = legacyCfg
+		repoPath = legacyCfg.RepoPath
+		dbURL = legacyCfg.DatabaseURL
+	}
+	defer runtimeDone()
+
+	s := store.NewPG(pool, cfg, repoPath)
 
 	secs := []sections.Section{
 		health.New(ctx, s),
@@ -69,10 +109,12 @@ func run() error {
 		log.Printf("projectlens binary not resolvable: %v", berr)
 	}
 	target := jobs.RunnerTarget{
-		BinaryPath:  binPath,
-		ConfigPath:  cfgPath,
-		DatabaseURL: cfg.DatabaseURL,
-		RepoPath:    cfg.RepoPath,
+		BinaryPath:   binPath,
+		ConfigPath:   cfgPath,
+		DatabaseURL:  dbURL,
+		RepoPath:     repoPath,
+		ProjectSlug:  projectSlug,
+		ProjectsPath: regPathUsed,
 	}
 	runner := jobs.NewRunner(target, nil)
 	registry := jobs.DefaultRegistry(cfg)
@@ -84,8 +126,24 @@ func run() error {
 	// is fine: no jobs message dispatched until prog.Run() executes.
 	runner.SetSend(prog.Send)
 
-	_, err = prog.Run()
+	_, err := prog.Run()
 	return err
+}
+
+func pickActiveProject(reg *projects.Registry, explicit string) (string, error) {
+	if explicit != "" {
+		if _, err := reg.Find(explicit); err != nil {
+			return "", err
+		}
+		return explicit, nil
+	}
+	if reg.DefaultProject != "" {
+		return reg.DefaultProject, nil
+	}
+	if len(reg.Projects) == 1 {
+		return reg.Projects[0].Slug, nil
+	}
+	return "", fmt.Errorf("multiple projects configured; set PROJECT or set default_project in projects.yaml")
 }
 
 func getEnvOr(k, def string) string {

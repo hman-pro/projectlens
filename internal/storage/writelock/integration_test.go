@@ -54,7 +54,7 @@ func TestAcquire_HappyPath(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	lock, err := writelock.Acquire(ctx, db, "test-happy")
+	lock, err := writelock.Acquire(ctx, db, "test-happy", "public")
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -82,13 +82,13 @@ func TestAcquire_BusyReturnsHolderIdentity(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	first, err := writelock.Acquire(ctx, db, "alice")
+	first, err := writelock.Acquire(ctx, db, "alice", "public")
 	if err != nil {
 		t.Fatalf("first Acquire: %v", err)
 	}
 	defer first.Release(ctx)
 
-	_, err = writelock.Acquire(ctx, db, "bob")
+	_, err = writelock.Acquire(ctx, db, "bob", "public")
 	be, ok := err.(writelock.ErrBusy)
 	if !ok {
 		t.Fatalf("second Acquire returned %T (%v), want ErrBusy", err, err)
@@ -119,7 +119,7 @@ func TestAcquire_ReapsStaleRow(t *testing.T) {
 		t.Fatalf("plant ghost: %v", err)
 	}
 
-	lock, err := writelock.Acquire(ctx, db, "fresh")
+	lock, err := writelock.Acquire(ctx, db, "fresh", "public")
 	if err != nil {
 		t.Fatalf("Acquire after stale row: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestRelease_RemovesRowAndReleasesLock(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	lock, err := writelock.Acquire(ctx, db, "first")
+	lock, err := writelock.Acquire(ctx, db, "first", "public")
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRelease_RemovesRowAndReleasesLock(t *testing.T) {
 		t.Errorf("rows after Release = %d, want 0", n)
 	}
 
-	lock2, err := writelock.Acquire(ctx, db, "second")
+	lock2, err := writelock.Acquire(ctx, db, "second", "public")
 	if err != nil {
 		t.Fatalf("re-Acquire: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestRelease_IsIdempotent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	lock, err := writelock.Acquire(ctx, db, "x")
+	lock, err := writelock.Acquire(ctx, db, "x", "public")
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestAcquire_ContentionSerializes(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-starter
-			lock, err := writelock.Acquire(ctx, db, "concurrent")
+			lock, err := writelock.Acquire(ctx, db, "concurrent", "public")
 			if err != nil {
 				results <- err
 				return
@@ -233,12 +233,12 @@ func TestForceUnlock_TerminatesHolderAndReleasesLock(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	lock, err := writelock.Acquire(ctx, db, "stuck")
+	lock, err := writelock.Acquire(ctx, db, "stuck", "public")
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
 
-	if err := writelock.ForceUnlock(ctx, db); err != nil {
+	if err := writelock.ForceUnlock(ctx, db, "public"); err != nil {
 		t.Fatalf("ForceUnlock: %v", err)
 	}
 
@@ -252,7 +252,7 @@ func TestForceUnlock_TerminatesHolderAndReleasesLock(t *testing.T) {
 		t.Errorf("rows after ForceUnlock = %d, want 0", n)
 	}
 
-	lock2, err := writelock.Acquire(ctx, db, "after-force")
+	lock2, err := writelock.Acquire(ctx, db, "after-force", "public")
 	if err != nil {
 		t.Fatalf("Acquire after ForceUnlock: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestForceUnlock_TerminatesHolderAndReleasesLock(t *testing.T) {
 func TestForceUnlock_OnIdleDB_Succeeds(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := writelock.ForceUnlock(ctx, db); err != nil {
+	if err := writelock.ForceUnlock(ctx, db, "public"); err != nil {
 		t.Fatalf("ForceUnlock on idle DB: %v", err)
 	}
 }

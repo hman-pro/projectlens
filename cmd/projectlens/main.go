@@ -39,6 +39,8 @@ func main() {
 	rootCmd.PersistentFlags().String("config", "configs/index.yaml", "path to config file")
 	rootCmd.PersistentFlags().String("db", "", "database URL override")
 	rootCmd.PersistentFlags().String("repo", "", "repository path override")
+	rootCmd.PersistentFlags().String("project", "", "project slug from the registry")
+	rootCmd.PersistentFlags().String("projects", "configs/projects.yaml", "path to project registry YAML")
 
 	rootCmd.AddCommand(
 		newCensusCmd(),
@@ -59,6 +61,7 @@ func main() {
 		newIndexBackfillProvenanceCmd(),
 		newUnlockCmd(),
 		newMigrateCmd(),
+		newProjectsCmd(),
 	)
 
 	if os.Getenv("PROJECTLENS_DEBUG_HOLD_LOCK") == "1" {
@@ -174,15 +177,28 @@ func newReindexCmd() *cobra.Command {
 func newMigrateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "migrate",
-		Short: "Apply pending SQL migrations against the configured database",
+		Short: "Apply pending SQL migrations (per project schema when --project is set)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, _, err := loadCmdConfig(cmd)
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
+			}
+			projectMode, err := validateMutex(cmd)
+			if err != nil {
+				return err
+			}
+			if projectMode {
+				if err := migrateProjectSchemaFromFlags(ctx, cmd); err != nil {
+					return err
+				}
+				slug, _ := cmd.Flags().GetString("project")
+				fmt.Printf("migrations up to date (project %s)\n", slug)
+				return nil
+			}
+			// Legacy path.
+			cfg, _, err := loadCmdConfig(cmd)
+			if err != nil {
+				return err
 			}
 			db, err := storage.Connect(ctx, cfg.DatabaseURL)
 			if err != nil {
@@ -192,7 +208,7 @@ func newMigrateCmd() *cobra.Command {
 			if err := db.Migrate(ctx, findMigrationsDir()); err != nil {
 				return fmt.Errorf("running migrations: %w", err)
 			}
-			fmt.Println("migrations up to date")
+			fmt.Println("migrations up to date (public schema)")
 			return nil
 		},
 	}
@@ -205,16 +221,12 @@ func newStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			run, err := db.GetLatestRun(ctx)
 			if err != nil {
@@ -222,6 +234,9 @@ func newStatusCmd() *cobra.Command {
 			}
 
 			if run == nil {
+				if slug := cs.Slug(); slug != "" {
+					fmt.Printf("project: %s (storage_schema=%s)\n", slug, cs.StorageSchema())
+				}
 				fmt.Println("No index runs found. Run 'projectlens bootstrap' first.")
 				return nil
 			}
@@ -234,6 +249,9 @@ func newStatusCmd() *cobra.Command {
 
 			staleness := formatStaleness(run.StartedAt)
 
+			if slug := cs.Slug(); slug != "" {
+				fmt.Printf("project: %s (storage_schema=%s)\n", slug, cs.StorageSchema())
+			}
 			fmt.Println("ProjectLens Status")
 			fmt.Println("─────────────────")
 			fmt.Printf("Last indexed:     %s\n", ts)
@@ -258,16 +276,12 @@ func newInspectSymbolCmd() *cobra.Command {
 			ctx := context.Background()
 			symbolName := args[0]
 
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			results, err := retrieval.LexicalSearch(ctx, db, symbolName, 10)
 			if err != nil {
@@ -358,16 +372,12 @@ func newInspectPackageCmd() *cobra.Command {
 			ctx := context.Background()
 			packageName := args[0]
 
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
 
 			summary, err := db.GetSummaryByPackage(ctx, packageName)
 			if err != nil {
@@ -417,16 +427,13 @@ func newQueryCmd() *cobra.Command {
 			ctx := context.Background()
 			queryText := args[0]
 
-			cfg, _, err := loadCmdConfig(cmd)
+			cs, err := openCmdStorage(ctx, cmd)
 			if err != nil {
 				return err
 			}
-
-			db, err := storage.Connect(ctx, cfg.DatabaseURL)
-			if err != nil {
-				return fmt.Errorf("connecting to database: %w", err)
-			}
-			defer db.Close()
+			defer cs.Close()
+			db := cs.DB()
+			cfg := cs.Config()
 
 			var embedder retrieval.QueryEmbedder
 			switch cfg.Embeddings.Provider {

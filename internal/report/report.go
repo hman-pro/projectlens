@@ -63,11 +63,22 @@ type Builder struct {
 	db        *storage.DB
 	inspector indexstate.Inspector
 	repoPath  string
+	schema    string
 	opts      Options
 }
 
 func NewBuilder(db *storage.DB, insp indexstate.Inspector, repoPath string, opts Options) *Builder {
-	return &Builder{db: db, inspector: insp, repoPath: repoPath, opts: opts}
+	return &Builder{db: db, inspector: insp, repoPath: repoPath, schema: "public", opts: opts}
+}
+
+// WithSchema scopes the writer-active probe to a specific storage
+// schema. Multi-project mode passes the project's storage_schema so
+// the report does not mis-attribute another project's active writer.
+func (b *Builder) WithSchema(schema string) *Builder {
+	if schema != "" {
+		b.schema = schema
+	}
+	return b
 }
 
 // Build runs queries sequentially and returns the populated Report.
@@ -114,7 +125,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	r.Providers = b.inspector.ProbeProviders(ctx)
 	r.Git = b.inspector.GitHeadAndDirty(ctx)
 
-	if active, err := writerActive(ctx, b.db); err != nil {
+	if active, err := writerActive(ctx, b.db, b.schema); err != nil {
 		r.Degraded = append(r.Degraded, StageDegradation{Stage: "writer", Reason: err.Error(), SuggestedAction: ""})
 	} else {
 		r.WriterActive = active
@@ -162,6 +173,6 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 }
 
 // writerActive is a thin indirection so unit tests can swap it.
-var writerActive = func(ctx context.Context, db *storage.DB) (bool, error) {
-	return wl.IsWriterActive(ctx, db)
+var writerActive = func(ctx context.Context, db *storage.DB, schema string) (bool, error) {
+	return wl.IsWriterActive(ctx, db, schema)
 }

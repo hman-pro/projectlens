@@ -153,6 +153,61 @@ APIs only; importers, edge writers, native chunk linkage, and the
 2. `ContextParticipantRecord.IsCurrent` is `*bool` so the column's `DEFAULT TRUE` applies when callers leave it unset. Pass `&falseVar` for explicit false.
 3. Same-hash version reingest does not refresh item metadata inside `UpsertContextItemVersion`. Importers MUST call `UpsertContextItem` with fresh metadata before each `UpsertContextItemVersion` call. The version helper handles body lineage only.
 
+## Per-Project Schema Isolation
+
+ProjectLens can host multiple Go repositories in one Postgres database by
+giving each project its own storage schema. The mechanics live in three
+places:
+
+| File | Owns |
+|---|---|
+| [`internal/storage/db.go`](../internal/storage/db.go) | `ConnectScoped` and `MigrateInSchema`. |
+| [`internal/storage/schema.go`](../internal/storage/schema.go) | `QuoteSchema`, `AssertSchemaExists`, identifier safety. |
+| [`internal/projects/runtime.go`](../internal/projects/runtime.go) | Resolves `Runtime{Slug, StorageSchema, RepoPath, Config, DB}` from a registry entry. |
+
+`ConnectScoped(ctx, databaseURL, storageSchema)` builds a `pgxpool` whose
+`AfterConnect` hook fires on every borrowed connection. It:
+
+1. Asserts the schema exists (`information_schema.schemata` lookup). A
+   missing schema surfaces an actionable error pointing at
+   `projectlens migrate --project <slug>` — this is the trigger for the
+   MCP server's HTTP 503 hint and the CLI bootstrap branch.
+2. Runs `SET search_path TO "<schema>",public`. The schema identifier is
+   quoted via `pgx.Identifier{}.Sanitize()` (`QuoteSchema`) AFTER passing
+   `projects.ValidateStorageSchema`, which is the only safe way to splice
+   an identifier into SQL.
+
+Because every connection re-runs `AfterConnect`, the search path survives
+pool checkout/release cycles. The `public` suffix is what lets schema-local
+tables resolve `vector` / `halfvec` types (pgvector is global), so the
+extension is created once at the database level and never re-installed per
+schema.
+
+`MigrateInSchema(ctx, dir, storageSchema)` extends the existing migration
+runner to be schema-aware:
+
+1. `CREATE EXTENSION IF NOT EXISTS vector` runs at the database scope
+   (idempotent).
+2. `CREATE SCHEMA IF NOT EXISTS "<schema>"` creates the schema if missing.
+3. The runner acquires a connection, pins its `search_path`, and creates a
+   `schema_migrations` bookkeeping table **inside that schema**. Tracking
+   is therefore per-schema — re-running migrations against a fresh schema
+   replays every `*.up.sql` file regardless of what `public.schema_migrations`
+   contains.
+4. Each pending migration file runs against the pinned connection so
+   `CREATE TABLE`, indexes, and references resolve inside the project's
+   schema.
+
+This is invoked from `cmd/projectlens/migrate` when `--project` is set, and
+from the CLI bootstrap branch in
+[`cmd/projectlens/lock.go`](../cmd/projectlens/lock.go) when the scoped pool
+fails to open because the project schema does not yet exist.
+
+The legacy single-project path keeps using `storage.Connect` +
+`storage.Migrate` against `public`. Both paths coexist; selection is
+driven by whether `--project` is set (CLI) or `configs/projects.yaml`
+exists (MCP server, TUI).
+
 ## MCP Query Flow
 
 ```mermaid

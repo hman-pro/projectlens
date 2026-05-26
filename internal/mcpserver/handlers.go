@@ -434,8 +434,10 @@ func (s *Server) probeProviders(ctx context.Context) []ProviderHealth {
 // without text-scraping. Fields here are stable; skill SKILL.md
 // references them by name.
 type indexStatusPayload struct {
-	Stages map[string]StageFreshness `json:"stages"`
-	Git    struct {
+	ProjectSlug   string                    `json:"project_slug,omitempty"`
+	StorageSchema string                    `json:"storage_schema,omitempty"`
+	Stages        map[string]StageFreshness `json:"stages"`
+	Git           struct {
 		Head  string `json:"head,omitempty"`
 		Dirty bool   `json:"dirty"`
 	} `json:"git"`
@@ -452,8 +454,10 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 	}
 
 	payload := indexStatusPayload{
-		Stages:    map[string]StageFreshness{},
-		Providers: s.probeProviders(ctx),
+		ProjectSlug:   s.slug,
+		StorageSchema: s.storageSchema,
+		Stages:        map[string]StageFreshness{},
+		Providers:     s.probeProviders(ctx),
 	}
 	for stage, run := range byStage {
 		st := StageFreshness{
@@ -473,6 +477,9 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 	payload.Git.Head, payload.Git.Dirty = s.gitHeadAndDirty(ctx)
 
 	var b strings.Builder
+	if s.slug != "" {
+		fmt.Fprintf(&b, "project: %s (storage_schema=%s)\n\n", s.slug, s.storageSchema)
+	}
 	b.WriteString("ProjectLens Index Status\n")
 	b.WriteString("=======================\n")
 	if len(payload.Stages) == 0 {

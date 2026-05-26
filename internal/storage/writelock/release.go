@@ -21,7 +21,7 @@ func (l *Lock) Release(ctx context.Context) error {
 	}
 	var ok bool
 	if err := l.conn.QueryRow(ctx,
-		`SELECT pg_advisory_unlock($1)`, LockID).Scan(&ok); err != nil {
+		`SELECT pg_advisory_unlock($1)`, l.lockID).Scan(&ok); err != nil {
 		return fmt.Errorf("writelock: advisory unlock: %w", err)
 	}
 	return nil
