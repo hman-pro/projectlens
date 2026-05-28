@@ -348,3 +348,14 @@ live).
   — you'll only see the *effect* (agent course-correcting). To verify
   the hook fires at all, temporarily change `echo` to `echo "$(date) HOOK
   FIRED" >> /tmp/projectlens-hook.log` in the snippet and watch the file.
+
+## Migrating from the private `projectlens` build
+
+ProjectLens registers its MCP server under the name `projectlens`, so client tool prefixes change from `mcp__projectlens__*` to `mcp__projectlens__*`. There is no client-side alias.
+
+To migrate:
+
+1. Update your agent's MCP config to register the server name as `projectlens`.
+2. Update any skill snippets or saved knowledge that reference `mcp__projectlens__*` tools.
+3. Drop the old local schema/database (the public alpha uses the schema `projectlens`).
+4. Rerun `projectlens migrate` and `projectlens index-all` against the new schema.
