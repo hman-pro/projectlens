@@ -224,7 +224,9 @@ func TestEmbedBatch_SendsDimensionsOption(t *testing.T) {
 func TestEmbedBatch_OmitsDimensionsWhenZero(t *testing.T) {
 	var got embedRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&got)
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(embedResponse{Embeddings: [][]float64{{0.1}}})
 	}))
