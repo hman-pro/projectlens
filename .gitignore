@@ -49,3 +49,6 @@ artifacts/
 projectlens-graph*.json
 projectlens-graph*.json
 .understand-anything/
+
+# Filter-repo input files (used by the public-mirror migration; not committed)
+.filter-repo/
