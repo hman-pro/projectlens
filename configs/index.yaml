@@ -24,14 +24,18 @@ index:
     - "zz_generated"
 
 embeddings:
-  provider: openai
-  model: text-embedding-3-large
+  provider: ollama
+  model: qwen3-embedding:0.6b
   dimensions: 1024
-  # To use Ollama instead: provider: ollama, model: mxbai-embed-large, endpoint: http://localhost:11434
+  endpoint: http://localhost:11434
 
 summarization:
-  provider: anthropic
-  model: claude-sonnet-4-6
+  enabled: false
+  # Opt-in quality profile (heavy: 19GB download, requires a strong machine):
+  # enabled: true
+  # provider: ollama
+  # model: qwen3-coder:30b
+  # endpoint: http://localhost:11434
 
 datastore:
   engines:
