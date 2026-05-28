@@ -2,8 +2,8 @@ package summaries
 
 import "strings"
 
-// BuildPackageSummaryPrompt constructs the prompt used for generating a package
-// summary. Exported so it can be tested independently.
+// BuildPackageSummaryPrompt constructs the LLM prompt used to summarise a Go
+// package given its name and exported symbol signatures.
 func BuildPackageSummaryPrompt(packageName string, exportedSymbols []string) string {
 	var b strings.Builder
 	b.WriteString("You are a Go package documentation expert. Given the following exported symbols from a Go package, write a 2-4 sentence summary of what this package does, when a developer would use it, and its main responsibilities.\n\n")
