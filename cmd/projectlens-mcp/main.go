@@ -107,7 +107,7 @@ func buildProjectServer(rt *projects.Runtime, port int) *mcpserver.Server {
 	var embedder retrieval.QueryEmbedder
 	switch cfg.Embeddings.Provider {
 	case "ollama":
-		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model)
+		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, 0)
 	case "openai":
 		if cfg.OpenAIKey != "" {
 			if cfg.Embeddings.Dimensions > 0 {
@@ -151,7 +151,7 @@ func runLegacySingle(ctx context.Context, port int) error {
 	var embedder retrieval.QueryEmbedder
 	switch cfg.Embeddings.Provider {
 	case "ollama":
-		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model)
+		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, 0)
 	case "openai":
 		if cfg.OpenAIKey != "" {
 			if cfg.Embeddings.Dimensions > 0 {

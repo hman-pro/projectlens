@@ -20,7 +20,7 @@ func buildInspector(cfg *config.Config, db *storage.DB, repoPath string) *indexs
 	var embedder retrieval.QueryEmbedder
 	switch cfg.Embeddings.Provider {
 	case "ollama":
-		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model)
+		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, 0)
 	case "openai":
 		if cfg.OpenAIKey != "" {
 			if cfg.Embeddings.Dimensions > 0 {

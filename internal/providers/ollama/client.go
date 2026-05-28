@@ -15,20 +15,24 @@ import (
 
 // Client implements the Embedder interface using a local Ollama instance.
 type Client struct {
-	endpoint string
-	model    string
-	http     *http.Client
+	endpoint   string
+	model      string
+	dimensions int
+	http       *http.Client
 }
 
-// NewClient creates an Ollama client. Endpoint defaults to http://localhost:11434 if empty.
-func NewClient(endpoint, model string) *Client {
+// NewClient creates an Ollama embedding client. Endpoint defaults to
+// http://localhost:11434 if empty. Pass 0 for dimensions to omit the option
+// (uses the model's native dimensionality).
+func NewClient(endpoint, model string, dimensions int) *Client {
 	if endpoint == "" {
 		endpoint = "http://localhost:11434"
 	}
 	return &Client{
-		endpoint: endpoint,
-		model:    model,
-		http:     &http.Client{},
+		endpoint:   endpoint,
+		model:      model,
+		dimensions: dimensions,
+		http:       &http.Client{},
 	}
 }
 
@@ -52,12 +56,14 @@ func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, e
 		return nil, nil
 	}
 
+	opts := map[string]any{"num_ctx": 8192}
+	if c.dimensions > 0 {
+		opts["dimensions"] = c.dimensions
+	}
 	body, err := json.Marshal(embedRequest{
-		Model: c.model,
-		Input: texts,
-		Options: map[string]any{
-			"num_ctx": 8192,
-		},
+		Model:   c.model,
+		Input:   texts,
+		Options: opts,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ollama: marshal request: %w", err)
@@ -87,6 +93,14 @@ func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, e
 
 	if len(result.Embeddings) != len(texts) {
 		return nil, fmt.Errorf("ollama: expected %d embeddings, got %d", len(texts), len(result.Embeddings))
+	}
+
+	if c.dimensions > 0 {
+		for i, emb := range result.Embeddings {
+			if len(emb) != c.dimensions {
+				return nil, fmt.Errorf("ollama: embedding %d has %d dims, want %d (model=%s)", i, len(emb), c.dimensions, c.model)
+			}
+		}
 	}
 
 	// Convert float64 to float32.
