@@ -9,11 +9,6 @@ default_project: projectlens
 projects:
   - slug: projectlens
     storage_schema: projectlens
-    repo_path: /Users/you/source/projectlens
+    repo_path: .
     # config_path is optional; supplies indexing/provider settings, not identity.
     config_path: configs/index.yaml
-
-  # - slug: ingest
-  #   storage_schema: ingest
-  #   repo_path: /Users/you/source/example-org/ingest
-  #   config_path: configs/ingest.yaml
