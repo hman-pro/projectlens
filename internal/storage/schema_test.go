@@ -4,7 +4,7 @@ import "testing"
 
 func TestQuoteSchema(t *testing.T) {
 	cases := map[string]string{
-		"ingest":     `"ingest"`,
+		"ingest":      `"ingest"`,
 		"projectlens": `"projectlens"`,
 	}
 	for in, want := range cases {
