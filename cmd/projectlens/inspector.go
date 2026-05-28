@@ -5,9 +5,7 @@ import (
 
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/indexstate"
-	"github.com/hman-pro/projectlens/internal/providers/anthropic"
 	"github.com/hman-pro/projectlens/internal/providers/ollama"
-	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
 )
@@ -17,19 +15,7 @@ import (
 // CLI report and index_status see identical provider health. Do NOT use
 // buildProviders — that is fail-fast and returns indexer types.
 func buildInspector(cfg *config.Config, db *storage.DB, repoPath string) *indexstate.DefaultInspector {
-	var embedder retrieval.QueryEmbedder
-	switch cfg.Embeddings.Provider {
-	case "ollama":
-		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, 0)
-	case "openai":
-		if cfg.OpenAIKey != "" {
-			if cfg.Embeddings.Dimensions > 0 {
-				embedder = openai.NewClientWithDims(cfg.OpenAIKey, cfg.Embeddings.Dimensions)
-			} else {
-				embedder = openai.NewClient(cfg.OpenAIKey)
-			}
-		}
-	}
+	embedder := ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, cfg.Embeddings.Dimensions)
 	router := retrieval.NewRouter(db, embedder)
 
 	return &indexstate.DefaultInspector{
@@ -42,8 +28,7 @@ func buildInspector(cfg *config.Config, db *storage.DB, repoPath string) *indexs
 // summarizerProberFunc adapts the configured summarization provider to
 // the indexstate.SummarizerProber interface. configured is mandatory;
 // ping is optional. When ping is nil and configured returns true the
-// prober reports "configured" (credentials present, no probe run) —
-// suitable for providers where probing costs tokens (e.g. Anthropic).
+// prober reports "configured" (credentials present, no probe run).
 type summarizerProberFunc struct {
 	name       string
 	configured func() bool
@@ -63,31 +48,28 @@ func (f summarizerProberFunc) ProbeSummarizer(ctx context.Context) (string, stri
 	return f.name, "reachable", nil
 }
 
-// newCLISummarizerProber returns an indexstate.SummarizerProber backed by
-// the provider named in cfg.Summarization.Provider. Returns nil when
-// no provider is configured.
+// disabledSummarizerProber reports the explicit "disabled" state so the
+// report and index_status output can render `summarization: disabled`
+// without dereferencing a nil summarizer.
+type disabledSummarizerProber struct{}
+
+func (disabledSummarizerProber) ProbeSummarizer(_ context.Context) (string, string, error) {
+	return "", "disabled", nil
+}
+
+// newCLISummarizerProber returns an indexstate.SummarizerProber for the
+// configured summarization provider. When summarization is disabled,
+// the prober reports state "disabled". Returns nil only when the
+// provider is enabled but unknown (caller handles that as "no probe").
 func newCLISummarizerProber(cfg *config.Config) indexstate.SummarizerProber {
-	switch cfg.Summarization.Provider {
-	case "anthropic":
-		client := anthropic.NewClient(cfg.Summarization.Model)
-		return summarizerProberFunc{
-			name:       "anthropic",
-			configured: client.Configured,
-		}
-	case "openai":
-		if cfg.OpenAIKey == "" {
-			return summarizerProberFunc{
-				name:       "openai",
-				configured: func() bool { return false },
-			}
-		}
-		client := openai.NewClient(cfg.OpenAIKey)
-		return summarizerProberFunc{
-			name:       "openai",
-			configured: func() bool { return true },
-			ping:       client.Ping,
-		}
-	default:
+	if !cfg.Summarization.Enabled {
+		return disabledSummarizerProber{}
+	}
+	if cfg.Summarization.Provider != "ollama" {
 		return nil
+	}
+	return summarizerProberFunc{
+		name:       "ollama",
+		configured: func() bool { return true },
 	}
 }

@@ -14,9 +14,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/config"
 	"github.com/hman-pro/projectlens/internal/mcpserver"
 	"github.com/hman-pro/projectlens/internal/projects"
-	"github.com/hman-pro/projectlens/internal/providers/anthropic"
 	"github.com/hman-pro/projectlens/internal/providers/ollama"
-	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
 	_ "github.com/joho/godotenv/autoload"
@@ -104,19 +102,7 @@ func runMultiProject(ctx context.Context, projectsPath string, port int) error {
 // messages and tool metadata).
 func buildProjectServer(rt *projects.Runtime, port int) *mcpserver.Server {
 	cfg := rt.Config
-	var embedder retrieval.QueryEmbedder
-	switch cfg.Embeddings.Provider {
-	case "ollama":
-		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, 0)
-	case "openai":
-		if cfg.OpenAIKey != "" {
-			if cfg.Embeddings.Dimensions > 0 {
-				embedder = openai.NewClientWithDims(cfg.OpenAIKey, cfg.Embeddings.Dimensions)
-			} else {
-				embedder = openai.NewClient(cfg.OpenAIKey)
-			}
-		}
-	}
+	embedder := ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, cfg.Embeddings.Dimensions)
 	router := retrieval.NewRouter(rt.DB, embedder)
 	return mcpserver.New(rt.DB, router, port, rt.RepoPath).
 		WithSummarizer(newSummarizerProber(cfg)).
@@ -148,19 +134,7 @@ func runLegacySingle(ctx context.Context, port int) error {
 	}
 	log.Println("database connection established")
 
-	var embedder retrieval.QueryEmbedder
-	switch cfg.Embeddings.Provider {
-	case "ollama":
-		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, 0)
-	case "openai":
-		if cfg.OpenAIKey != "" {
-			if cfg.Embeddings.Dimensions > 0 {
-				embedder = openai.NewClientWithDims(cfg.OpenAIKey, cfg.Embeddings.Dimensions)
-			} else {
-				embedder = openai.NewClient(cfg.OpenAIKey)
-			}
-		}
-	}
+	embedder := ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, cfg.Embeddings.Dimensions)
 	router := retrieval.NewRouter(db, embedder)
 	srv := mcpserver.New(db, router, port, cfg.RepoPath).
 		WithSummarizer(newSummarizerProber(cfg))
@@ -212,35 +186,28 @@ func (f summarizerProberFunc) ProbeSummarizer(ctx context.Context) (string, stri
 	return f.name, "reachable", nil
 }
 
+// disabledSummarizerProber reports state "disabled" so the index_status
+// handler can render `summarization: disabled` without dereferencing a
+// nil summarizer.
+type disabledSummarizerProber struct{}
+
+func (disabledSummarizerProber) ProbeSummarizer(_ context.Context) (string, string, error) {
+	return "", "disabled", nil
+}
+
 // newSummarizerProber returns an mcpserver.SummarizerProber backed by
-// the provider named in cfg.Summarization.Provider. Returns nil when
-// no provider is configured.
+// the provider named in cfg.Summarization.Provider. When summarization
+// is disabled, the prober reports state "disabled". Returns nil only
+// when summarization is enabled but the provider name is unknown.
 func newSummarizerProber(cfg *config.Config) mcpserver.SummarizerProber {
-	switch cfg.Summarization.Provider {
-	case "anthropic":
-		client := anthropic.NewClient(cfg.Summarization.Model)
-		return summarizerProberFunc{
-			name:       "anthropic",
-			configured: client.Configured,
-		}
-	case "openai":
-		if cfg.OpenAIKey == "" {
-			// Provider is known but unkeyed: surface "openai/not_configured"
-			// instead of dropping to the default (nil prober) so index_status
-			// can distinguish "provider chosen but key missing" from "no
-			// summarization provider configured at all".
-			return summarizerProberFunc{
-				name:       "openai",
-				configured: func() bool { return false },
-			}
-		}
-		client := openai.NewClient(cfg.OpenAIKey)
-		return summarizerProberFunc{
-			name:       "openai",
-			configured: func() bool { return true },
-			ping:       client.Ping,
-		}
-	default:
+	if !cfg.Summarization.Enabled {
+		return disabledSummarizerProber{}
+	}
+	if cfg.Summarization.Provider != "ollama" {
 		return nil
+	}
+	return summarizerProberFunc{
+		name:       "ollama",
+		configured: func() bool { return true },
 	}
 }

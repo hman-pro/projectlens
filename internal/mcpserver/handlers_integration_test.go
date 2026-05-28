@@ -401,9 +401,9 @@ func TestIntegration_IndexStatus_StructuredProviders(t *testing.T) {
 	}
 	for _, p := range payload.Providers {
 		switch p.State {
-		case "reachable", "configured", "not_configured", "error":
+		case "reachable", "configured", "not_configured", "error", "disabled":
 		default:
-			t.Fatalf("ProviderHealth.State=%q not in {reachable,configured,not_configured,error}", p.State)
+			t.Fatalf("ProviderHealth.State=%q not in {reachable,configured,not_configured,error,disabled}", p.State)
 		}
 	}
 }

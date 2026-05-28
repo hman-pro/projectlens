@@ -72,6 +72,8 @@ func (d *DefaultInspector) ProbeProviders(ctx context.Context) []ProviderHealth 
 			}
 		case "not_configured":
 			ph.Error = "summarizer credentials missing"
+		case "disabled":
+			// Explicitly off in config; no error to report.
 		}
 		out = append(out, ph)
 	}

@@ -430,6 +430,28 @@ func (s *Server) probeProviders(ctx context.Context) []ProviderHealth {
 	return s.inspector.ProbeProviders(ctx)
 }
 
+// renderProviders appends a human-readable "Providers:" block to b.
+// The summarizer's "disabled" state is rendered as the canonical line
+// `summarization: disabled` so agents and operators see a stable
+// phrase when the feature is intentionally off in config.
+func renderProviders(b *strings.Builder, providers []ProviderHealth) {
+	b.WriteString("\nProviders:\n")
+	for _, p := range providers {
+		switch {
+		case p.Role == "summarizer" && p.State == "disabled":
+			b.WriteString("  summarization: disabled")
+		case p.Provider == "":
+			fmt.Fprintf(b, "  %s: %s", p.Role, p.State)
+		default:
+			fmt.Fprintf(b, "  %s (%s): %s", p.Role, p.Provider, p.State)
+		}
+		if p.Error != "" {
+			fmt.Fprintf(b, " (%s)", p.Error)
+		}
+		b.WriteString("\n")
+	}
+}
+
 // indexStatusPayload is the machine-parseable block agents can inspect
 // without text-scraping. Fields here are stable; skill SKILL.md
 // references them by name.
@@ -511,18 +533,7 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 	}
 
 	if len(payload.Providers) > 0 {
-		b.WriteString("\nProviders:\n")
-		for _, p := range payload.Providers {
-			if p.Provider == "" {
-				fmt.Fprintf(&b, "  %s: %s", p.Role, p.State)
-			} else {
-				fmt.Fprintf(&b, "  %s (%s): %s", p.Role, p.Provider, p.State)
-			}
-			if p.Error != "" {
-				fmt.Fprintf(&b, " (%s)", p.Error)
-			}
-			b.WriteString("\n")
-		}
+		renderProviders(&b, payload.Providers)
 	}
 
 	return mcp.NewToolResultStructured(payload, b.String()), nil

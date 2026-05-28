@@ -19,7 +19,6 @@ import (
 	"github.com/hman-pro/projectlens/internal/history"
 	"github.com/hman-pro/projectlens/internal/indexer"
 	"github.com/hman-pro/projectlens/internal/logger"
-	"github.com/hman-pro/projectlens/internal/providers/anthropic"
 	"github.com/hman-pro/projectlens/internal/providers/ollama"
 	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
@@ -648,30 +647,43 @@ func newIndexEmbedCmd() *cobra.Command {
 	return cmd
 }
 
+// indexSummarizeStage runs the summarize stage for one project. Exported
+// only for testing within the package — production callers go through
+// the cobra command, which wraps this with withWriteLock. When
+// cfg.Summarization.Enabled is false the function returns nil without
+// touching db, so a nil db is safe in that branch.
+func indexSummarizeStage(ctx context.Context, db *storage.DB, cfg *config.Config, repoPath string) error {
+	if !cfg.Summarization.Enabled {
+		logger.Info("summarization disabled in config; skipping package summaries")
+		return nil
+	}
+	_, summarizer, err := buildProviders(cfg)
+	if err != nil {
+		return fmt.Errorf("initializing providers: %w", err)
+	}
+	providers := storage.RunProviders{Summarize: summarizer.SummaryIdentity().String()}
+	return recordStageRun(ctx, db, repoPath, "summarize", providers,
+		func() (stageOutcome, error) {
+			s, err := summarize.SummarizeMissing(ctx, db, summarizer)
+			m := map[string]any{
+				"packages":  s.Packages,
+				"summaries": s.Summaries,
+			}
+			if s.Tokens > 0 {
+				m["tokens"] = s.Tokens
+			}
+			return stageOutcome{FilesProcessed: s.Packages, Metrics: m}, err
+		})
+}
+
 func newIndexSummarizeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "index-summarize",
-		Short: "Generate summaries for packages that don't have one",
+		Short: "Generate summaries for packages that don't have one (no-op when summarization is disabled)",
 	}
 	cmd.RunE = withWriteLock("index-summarize",
 		func(ctx context.Context, _ *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error {
-			_, summarizer, err := buildProviders(cfg)
-			if err != nil {
-				return fmt.Errorf("initializing providers: %w", err)
-			}
-			providers := storage.RunProviders{Summarize: summarizer.SummaryIdentity().String()}
-			return recordStageRun(ctx, db, repoPath, "summarize", providers,
-				func() (stageOutcome, error) {
-					s, err := summarize.SummarizeMissing(ctx, db, summarizer)
-					m := map[string]any{
-						"packages":  s.Packages,
-						"summaries": s.Summaries,
-					}
-					if s.Tokens > 0 {
-						m["tokens"] = s.Tokens
-					}
-					return stageOutcome{FilesProcessed: s.Packages, Metrics: m}, err
-				})
+			return indexSummarizeStage(ctx, db, cfg, repoPath)
 		})
 	return cmd
 }
@@ -733,7 +745,7 @@ func newIndexAllCmd() *cobra.Command {
 		func(ctx context.Context, c *cobra.Command, db *storage.DB, cfg *config.Config, repoPath string) error {
 			startTime := time.Now()
 
-			embedder, summarizer, err := buildProviders(cfg)
+			embedder, _, err := buildProviders(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing providers: %w", err)
 			}
@@ -799,24 +811,12 @@ func newIndexAllCmd() *cobra.Command {
 
 			// Stage 4: Summarize (only missing)
 			logger.Stage("Stage 4: Summarize")
-			if summarizer != nil {
-				providers := storage.RunProviders{Summarize: summarizer.SummaryIdentity().String()}
-				if err := recordStageRun(ctx, db, repoPath, "summarize", providers,
-					func() (stageOutcome, error) {
-						s, err := summarize.SummarizeMissing(ctx, db, summarizer)
-						m := map[string]any{
-							"packages":  s.Packages,
-							"summaries": s.Summaries,
-						}
-						if s.Tokens > 0 {
-							m["tokens"] = s.Tokens
-						}
-						return stageOutcome{FilesProcessed: s.Packages, Metrics: m}, err
-					}); err != nil {
+			if cfg.Summarization.Enabled {
+				if err := indexSummarizeStage(ctx, db, cfg, repoPath); err != nil {
 					logger.Warn("summarization failed", "err", err)
 				}
 			} else {
-				logger.Warn("skipping summarization (no summarizer configured)")
+				logger.Info("summarization disabled; skipping summarize stage")
 			}
 
 			// Stage 5: Embed (only missing)
@@ -846,35 +846,20 @@ func newIndexAllCmd() *cobra.Command {
 	return cmd
 }
 
-// buildProviders constructs the Embedder and PackageSummarizer based on config.
+// buildProviders constructs the Embedder and PackageSummarizer based on
+// config. Public ProjectLens only supports Ollama; summarization can be
+// disabled entirely, in which case the returned summarizer is nil and
+// callers must short-circuit before dereferencing it.
 func buildProviders(cfg *config.Config) (embeddings.Embedder, summaries.PackageSummarizer, error) {
-	var embedder embeddings.Embedder
-	switch cfg.Embeddings.Provider {
-	case "ollama":
-		embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, 0)
-	case "openai":
-		if cfg.OpenAIKey == "" {
-			return nil, nil, fmt.Errorf("OPENAI_API_KEY required when embeddings.provider is 'openai'")
-		}
-		embedder = openai.NewClientWithModels(cfg.OpenAIKey, "", cfg.Embeddings.Model, cfg.Embeddings.Dimensions)
-	default:
-		return nil, nil, fmt.Errorf("unknown embeddings provider: %s", cfg.Embeddings.Provider)
-	}
+	embedder := ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, cfg.Embeddings.Dimensions)
 
-	var summarizer summaries.PackageSummarizer
-	switch cfg.Summarization.Provider {
-	case "anthropic":
-		summarizer = anthropic.NewClient(cfg.Summarization.Model)
-	case "openai":
-		if cfg.OpenAIKey == "" {
-			return nil, nil, fmt.Errorf("OPENAI_API_KEY required when summarization.provider is 'openai'")
-		}
-		summarizer = openai.NewClientWithModels(cfg.OpenAIKey, cfg.Summarization.Model, "", 0)
-	default:
-		return nil, nil, fmt.Errorf("unknown summarization provider: %s", cfg.Summarization.Provider)
+	if !cfg.Summarization.Enabled {
+		return embedder, nil, nil
 	}
-
-	return embedder, summarizer, nil
+	if cfg.Summarization.Provider != "ollama" {
+		return nil, nil, fmt.Errorf("only ollama summarization is supported; got %q", cfg.Summarization.Provider)
+	}
+	return embedder, ollama.NewSummarizer(cfg.Summarization.Endpoint, cfg.Summarization.Model), nil
 }
 
 // loadCmdConfig loads configuration and resolves the repo path from flags.
