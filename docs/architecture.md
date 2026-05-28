@@ -16,7 +16,7 @@ flowchart LR
     MCP["projectlens-mcp<br/>Streamable HTTP"]
     DB[("Postgres 16<br/>pgvector")]
     Repo["Target Go repository<br/>read-only input"]
-    Providers["Providers<br/>Ollama/OpenAI embeddings<br/>Anthropic/OpenAI summaries"]
+    Providers["Providers<br/>Ollama embeddings<br/>(summaries disabled by default)"]
 
     Agent -->|MCP tools| MCP
     CLI -->|read/write index| DB
@@ -36,7 +36,7 @@ flowchart LR
 | MCP server | `cmd/projectlens-mcp` | Serves the indexed state to agents over Streamable HTTP at `/mcp`. |
 | TUI | `cmd/projectlens-tui` | Operational dashboard for health, pipeline, storage, config, runs, and indexer job execution. |
 | Postgres + pgvector | `docker/docker-compose.yml`, `migrations/` | Stores source facts, graph edges, history, chunks, embeddings, summaries, knowledge, index runs, and locks. |
-| Target repo | configured by `--repo`, `REPO_PATH`, or config | Read-only source for census, parsing, datastore scan, and git history. |
+| Target repo | configured by `--repo`, `PROJECTLENS_REPO_PATH`, or config | Read-only source for census, parsing, datastore scan, and git history. |
 | Providers | `internal/providers/*` | Embeddings and package summaries. Defaults are config-driven. |
 
 ## Data Layers
