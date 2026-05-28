@@ -121,18 +121,26 @@ func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, e
 // change without coordinating with the MCP server.
 func (c *Client) ProviderName() string { return "ollama" }
 
-// knownOllamaDims maps well-known Ollama embedding model names to their output
-// dimension counts. Models not listed here get Dimensions=0 (unknown).
+// knownOllamaDims maps well-known Ollama embedding model names to their default
+// output dimensions. Used for identity probes only; the embedding pipeline
+// trusts the configured dimensions value when sending requests.
 var knownOllamaDims = map[string]int{
-	"mxbai-embed-large": 1024,
+	"mxbai-embed-large":    1024,
+	"qwen3-embedding:0.6b": 1024,
+	"qwen3-embedding:4b":   2560,
+	"qwen3-embedding:8b":   4096,
 }
 
 // EmbedIdentity returns the provider identity for the embedding role.
 func (c *Client) EmbedIdentity() identity.ProviderIdentity {
+	dims := c.dimensions
+	if dims == 0 {
+		dims = knownOllamaDims[c.model]
+	}
 	return identity.ProviderIdentity{
 		Vendor:     "ollama",
 		Model:      c.model,
-		Dimensions: knownOllamaDims[c.model],
+		Dimensions: dims,
 	}
 }
 
