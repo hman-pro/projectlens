@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	oai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 
 	"github.com/hman-pro/projectlens/internal/providers/identity"
+	"github.com/hman-pro/projectlens/internal/summaries"
 )
 
 const defaultOpenAIBaseURL = "https://api.openai.com/v1"
@@ -101,27 +101,11 @@ func (c *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
-// BuildPackageSummaryPrompt constructs the prompt used for generating a package
-// summary. Exported so it can be tested independently.
-func BuildPackageSummaryPrompt(packageName string, exportedSymbols []string) string {
-	var b strings.Builder
-	b.WriteString("You are a Go package documentation expert. Given the following exported symbols from a Go package, write a 2-4 sentence summary of what this package does, when a developer would use it, and its main responsibilities.\n\n")
-	b.WriteString("Package: ")
-	b.WriteString(packageName)
-	b.WriteString("\n\nExported symbols:\n")
-	for _, sym := range exportedSymbols {
-		b.WriteString(sym)
-		b.WriteString("\n")
-	}
-	b.WriteString("\nWrite a concise summary focused on purpose and usage, not implementation details.")
-	return b.String()
-}
-
 // GeneratePackageSummary calls the configured chat model with a prompt built
 // from the package name and its exported symbols, returning a 2-4 sentence
 // summary.
 func (c *Client) GeneratePackageSummary(ctx context.Context, packageName string, exportedSymbols []string) (string, error) {
-	prompt := BuildPackageSummaryPrompt(packageName, exportedSymbols)
+	prompt := summaries.BuildPackageSummaryPrompt(packageName, exportedSymbols)
 
 	resp, err := c.client.Chat.Completions.New(ctx, oai.ChatCompletionNewParams{
 		Model: oai.ChatModel(c.chatModel),

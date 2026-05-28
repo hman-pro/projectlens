@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hman-pro/projectlens/internal/summaries"
 )
 
 func TestNewClient_DoesNotPanic(t *testing.T) {
@@ -26,7 +28,7 @@ func TestNewClient_EmptyKey(t *testing.T) {
 }
 
 func TestBuildPackageSummaryPrompt_ContainsPackageName(t *testing.T) {
-	prompt := BuildPackageSummaryPrompt("mypackage", []string{"Foo", "Bar"})
+	prompt := summaries.BuildPackageSummaryPrompt("mypackage", []string{"Foo", "Bar"})
 
 	if !strings.Contains(prompt, "Package: mypackage") {
 		t.Errorf("expected prompt to contain package name, got:\n%s", prompt)
@@ -40,7 +42,7 @@ func TestBuildPackageSummaryPrompt_ContainsAllSymbols(t *testing.T) {
 		"type Config struct { ... }",
 	}
 
-	prompt := BuildPackageSummaryPrompt("config", symbols)
+	prompt := summaries.BuildPackageSummaryPrompt("config", symbols)
 
 	for _, sym := range symbols {
 		if !strings.Contains(prompt, sym) {
@@ -50,7 +52,7 @@ func TestBuildPackageSummaryPrompt_ContainsAllSymbols(t *testing.T) {
 }
 
 func TestBuildPackageSummaryPrompt_ContainsSystemInstruction(t *testing.T) {
-	prompt := BuildPackageSummaryPrompt("pkg", []string{"X"})
+	prompt := summaries.BuildPackageSummaryPrompt("pkg", []string{"X"})
 
 	if !strings.Contains(prompt, "Go package documentation expert") {
 		t.Error("expected prompt to contain system instruction about Go package documentation expert")
@@ -68,7 +70,7 @@ func TestBuildPackageSummaryPrompt_ContainsSystemInstruction(t *testing.T) {
 
 func TestBuildPackageSummaryPrompt_SymbolsOnSeparateLines(t *testing.T) {
 	symbols := []string{"Alpha", "Beta", "Gamma"}
-	prompt := BuildPackageSummaryPrompt("test", symbols)
+	prompt := summaries.BuildPackageSummaryPrompt("test", symbols)
 
 	// Each symbol should be on its own line.
 	for _, sym := range symbols {
@@ -79,7 +81,7 @@ func TestBuildPackageSummaryPrompt_SymbolsOnSeparateLines(t *testing.T) {
 }
 
 func TestBuildPackageSummaryPrompt_EmptySymbols(t *testing.T) {
-	prompt := BuildPackageSummaryPrompt("empty", nil)
+	prompt := summaries.BuildPackageSummaryPrompt("empty", nil)
 
 	if !strings.Contains(prompt, "Package: empty") {
 		t.Error("expected package name in prompt even with no symbols")

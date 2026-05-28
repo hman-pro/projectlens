@@ -9,7 +9,7 @@ import (
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/hman-pro/projectlens/internal/providers/identity"
-	"github.com/hman-pro/projectlens/internal/providers/openai"
+	"github.com/hman-pro/projectlens/internal/summaries"
 )
 
 // Client wraps the Anthropic API client for generating package summaries.
@@ -40,7 +40,7 @@ func (c *Client) Configured() bool {
 // GeneratePackageSummary calls Claude with the same prompt format used by
 // the OpenAI client. Returns a 2-4 sentence summary.
 func (c *Client) GeneratePackageSummary(ctx context.Context, packageName string, exportedSymbols []string) (string, error) {
-	prompt := openai.BuildPackageSummaryPrompt(packageName, exportedSymbols)
+	prompt := summaries.BuildPackageSummaryPrompt(packageName, exportedSymbols)
 
 	resp, err := c.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(c.model),

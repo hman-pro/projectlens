@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
-	"github.com/hman-pro/projectlens/internal/providers/openai"
+	"github.com/hman-pro/projectlens/internal/summaries"
 )
 
 func TestNewClient_CreatesClientWithModel(t *testing.T) {
@@ -38,7 +38,7 @@ func TestNewClient_SDKModelConstant(t *testing.T) {
 }
 
 func TestPromptContainsPackageName(t *testing.T) {
-	prompt := openai.BuildPackageSummaryPrompt("mypackage", []string{"Foo", "Bar"})
+	prompt := summaries.BuildPackageSummaryPrompt("mypackage", []string{"Foo", "Bar"})
 	if !strings.Contains(prompt, "Package: mypackage") {
 		t.Errorf("expected prompt to contain package name, got:\n%s", prompt)
 	}
@@ -51,7 +51,7 @@ func TestPromptContainsAllSymbols(t *testing.T) {
 		"type Config struct { ... }",
 	}
 
-	prompt := openai.BuildPackageSummaryPrompt("anthropic", symbols)
+	prompt := summaries.BuildPackageSummaryPrompt("anthropic", symbols)
 
 	for _, sym := range symbols {
 		if !strings.Contains(prompt, sym) {
@@ -61,7 +61,7 @@ func TestPromptContainsAllSymbols(t *testing.T) {
 }
 
 func TestPromptContainsInstructions(t *testing.T) {
-	prompt := openai.BuildPackageSummaryPrompt("pkg", []string{"X"})
+	prompt := summaries.BuildPackageSummaryPrompt("pkg", []string{"X"})
 
 	if !strings.Contains(prompt, "Go package documentation expert") {
 		t.Error("expected prompt to contain system instruction about Go package documentation expert")
@@ -72,7 +72,7 @@ func TestPromptContainsInstructions(t *testing.T) {
 }
 
 func TestPromptEmptySymbols(t *testing.T) {
-	prompt := openai.BuildPackageSummaryPrompt("empty", nil)
+	prompt := summaries.BuildPackageSummaryPrompt("empty", nil)
 
 	if !strings.Contains(prompt, "Package: empty") {
 		t.Error("expected package name in prompt even with no symbols")
