@@ -2,6 +2,7 @@
 bin/
 /projectlens
 /projectlens-mcp
+/projectlens-tui
 *.exe
 *.exe~
 *.dll
@@ -41,3 +42,10 @@ vendor/
 # OS
 .DS_Store
 Thumbs.db
+
+# ProjectLens generated artifacts
+artifacts/
+*.graphml
+projectlens-graph*.json
+projectlens-graph*.json
+.understand-anything/
