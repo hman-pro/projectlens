@@ -31,7 +31,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	projectsPath := envOr("PROJECTS_PATH", "configs/projects.yaml")
+	projectsPath := envOr("PROJECTLENS_PROJECTS", "configs/projects.yaml")
 	port := portFromEnv()
 
 	if _, err := os.Stat(projectsPath); err == nil {
@@ -113,7 +113,7 @@ func buildProjectServer(rt *projects.Runtime, port int) *mcpserver.Server {
 // configs/projects.yaml is absent. It loads configs/index.yaml (or
 // CONFIG_PATH) and serves one MCP endpoint at /mcp on the configured port.
 func runLegacySingle(ctx context.Context, port int) error {
-	cfgPath := envOr("CONFIG_PATH", "configs/index.yaml")
+	cfgPath := envOr("PROJECTLENS_CONFIG", "configs/index.yaml")
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -141,10 +141,10 @@ func runLegacySingle(ctx context.Context, port int) error {
 	return srv.Start(ctx)
 }
 
-// portFromEnv returns the MCP listen port, honoring MCP_PORT when set.
+// portFromEnv returns the MCP listen port, honoring PROJECTLENS_MCP_PORT when set.
 func portFromEnv() int {
 	port := 8484
-	if v := os.Getenv("MCP_PORT"); v != "" {
+	if v := os.Getenv("PROJECTLENS_MCP_PORT"); v != "" {
 		if p, err := strconv.Atoi(v); err == nil && p > 0 {
 			port = p
 		}

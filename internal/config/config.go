@@ -63,8 +63,8 @@ type IndexConfig struct {
 }
 
 // Load reads a YAML config file from path and returns a Config.
-// Environment variables DATABASE_URL and REPO_PATH override the
-// corresponding fields when set.
+// Environment variables PROJECTLENS_DATABASE_URL, PROJECTLENS_REPO_PATH,
+// and PROJECTLENS_OLLAMA_ENDPOINT override the corresponding fields when set.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -91,8 +91,8 @@ func NewWithDefaults() *Config {
 }
 
 func applyEnvAndDefaults(cfg *Config) {
-	// Defaults first — env overrides win last so OLLAMA_ENDPOINT is not
-	// clobbered by the embeddings-provider default block.
+	// Defaults first — env overrides win last so PROJECTLENS_OLLAMA_ENDPOINT
+	// is not clobbered by the embeddings-provider default block.
 	if cfg.Embeddings.Provider == "" {
 		cfg.Embeddings.Provider = "ollama"
 		cfg.Embeddings.Model = "qwen3-embedding:0.6b"
@@ -117,13 +117,16 @@ func applyEnvAndDefaults(cfg *Config) {
 		cfg.History.CouplingMaxFiles = 20
 	}
 
-	if v := os.Getenv("DATABASE_URL"); v != "" {
+	if v := os.Getenv("PROJECTLENS_DATABASE_URL"); v != "" {
 		cfg.DatabaseURL = v
 	}
-	if v := os.Getenv("REPO_PATH"); v != "" {
+	if v := os.Getenv("PROJECTLENS_REPO_PATH"); v != "" {
 		cfg.RepoPath = v
 	}
-	if v := os.Getenv("OLLAMA_ENDPOINT"); v != "" {
+	if v := os.Getenv("PROJECTLENS_OLLAMA_ENDPOINT"); v != "" {
 		cfg.Embeddings.Endpoint = v
+		if cfg.Summarization.Endpoint == "" {
+			cfg.Summarization.Endpoint = v
+		}
 	}
 }

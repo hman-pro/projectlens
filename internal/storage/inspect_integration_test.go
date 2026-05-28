@@ -13,7 +13,7 @@ import (
 
 func openIntegration(t *testing.T) *storage.DB {
 	t.Helper()
-	url := os.Getenv("DATABASE_URL")
+	url := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
 	}

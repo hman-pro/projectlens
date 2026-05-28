@@ -11,7 +11,7 @@ import (
 )
 
 func TestScopedPoolsDoNotSeeAcrossSchemas(t *testing.T) {
-	url := os.Getenv("DATABASE_URL")
+	url := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
 	}
@@ -59,7 +59,7 @@ func TestScopedPoolsDoNotSeeAcrossSchemas(t *testing.T) {
 }
 
 func TestConnectionReuseKeepsScope(t *testing.T) {
-	url := os.Getenv("DATABASE_URL")
+	url := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
 	}
@@ -107,7 +107,7 @@ func TestConnectionReuseKeepsScope(t *testing.T) {
 }
 
 func TestSymbolsIndexRunsKnowledgeDoNotCrossSchemas(t *testing.T) {
-	url := os.Getenv("DATABASE_URL")
+	url := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
 	}

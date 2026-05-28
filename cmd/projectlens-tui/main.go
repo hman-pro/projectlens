@@ -37,9 +37,9 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	cfgPath := getEnvOr("CONFIG_PATH", "configs/index.yaml")
-	projectsPath := getEnvOr("PROJECTS_PATH", "configs/projects.yaml")
-	slugEnv := os.Getenv("PROJECT")
+	cfgPath := getEnvOr("PROJECTLENS_CONFIG", "configs/index.yaml")
+	projectsPath := getEnvOr("PROJECTLENS_PROJECTS", "configs/projects.yaml")
+	slugEnv := os.Getenv("PROJECTLENS_PROJECT")
 
 	var (
 		pool        *pgxpool.Pool

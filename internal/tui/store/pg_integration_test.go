@@ -15,7 +15,7 @@ import (
 )
 
 func TestPGStore_AllSnapshots(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable"
 	}
@@ -63,7 +63,7 @@ func TestPGStore_AllSnapshots(t *testing.T) {
 }
 
 func TestPGStore_QuitCancelsInFlight(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable"
 	}

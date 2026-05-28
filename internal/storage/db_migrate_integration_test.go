@@ -11,7 +11,7 @@ import (
 )
 
 func TestMigrateInSchemaIsolatesTwoProjects(t *testing.T) {
-	url := os.Getenv("DATABASE_URL")
+	url := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
 	}

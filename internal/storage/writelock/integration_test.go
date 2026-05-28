@@ -27,7 +27,7 @@ const testDB = "postgres://projectlens:projectlens@localhost:5433/projectlens?ss
 
 func newTestDB(t *testing.T) *storage.DB {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if dsn == "" {
 		dsn = testDB
 	}

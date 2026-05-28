@@ -49,7 +49,7 @@ func setupIntegrationServer(t *testing.T) *Server {
 
 	// Use Ollama for semantic embeddings. Tests that require semantic search
 	// skip themselves when Ollama is not reachable.
-	endpoint := os.Getenv("OLLAMA_ENDPOINT")
+	endpoint := os.Getenv("PROJECTLENS_OLLAMA_ENDPOINT")
 	if endpoint == "" {
 		endpoint = "http://localhost:11434"
 	}

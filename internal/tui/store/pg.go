@@ -264,17 +264,15 @@ func (s *PG) Config(ctx context.Context) (ConfigSnapshot, error) {
 	}, nil
 }
 
-// resolveMCPURL builds the MCP server URL from env (PROJECTLENS_MCP_URL > MCP_PORT >
-// PROJECTLENS_MCP_PORT > default 8484). Path is /mcp to match the streamable-http
-// transport configured in agent/claude/mcp-config.json.
+// resolveMCPURL builds the MCP server URL from env (PROJECTLENS_MCP_URL >
+// PROJECTLENS_MCP_PORT > default 8484). Path is /mcp to match the
+// streamable-http transport configured in agent/claude/mcp-config.json.
 func resolveMCPURL() string {
 	if v := os.Getenv("PROJECTLENS_MCP_URL"); v != "" {
 		return v
 	}
 	port := "8484"
-	if v := os.Getenv("MCP_PORT"); v != "" {
-		port = v
-	} else if v := os.Getenv("PROJECTLENS_MCP_PORT"); v != "" {
+	if v := os.Getenv("PROJECTLENS_MCP_PORT"); v != "" {
 		port = v
 	}
 	return fmt.Sprintf("http://localhost:%s/mcp", port)

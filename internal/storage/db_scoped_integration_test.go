@@ -11,7 +11,7 @@ import (
 )
 
 func TestConnectScopedSetsSearchPath(t *testing.T) {
-	url := os.Getenv("DATABASE_URL")
+	url := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
 	}
@@ -55,7 +55,7 @@ func TestConnectScopedSetsSearchPath(t *testing.T) {
 }
 
 func TestConnectScopedFailsOnMissingSchema(t *testing.T) {
-	url := os.Getenv("DATABASE_URL")
+	url := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
 	}

@@ -45,7 +45,7 @@ func writeFile(path, body string) error {
 // where a registry entry without config_path produced a zero-valued
 // Config (empty embeddings provider) and broke index-* commands.
 func TestLoadProjectConfigFilelessAppliesDefaults(t *testing.T) {
-	t.Setenv("OLLAMA_ENDPOINT", "")
+	t.Setenv("PROJECTLENS_OLLAMA_ENDPOINT", "")
 	p := Project{
 		Slug:          "noconfig",
 		StorageSchema: "noconfig",
@@ -80,7 +80,7 @@ func TestLoadProjectConfigFilelessAppliesDefaults(t *testing.T) {
 // still win over the built-in default. Regression for the earlier order
 // bug where the default block clobbered the env override.
 func TestLoadProjectConfigFilelessPreservesOllamaEndpoint(t *testing.T) {
-	t.Setenv("OLLAMA_ENDPOINT", "http://ollama.internal:11434")
+	t.Setenv("PROJECTLENS_OLLAMA_ENDPOINT", "http://ollama.internal:11434")
 	p := Project{
 		Slug:          "noconfig-env",
 		StorageSchema: "noconfig_env",

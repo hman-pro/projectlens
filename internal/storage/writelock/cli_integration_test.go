@@ -17,7 +17,7 @@ import (
 // guaranteeing the loser observes ErrBusy. Deterministic — does not
 // depend on whatever index-embed would actually do on the dev DB.
 func TestCLI_TwoHoldersSerialize(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if dsn == "" {
 		dsn = testDB
 	}

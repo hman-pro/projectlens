@@ -17,7 +17,7 @@ import (
 )
 
 func dbURL(t *testing.T) string {
-	u := os.Getenv("DATABASE_URL")
+	u := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if u == "" {
 		u = "postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable"
 	}

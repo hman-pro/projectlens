@@ -16,7 +16,7 @@ import (
 // contend on the global advisory lock. A writer in schema A holding
 // its lock must NOT block a concurrent acquire in schema B.
 func TestAcquire_CrossSchemaProceedsIndependently(t *testing.T) {
-	url := os.Getenv("DATABASE_URL")
+	url := os.Getenv("PROJECTLENS_DATABASE_URL")
 	if url == "" {
 		url = testDB
 	}
