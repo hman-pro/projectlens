@@ -32,7 +32,7 @@ Is it about code structure / behavior / history / data flow / impact?
       yes                                      no
        │                                       │
        ▼                                       ▼
-Pick a ProjectLens tool                  Use Read/Edit/Bash normally
+Pick a ProjectLens tool                 Use Read/Edit/Bash normally
 (table below)                           (file contents, edits, shell)
        │
        ▼
