@@ -10,7 +10,6 @@ import (
 type Config struct {
 	RepoPath      string              `yaml:"repo_path"`
 	DatabaseURL   string              `yaml:"database_url"`
-	OpenAIKey     string              `yaml:"openai_api_key"`
 	Index         IndexConfig         `yaml:"index"`
 	Embeddings    EmbeddingsConfig    `yaml:"embeddings"`
 	Summarization SummarizationConfig `yaml:"summarization"`
@@ -41,8 +40,8 @@ type HistoryConfig struct {
 // EmbeddingsConfig controls which provider and model are used for generating
 // vector embeddings during indexing.
 type EmbeddingsConfig struct {
-	Provider   string `yaml:"provider"`   // "ollama" or "openai"
-	Model      string `yaml:"model"`      // e.g., "mxbai-embed-large"
+	Provider   string `yaml:"provider"`   // "ollama"
+	Model      string `yaml:"model"`      // e.g., "qwen3-embedding:0.6b"
 	Dimensions int    `yaml:"dimensions"` // e.g., 1024
 	Endpoint   string `yaml:"endpoint"`   // for ollama, e.g., "http://localhost:11434"
 }

@@ -20,7 +20,6 @@ import (
 	"github.com/hman-pro/projectlens/internal/indexer"
 	"github.com/hman-pro/projectlens/internal/logger"
 	"github.com/hman-pro/projectlens/internal/providers/ollama"
-	"github.com/hman-pro/projectlens/internal/providers/openai"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/hman-pro/projectlens/internal/summaries"
@@ -48,7 +47,6 @@ func main() {
 		newStatusCmd(),
 		newInspectSymbolCmd(),
 		newInspectPackageCmd(),
-		newQueryCmd(),
 		newReportCmd(),
 		newExportCmd(),
 		newKnowledgeCmd(),
@@ -415,89 +413,6 @@ func newInspectPackageCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func newQueryCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "query [query]",
-		Short: "Query the index",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			queryText := args[0]
-
-			cs, err := openCmdStorage(ctx, cmd)
-			if err != nil {
-				return err
-			}
-			defer cs.Close()
-			db := cs.DB()
-			cfg := cs.Config()
-
-			var embedder retrieval.QueryEmbedder
-			switch cfg.Embeddings.Provider {
-			case "ollama":
-				embedder = ollama.NewClient(cfg.Embeddings.Endpoint, cfg.Embeddings.Model, 0)
-			case "openai":
-				if cfg.OpenAIKey != "" {
-					if cfg.Embeddings.Dimensions > 0 {
-						embedder = openai.NewClientWithDims(cfg.OpenAIKey, cfg.Embeddings.Dimensions)
-					} else {
-						embedder = openai.NewClient(cfg.OpenAIKey)
-					}
-				}
-			}
-
-			mode, _ := cmd.Flags().GetString("mode")
-
-			var results []retrieval.SearchResult
-			var queryType retrieval.QueryType
-
-			switch mode {
-			case "lexical":
-				queryType = retrieval.ExactSymbol
-				results, err = retrieval.LexicalSearch(ctx, db, queryText, 10)
-			case "semantic":
-				if embedder == nil {
-					return fmt.Errorf("semantic search requires an OpenAI API key (set openai_api_key in config or OPENAI_API_KEY env)")
-				}
-				queryType = retrieval.ImplementationSearch
-				results, err = retrieval.SemanticSearch(ctx, db, embedder, queryText, 10)
-			default:
-				// Auto mode: use the router.
-				router := retrieval.NewRouter(db, embedder)
-				qr, routerErr := router.Query(ctx, queryText, 10)
-				if routerErr != nil {
-					return fmt.Errorf("query: %w", routerErr)
-				}
-				queryType = qr.QueryType
-				results = qr.Results
-			}
-			if err != nil {
-				return fmt.Errorf("query: %w", err)
-			}
-
-			fmt.Printf("Query: %q\n", queryText)
-			fmt.Printf("Type:  %s\n", queryType)
-			fmt.Printf("\nResults (%d):\n", len(results))
-
-			for i, r := range results {
-				fmt.Printf("%d. [%.2f] %s %s — %s:%d-%d\n",
-					i+1, r.Score, r.Kind, r.SymbolName, r.FilePath, r.LineStart, r.LineEnd)
-				if r.DocComment != "" {
-					fmt.Printf("   %s\n", r.DocComment)
-				}
-			}
-
-			if len(results) == 0 {
-				fmt.Println("  (no results)")
-			}
-
-			return nil
-		},
-	}
-	cmd.Flags().String("mode", "", "query mode: lexical, semantic, or auto (default)")
-	return cmd
 }
 
 // repoCommitSHA returns the HEAD commit of repoPath, or "" if it can't

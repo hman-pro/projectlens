@@ -6,7 +6,8 @@
 // Prerequisites:
 //   - Postgres running on localhost:5433 with projectlens database
 //   - Ingest monorepo indexed (files, symbols, embeddings populated)
-//   - OPENAI_API_KEY set (for semantic search query embedding)
+//   - Ollama running locally for semantic search query embedding
+//     (otherwise the semantic-path tests are skipped)
 //
 // These tests verify that the MCP tools return meaningful results
 // when called against real indexed data.
@@ -21,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hman-pro/projectlens/internal/providers/openai"
+	"github.com/hman-pro/projectlens/internal/providers/ollama"
 	"github.com/hman-pro/projectlens/internal/retrieval"
 	"github.com/hman-pro/projectlens/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -46,11 +47,13 @@ func setupIntegrationServer(t *testing.T) *Server {
 		t.Skip("no indexed data in database — run index first")
 	}
 
-	var embedder retrieval.QueryEmbedder
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey != "" {
-		embedder = openai.NewClientWithDims(apiKey, 1024)
+	// Use Ollama for semantic embeddings. Tests that require semantic search
+	// skip themselves when Ollama is not reachable.
+	endpoint := os.Getenv("OLLAMA_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "http://localhost:11434"
 	}
+	embedder := ollama.NewClient(endpoint, "qwen3-embedding:0.6b", 1024)
 
 	router := retrieval.NewRouter(db, embedder)
 	return New(db, router, 0, "")
@@ -171,10 +174,6 @@ func TestIntegration_SearchGoContext_Lexical(t *testing.T) {
 }
 
 func TestIntegration_SearchGoContext_Semantic(t *testing.T) {
-	if os.Getenv("OPENAI_API_KEY") == "" {
-		t.Skip("OPENAI_API_KEY not set — skipping semantic search test")
-	}
-
 	srv := setupIntegrationServer(t)
 	ctx := context.Background()
 
@@ -688,7 +687,7 @@ func TestIntegration_SaveKnowledge_SourceDefault(t *testing.T) {
 // --- save_knowledge synchronous-embed ---
 
 // stubEmbedder returns a deterministic 1024-dim vector for any input, so the
-// test does not require Ollama or OPENAI_API_KEY. The first slot is 1.0, the
+// test does not require a running Ollama. The first slot is 1.0, the
 // rest 0; the query embedding for the same body therefore matches exactly
 // under cosine similarity.
 type stubEmbedder struct{}

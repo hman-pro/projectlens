@@ -48,10 +48,6 @@ func TestExportRejectsProjectAndRepo(t *testing.T) {
 	expectMutex(t, runWithFlags(t, newExportCmd, "graph", "--project", "foo", "--repo", "/tmp"))
 }
 
-func TestQueryRejectsProjectAndRepo(t *testing.T) {
-	expectMutex(t, runWithFlags(t, newQueryCmd, "q", "--project", "foo", "--repo", "/tmp"))
-}
-
 func TestInspectSymbolRejectsProjectAndRepo(t *testing.T) {
 	expectMutex(t, runWithFlags(t, newInspectSymbolCmd, "Foo", "--project", "foo", "--repo", "/tmp"))
 }
