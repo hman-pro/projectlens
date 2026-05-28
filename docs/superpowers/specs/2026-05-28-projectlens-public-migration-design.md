@@ -216,7 +216,7 @@ The public implementation should drop generic runtime aliases from default
 lookup. Use `PROJECTLENS_DATABASE_URL`, `PROJECTLENS_REPO_PATH`,
 `PROJECTLENS_CONFIG`, `PROJECTLENS_PROJECTS`, `PROJECTLENS_PROJECT`, and
 `PROJECTLENS_OLLAMA_ENDPOINT` instead of generic names. This avoids precedence
-rules and collisions with other local tools. `RI_*` names and `~/.projectlens`
+rules and collisions with other local tools. `PROJECTLENS_*` names and `~/.projectlens`
 paths should not appear in the public alpha.
 
 `.env.example` must contain only public, local defaults:

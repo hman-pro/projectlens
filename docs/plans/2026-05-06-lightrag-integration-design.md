@@ -479,7 +479,7 @@ Source of truth for sidecar provider/storage config. The sidecar wrapper does no
 | `WORKSPACE` | `projectlens` | Memgraph graph name |
 | `CHUNK_TOKEN_SIZE` | `1200` | Must be ≥ projectlens's `lightrag.ingest.chunk_token_size` |
 
-The compose file references `${RI_*}` placeholders for user-overridable values (DB password, ports). Users edit `.env` once.
+The compose file references `${PROJECTLENS_*}` placeholders for user-overridable values (DB password, ports). Users edit `.env` once.
 
 ### Environment variables (ProjectLens side, additions)
 
