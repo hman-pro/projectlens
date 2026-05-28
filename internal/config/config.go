@@ -47,11 +47,13 @@ type EmbeddingsConfig struct {
 	Endpoint   string `yaml:"endpoint"`   // for ollama, e.g., "http://localhost:11434"
 }
 
-// SummarizationConfig controls which provider and model are used for
-// generating package summaries during indexing.
+// SummarizationConfig controls package summarization.
+// Disabled by default for public quick start.
 type SummarizationConfig struct {
-	Provider string `yaml:"provider"` // "anthropic" or "openai"
-	Model    string `yaml:"model"`    // e.g., "claude-sonnet-4-6"
+	Enabled  bool   `yaml:"enabled"`
+	Provider string `yaml:"provider"` // "ollama" only in public alpha
+	Model    string `yaml:"model"`    // e.g. "qwen3-coder:30b"
+	Endpoint string `yaml:"endpoint"` // e.g. "http://localhost:11434"
 }
 
 // IndexConfig holds settings that control which files are indexed.
@@ -62,8 +64,8 @@ type IndexConfig struct {
 }
 
 // Load reads a YAML config file from path and returns a Config.
-// Environment variables DATABASE_URL, OPENAI_API_KEY, and REPO_PATH
-// override the corresponding fields when set.
+// Environment variables DATABASE_URL and REPO_PATH override the
+// corresponding fields when set.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -94,16 +96,14 @@ func applyEnvAndDefaults(cfg *Config) {
 	// clobbered by the embeddings-provider default block.
 	if cfg.Embeddings.Provider == "" {
 		cfg.Embeddings.Provider = "ollama"
-		cfg.Embeddings.Model = "mxbai-embed-large"
+		cfg.Embeddings.Model = "qwen3-embedding:0.6b"
 		cfg.Embeddings.Dimensions = 1024
 	}
 	if cfg.Embeddings.Endpoint == "" {
 		cfg.Embeddings.Endpoint = "http://localhost:11434"
 	}
-	if cfg.Summarization.Provider == "" {
-		cfg.Summarization.Provider = "anthropic"
-		cfg.Summarization.Model = "claude-sonnet-4-6"
-	}
+	// Summarization has no default provider; users opt in by editing
+	// the config file (e.g. ollama + qwen3-coder:30b).
 
 	if cfg.History.WindowMonths == 0 {
 		cfg.History.WindowMonths = 12
@@ -120,9 +120,6 @@ func applyEnvAndDefaults(cfg *Config) {
 
 	if v := os.Getenv("DATABASE_URL"); v != "" {
 		cfg.DatabaseURL = v
-	}
-	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
-		cfg.OpenAIKey = v
 	}
 	if v := os.Getenv("REPO_PATH"); v != "" {
 		cfg.RepoPath = v
