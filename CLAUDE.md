@@ -12,7 +12,7 @@ assistants so they do not rediscover architecture on every session. Beyond
 code symbols, it tracks data flows, git history, captured knowledge, and
 planned business-document context.
 
-**Target repo:** `example-org/ingest` monorepo.
+**Demo target repo:** ProjectLens itself (`.`). Public docs and examples index this repository as the canonical demo so users can run the tool against the codebase they just cloned.
 
 ## Documentation Layout
 
@@ -99,8 +99,7 @@ them. When changing a skill or hook in a way users need to notice, update
 
 ## Design Decisions
 
-- **Ollama for default embeddings**: local, free, and keeps code on the machine.
-- **Claude for default summarization**: quality-first package summaries, with OpenAI fallback.
+- **Local-first defaults**: Ollama for embeddings; summarization disabled by default. Public alpha ships no remote provider integrations.
 - **Provider abstraction**: embedding and summarization providers are config-driven and constructor-injected.
 - **Polymorphic edge graph**: one table represents calls, implementations, datastore references, coupling, document links, and knowledge anchors.
 - **Two-axis edge trust**: every edge carries `provenance` (parser, callgraph, sql_scanner, history, knowledge, docs) and `confidence_class` (extracted, inferred, ambiguous), in addition to the numeric `confidence` score. Both are CHECK-constrained — new producers must extend the CHECK in the same migration. Graphify-style vocabulary; see `docs/2026-05-22-confidence-and-provenance-design.md`.
