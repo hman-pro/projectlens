@@ -4,8 +4,10 @@ CLI := $(BIN_DIR)/projectlens
 MCP := $(BIN_DIR)/projectlens-mcp
 TUI := $(BIN_DIR)/projectlens-tui
 
-DB_URL ?= postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable
-REPO ?= $(REPO_PATH)
+# Single source of truth for the database URL. PROJECTLENS_DATABASE_URL from
+# .env wins; otherwise fall back to the local-defaults compose URL.
+PROJECTLENS_DATABASE_URL ?= postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable
+REPO ?= $(PROJECTLENS_REPO_PATH)
 GOFLAGS ?=
 LDFLAGS ?=
 
@@ -24,19 +26,19 @@ help: ## Show this help
 # ────────────────────────────────────────────────────────────────────
 # Build (always re-runs go build; Go's own cache makes it cheap)
 # ────────────────────────────────────────────────────────────────────
-.PHONY: build build-cli build-mcp build-tui install clean fmt vet test test-int
+.PHONY: build build-projectlens build-projectlens-mcp build-projectlens-tui install clean fmt vet test test-int
 
-build: build-cli build-mcp build-tui ## Build all binaries into ./bin/
+build: build-projectlens build-projectlens-mcp build-projectlens-tui ## Build all binaries into ./bin/
 
-build-cli: ## Build the CLI (./bin/projectlens)
+build-projectlens: ## Build the CLI (./bin/projectlens)
 	@mkdir -p $(BIN_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(CLI) ./cmd/projectlens/
 
-build-mcp: ## Build the MCP server (./bin/projectlens-mcp)
+build-projectlens-mcp: ## Build the MCP server (./bin/projectlens-mcp)
 	@mkdir -p $(BIN_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(MCP) ./cmd/projectlens-mcp/
 
-build-tui: ## Build the TUI (./bin/projectlens-tui)
+build-projectlens-tui: ## Build the TUI (./bin/projectlens-tui)
 	@mkdir -p $(BIN_DIR)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(TUI) ./cmd/projectlens-tui/
 
@@ -64,56 +66,56 @@ test-int: ## Run integration tests (requires DB)
 # ────────────────────────────────────────────────────────────────────
 .PHONY: tui mcp cli
 
-tui: build-cli build-tui ## Run the TUI dashboard
+tui: build-projectlens build-projectlens-tui ## Run the TUI dashboard
 	./$(TUI)
 
-mcp: build-mcp ## Run the MCP server
+mcp: build-projectlens-mcp ## Run the MCP server
 	./$(MCP)
 
 # Forward arbitrary args: make cli ARGS="status"
-cli: build-cli ## Run the CLI (use ARGS="...")
+cli: build-projectlens ## Run the CLI (use ARGS="...")
 	./$(CLI) $(ARGS)
 
 # ────────────────────────────────────────────────────────────────────
-# Indexer shortcuts (require REPO=... or REPO_PATH env, and DB_URL)
+# Indexer shortcuts (require REPO=... or PROJECTLENS_REPO_PATH env, and PROJECTLENS_DATABASE_URL)
 # ────────────────────────────────────────────────────────────────────
 .PHONY: bootstrap reindex reindex-full reindex-dry status query \
         index-all index-history index-datastore index-embed index-summarize \
         graph-export graph-gephi
 
-bootstrap: build-cli ## Bootstrap (init DB + full index)
-	./$(CLI) bootstrap --repo "$(REPO)" --db "$(DB_URL)"
+bootstrap: build-projectlens ## Bootstrap (init DB + full index)
+	./$(CLI) bootstrap --repo "$(REPO)" --db "$(PROJECTLENS_DATABASE_URL)"
 
-reindex: build-cli ## Incremental reindex
-	./$(CLI) reindex --repo "$(REPO)" --db "$(DB_URL)"
+reindex: build-projectlens ## Incremental reindex
+	./$(CLI) reindex --repo "$(REPO)" --db "$(PROJECTLENS_DATABASE_URL)"
 
-reindex-full: build-cli ## Full reindex
-	./$(CLI) reindex --full --repo "$(REPO)" --db "$(DB_URL)"
+reindex-full: build-projectlens ## Full reindex
+	./$(CLI) reindex --full --repo "$(REPO)" --db "$(PROJECTLENS_DATABASE_URL)"
 
-reindex-dry: build-cli ## Dry-run reindex
-	./$(CLI) reindex --dry-run --repo "$(REPO)" --db "$(DB_URL)"
+reindex-dry: build-projectlens ## Dry-run reindex
+	./$(CLI) reindex --dry-run --repo "$(REPO)" --db "$(PROJECTLENS_DATABASE_URL)"
 
-status: build-cli ## Show index status
-	./$(CLI) status --db "$(DB_URL)"
+status: build-projectlens ## Show index status
+	./$(CLI) status --db "$(PROJECTLENS_DATABASE_URL)"
 
 # Use ARGS="ReserveInventory" for a custom query.
-query: build-cli ## Run a retrieval query (ARGS="...")
-	./$(CLI) query $(ARGS) --db "$(DB_URL)"
+query: build-projectlens ## Run a retrieval query (ARGS="...")
+	./$(CLI) query $(ARGS) --db "$(PROJECTLENS_DATABASE_URL)"
 
-index-all: build-cli ## Run all indexing stages
-	./$(CLI) index-all --repo "$(REPO)" --db "$(DB_URL)"
+index-all: build-projectlens ## Run all indexing stages
+	./$(CLI) index-all --repo "$(REPO)" --db "$(PROJECTLENS_DATABASE_URL)"
 
-index-history: build-cli ## Index git history + coupling
-	./$(CLI) index-history --repo "$(REPO)" --db "$(DB_URL)"
+index-history: build-projectlens ## Index git history + coupling
+	./$(CLI) index-history --repo "$(REPO)" --db "$(PROJECTLENS_DATABASE_URL)"
 
-index-datastore: build-cli ## Index migrations + SQL
-	./$(CLI) index-datastore --repo "$(REPO)" --db "$(DB_URL)"
+index-datastore: build-projectlens ## Index migrations + SQL
+	./$(CLI) index-datastore --repo "$(REPO)" --db "$(PROJECTLENS_DATABASE_URL)"
 
-index-embed: build-cli ## Embed missing chunks
-	./$(CLI) index-embed --db "$(DB_URL)"
+index-embed: build-projectlens ## Embed missing chunks
+	./$(CLI) index-embed --db "$(PROJECTLENS_DATABASE_URL)"
 
-index-summarize: build-cli ## Summarize missing packages
-	./$(CLI) index-summarize --db "$(DB_URL)"
+index-summarize: build-projectlens ## Summarize missing packages
+	./$(CLI) index-summarize --db "$(PROJECTLENS_DATABASE_URL)"
 
 # Graph export and conversion
 GRAPH_JSON   ?= projectlens-graph.json
@@ -122,8 +124,8 @@ GRAPH_EDGES  ?= all
 GRAPH_FORMAT ?= graphml
 PYTHON       ?= python3
 
-graph-export: build-cli ## Export graph JSON (GRAPH_JSON, GRAPH_EDGES=all|calls,implements,...)
-	./$(CLI) export graph --edges $(GRAPH_EDGES) --out "$(GRAPH_JSON)" --db "$(DB_URL)"
+graph-export: build-projectlens ## Export graph JSON (GRAPH_JSON, GRAPH_EDGES=all|calls,implements,...)
+	./$(CLI) export graph --edges $(GRAPH_EDGES) --out "$(GRAPH_JSON)" --db "$(PROJECTLENS_DATABASE_URL)"
 
 graph-gephi: ## Convert graph JSON to GraphML/GEXF for Gephi (GRAPH_JSON, GRAPH_OUT, GRAPH_FORMAT, EDGES)
 	$(PYTHON) scripts/graph_to_gephi.py "$(GRAPH_JSON)" -o "$(GRAPH_OUT)" -f $(GRAPH_FORMAT) $(if $(EDGES),-e $(EDGES))
@@ -158,5 +160,5 @@ docker-index: ## Run indexer profile container on demand
 # ────────────────────────────────────────────────────────────────────
 .PHONY: migrate
 
-migrate: build-cli ## Apply pending SQL migrations (uses projectlens migrate)
-	./$(CLI) migrate --db "$(DB_URL)"
+migrate: build-projectlens ## Apply pending SQL migrations (uses projectlens migrate)
+	./$(CLI) migrate --db "$(PROJECTLENS_DATABASE_URL)"
