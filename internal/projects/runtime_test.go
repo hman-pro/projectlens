@@ -61,8 +61,11 @@ func TestLoadProjectConfigFilelessAppliesDefaults(t *testing.T) {
 	if cfg.Embeddings.Endpoint != "http://localhost:11434" {
 		t.Errorf("Embeddings.Endpoint default: got %q", cfg.Embeddings.Endpoint)
 	}
-	if cfg.Summarization.Provider != "anthropic" {
-		t.Errorf("Summarization.Provider: got %q want anthropic", cfg.Summarization.Provider)
+	if cfg.Summarization.Enabled {
+		t.Errorf("Summarization.Enabled: got true, want false (disabled by default)")
+	}
+	if cfg.Summarization.Provider != "" {
+		t.Errorf("Summarization.Provider: got %q want empty (no default provider)", cfg.Summarization.Provider)
 	}
 	if cfg.RepoPath != "/repo" {
 		t.Errorf("RepoPath: got %q want /repo", cfg.RepoPath)
