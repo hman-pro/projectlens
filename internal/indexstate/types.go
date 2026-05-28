@@ -4,11 +4,12 @@
 package indexstate
 
 // ProviderHealth reports the state of one configured provider. State is
-// one of four values:
+// one of five values:
 //   - "reachable":      the provider responded to a cheap probe.
 //   - "configured":     credentials/endpoint are set but no probe was run.
 //   - "not_configured": no provider is wired, or credentials are missing.
 //   - "error":          a probe ran and failed; Error carries the message.
+//   - "disabled":       the provider is intentionally off in config.
 type ProviderHealth struct {
 	Role     string `json:"role"`
 	Provider string `json:"provider"`
