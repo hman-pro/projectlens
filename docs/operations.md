@@ -13,8 +13,8 @@ Raw `projectlens` subcommands are the product surface. Use them directly when yo
 | Use | Make target | Raw CLI |
 |---|---|---|
 | Build everything | `make build` | `go build ./cmd/...` or targeted `go build` |
-| Run index status | `make status` | `projectlens status --db "$DATABASE_URL"` |
-| Incremental reindex | `make reindex REPO=/path/to/repo` | `projectlens reindex --repo /path/to/repo --db "$DATABASE_URL"` |
+| Run index status | `make status` | `projectlens status --db "$PROJECTLENS_DATABASE_URL"` |
+| Incremental reindex | `make reindex REPO=/path/to/repo` | `projectlens reindex --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"` |
 | Free-form command | `make cli ARGS="inspect-symbol Foo"` | `projectlens inspect-symbol Foo` |
 
 ## Everyday Commands
@@ -31,21 +31,21 @@ Required for normal local runs:
 
 | Variable | Purpose |
 |---|---|
-| `REPO_PATH` or `--repo` | Target Go repository to index. |
-| `DATABASE_URL` or `--db` | Postgres connection string. Make targets default to `postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable`. |
-| `ANTHROPIC_API_KEY` | Required when summarization provider is `anthropic`. |
-| `OPENAI_API_KEY` | Required only when embeddings or summarization provider is `openai`. |
+| `PROJECTLENS_REPO_PATH` or `--repo` | Target Go repository to index. The public alpha defaults to indexing this repository (`.`). |
+| `PROJECTLENS_DATABASE_URL` or `--db` | Postgres connection string. Make targets default to `postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable`. |
 | `OLLAMA_ENDPOINT` | Optional, default `http://localhost:11434`. |
 | `CONFIG_PATH` or `--config` | Optional config path, default `configs/index.yaml`. |
+
+ProjectLens is local-first: embeddings come from Ollama and summarization is disabled by default. The public alpha ships no remote provider integrations, so no API keys are required.
 
 ### Build And Test
 
 ```bash
 make help
 make build
-make build-cli
-make build-mcp
-make build-tui
+make build-projectlens
+make build-projectlens-mcp
+make build-projectlens-tui
 make test
 make test-int
 make fmt
@@ -73,13 +73,13 @@ make cli ARGS="index-backfill-provenance" # edge provenance backfill
 Raw equivalents:
 
 ```bash
-./bin/projectlens bootstrap --repo /path/to/repo --db "$DATABASE_URL"
-./bin/projectlens reindex --repo /path/to/repo --db "$DATABASE_URL"
-./bin/projectlens reindex --full --repo /path/to/repo --db "$DATABASE_URL"
-./bin/projectlens reindex --dry-run --repo /path/to/repo --db "$DATABASE_URL"
-./bin/projectlens index-all --repo /path/to/repo --db "$DATABASE_URL"
-./bin/projectlens index-history --full --repo /path/to/repo --db "$DATABASE_URL"
-./bin/projectlens index-backfill-provenance --db "$DATABASE_URL"
+./bin/projectlens bootstrap --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/projectlens reindex --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/projectlens reindex --full --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/projectlens reindex --dry-run --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/projectlens index-all --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/projectlens index-history --full --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/projectlens index-backfill-provenance --db "$PROJECTLENS_DATABASE_URL"
 ```
 
 Mutating indexer commands acquire the writer lock: `bootstrap`, `reindex`, `index-datastore`, `index-history`, `index-embed`, `index-summarize`, `index-all`, and `index-backfill-provenance`.
@@ -113,7 +113,7 @@ make cli ARGS="export graph --edges calls,implements --include-evidence"
 
 `report --format` accepts `markdown` or `json`; without `--format`, it is inferred from `--out` or defaults to Markdown on stdout.
 
-Each stage is rendered under `## Stages` with status, last run age, the provider identity used (`embed=openai:text-embedding-3-large@1024 sum=anthropic:claude-sonnet-4-6`), a sorted `key=value` metrics summary, and the (sanitized, 200-char-clipped in Markdown / full in JSON) `error_text` from the most recent failure. Stage trust comes from migration 008; see [`docs/internals.md`](internals.md) for the schema.
+Each stage is rendered under `## Stages` with status, last run age, the provider identity used (e.g. `embed=ollama:qwen3-embedding:0.6b@1024 sum=disabled`), a sorted `key=value` metrics summary, and the (sanitized, 200-char-clipped in Markdown / full in JSON) `error_text` from the most recent failure. Stage trust comes from migration 008; see [`docs/internals.md`](internals.md) for the schema.
 
 `export graph --edges` accepts `all` or a comma-separated edge type list. `--include-evidence` includes `properties.evidence` blobs.
 
@@ -227,7 +227,7 @@ TUI operational details:
 ```bash
 make mcp
 # or
-make build-mcp && ./bin/projectlens-mcp
+make build-projectlens-mcp && ./bin/projectlens-mcp
 ```
 
 Default endpoint: `http://localhost:8484/mcp`.
@@ -279,7 +279,7 @@ database by giving each project its own storage schema. The single-process
 MCP server then mounts one endpoint per project under `/{slug}/mcp`.
 
 If no `configs/projects.yaml` is present, ProjectLens runs in legacy
-single-project mode against the `public` schema — `--repo` / `REPO_PATH`
+single-project mode against the `public` schema — `--repo` / `PROJECTLENS_REPO_PATH`
 keep working as before and the MCP server keeps serving `/mcp`.
 
 #### Project registry
@@ -374,7 +374,7 @@ lock and migration semantics match the CLI path.
 ```bash
 make migrate
 # or
-./bin/projectlens migrate --db "$DATABASE_URL"
+./bin/projectlens migrate --db "$PROJECTLENS_DATABASE_URL"
 # or per project
 ./bin/projectlens migrate --project <slug>
 ```
@@ -386,7 +386,7 @@ make migrate
 Verify the trust invariant after the backfill:
 
 ```bash
-psql "$DATABASE_URL" -c \
+psql "$PROJECTLENS_DATABASE_URL" -c \
   "SELECT COUNT(*) FROM edges WHERE provenance IS NULL OR confidence_class IS NULL;"
 ```
 
@@ -396,12 +396,12 @@ A non-zero result indicates a writer that is not yet attaching trust fields; add
 
 | Symptom | Check | Fix |
 |---|---|---|
-| Missing repo path | CLI says `repository path required: use --repo flag or set repo_path in config`. | Pass `--repo`, set `REPO_PATH`, or set `repo_path` in config. |
-| DB connection failure | `connecting to database` error. | Start Docker Postgres, verify `DATABASE_URL`, and confirm port `5433` is reachable. |
-| Provider failure | `OPENAI_API_KEY required`, missing Anthropic key, or provider probe failure. | Match `configs/index.yaml` provider settings to available credentials and local Ollama state. |
+| Missing repo path | CLI says `repository path required: use --repo flag or set repo_path in config`. | Pass `--repo`, set `PROJECTLENS_REPO_PATH`, or set `repo_path` in config. |
+| DB connection failure | `connecting to database` error. | Start Docker Postgres, verify `PROJECTLENS_DATABASE_URL`, and confirm port `5433` is reachable. |
+| Provider failure | Ollama probe failure or `connection refused` when embedding. | Confirm Ollama is running (`ollama serve`), the configured model is pulled, and `OLLAMA_ENDPOINT` is reachable. |
 | Stale index | `index_status` shows old stage ages, wrong git commit, or dirty/stale state. | Run `make reindex` for code changes or `make index-all` for all stages. |
 | Writer lock busy | Exit code 75 plus `another writer holds the lock: pid=<n> host=<h> cmd="<c>" started=<RFC3339>`. | Wait for the holder to finish. Use `projectlens unlock --force` only after confirming auto-recovery failed. |
-| Missing TUI binary | TUI says `projectlens binary not found`. | Run `make build-cli`, set `PROJECTLENS_BINARY`, keep `projectlens` next to `projectlens-tui`, or add it to `PATH`. |
+| Missing TUI binary | TUI says `projectlens binary not found`. | Run `make build-projectlens`, set `PROJECTLENS_BINARY`, keep `projectlens` next to `projectlens-tui`, or add it to `PATH`. |
 | Agent does not use ProjectLens | Agent sees no tools or greps first. | Confirm MCP server is running, agent config points at `/mcp`, and skills/hooks from `docs/AGENT_SETUP.md` are installed. |
 | Edge trust NULLs in report | Edge Trust section shows non-zero `Unknown` column, or the NULL-count psql query above returns > 0. | Run `projectlens index-backfill-provenance`. If non-zero rows remain, a writer is not attaching trust fields — add it to the writer table in `docs/internals.md`. |
 | Edge CHECK constraint violation | INSERT fails with `edges_confidence_class_check` or `edges_provenance_check`. | A writer is emitting a value outside the documented vocabulary. Fix the writer or extend the CHECK in a new migration (and document the new producer). |
