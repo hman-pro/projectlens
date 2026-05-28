@@ -1,5 +1,5 @@
 // Package embeddings provides a pipeline for converting text chunks into
-// vector embeddings via an external embedding service (e.g., OpenAI).
+// vector embeddings via a local Ollama embedding model.
 package embeddings
 
 import (
@@ -15,8 +15,8 @@ import (
 const batchSize = 10
 
 // maxCharsPerChunk is the approximate character limit for embedding input.
-// Ollama mxbai-embed-large has 8192 token context. With variable tokenization
-// (~2-4 chars/token for code), 8000 chars stays safely under the limit.
+// qwen3-embedding:0.6b has a 32K-token context. With ~3 chars/token for code,
+// 80K chars is a generous safe floor; we keep 8000 to bound memory per batch.
 const maxCharsPerChunk = 8000
 
 // EmbeddingResult pairs a chunk index with its embedding vector.
@@ -25,7 +25,7 @@ type EmbeddingResult struct {
 	Vector     []float32 // embedding vector (dimensions depend on model)
 }
 
-// Embedder is the interface for generating text embeddings. The openai.Client
+// Embedder is the interface for generating text embeddings. The ollama.Client
 // type satisfies this interface implicitly via its EmbedBatch method.
 type Embedder interface {
 	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
