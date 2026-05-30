@@ -30,12 +30,12 @@ embeddings:
   endpoint: http://localhost:11434
 
 summarization:
-  enabled: false
-  # Opt-in quality profile (heavy: 19GB download, requires a strong machine):
-  # enabled: true
-  # provider: ollama
+  enabled: true
+  provider: ollama
+  model: qwen2.5-coder:7b
+  endpoint: http://localhost:11434
+  # Heavier quality profile (19GB download, requires a strong machine):
   # model: qwen3-coder:30b
-  # endpoint: http://localhost:11434
 
 datastore:
   engines:
