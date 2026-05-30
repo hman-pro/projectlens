@@ -10,7 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-05-30-cli-rename-lens-design.md`
 
-**Conventions:** Commit subjects are one line only (no body). Run all `make`/`go`/`git` from repo root `/Users/hamed.zohrehvand/source/projectlens`.
+**Conventions:** Commit subjects are one line only (no body). Run all `make`/`go`/`git` from repo root `/Users/hamed.zohrehvand/source/projectlens`. Stage with explicit paths per task — never `git add -A` (the worktree may carry unrelated changes).
+
+**Retained `projectlens` identities (must NOT change anywhere):** env prefix `PROJECTLENS_*`; Go module `github.com/hman-pro/projectlens`; DB user/name/schema `projectlens`; Docker volume `projectlens-data` and compose service names `projectlens-mcp`/`projectlens-indexer`; MCP server registration name `"projectlens"` and its listen logs (`projectlens MCP server listening`); agent-hook text `projectlens MCP tool`; TUI log/run-dir artifacts `/tmp/projectlens-tui.log`, `/tmp/projectlens-tui-runs` (tied to `PROJECTLENS_TUI_*` env); graph artifact filenames `projectlens-graph.json`, `projectlens.graphml`, schema `projectlens-graph/v2`; MCP mount path `/projectlens/mcp`; skill id `use-projectlens`; product prose "ProjectLens".
+
+**Preflight (run once before Task 1):**
+```bash
+git -c core.fsmonitor=false status --short
+```
+The worktree currently shows unrelated `M docs/tasks.md` (and possibly other in-flight files). Commit or `git stash` all pre-existing changes so the worktree is clean except for the planning artifacts under `docs/superpowers/`. This matters because Task 4 edits `docs/tasks.md` for the rename — a dirty pre-existing version would otherwise be impossible to separate from the rename commit.
 
 ---
 
@@ -58,11 +66,11 @@ Then fix the build target `go build` path args and the `migrate` help text (line
 sed -i '' 's#\./cmd/projectlens-mcp#./cmd/lens-mcp#g; s#\./cmd/projectlens-tui#./cmd/lens-tui#g; s#\./cmd/projectlens#./cmd/lens#g; s/uses projectlens migrate/uses lens migrate/g' Makefile
 ```
 
-Verify no stale references remain:
+Verify no stale build/binary references remain (target the actual patterns — a bare `rg projectlens Makefile` would also match the intentionally-retained env vars, postgres URL, and graph artifact defaults `projectlens-graph.json`/`projectlens.graphml`):
 ```bash
-rg -n 'projectlens' Makefile
+rg -n 'cmd/projectlens|build-projectlens|/bin/projectlens|uses projectlens migrate|\$\(BIN_DIR\)/projectlens' Makefile
 ```
-Expected: only `PROJECTLENS_DATABASE_URL`, `PROJECTLENS_REPO_PATH`, and the postgres URL `projectlens:projectlens@.../projectlens`. No `cmd/projectlens`, no `bin/projectlens`, no `build-projectlens`.
+Expected: zero hits.
 
 - [ ] **Step 4: Update Dockerfile build/copy/entrypoint paths**
 
@@ -126,9 +134,10 @@ Expected: `lens  lens-mcp  lens-tui` (no `projectlens*`).
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A
+git add cmd/lens cmd/lens-mcp cmd/lens-tui Makefile docker/Dockerfile docker/docker-compose.yml internal/storage/writelock/cli_integration_test.go
 git commit -m "refactor: move cmd dirs and build wiring to lens"
 ```
+(The `git mv` in Step 1 already staged the renames; this re-adds the in-place edits to those paths.)
 
 ---
 
@@ -209,18 +218,26 @@ In `internal/tui/app/update.go:202`, replace:
 				WithHint("set PROJECTLENS_BINARY, place a lens binary next to lens-tui, or add it to PATH")
 ```
 
-- [ ] **Step 5: Run tests to verify pass**
+- [ ] **Step 5: Update the TUI startup log that names the resolved binary**
+
+In `cmd/lens-tui/main.go` (≈line 109; check ≈105 for an adjacent comment), the startup log names the CLI binary being resolved — it is command surface, so:
+```go
+		log.Printf("lens binary not resolvable: %v", berr)
+```
+Update any adjacent comment referring to the `projectlens` binary in the same way. Leave the MCP listen logs and `PROJECTLENS_BINARY` env references alone.
+
+- [ ] **Step 6: Run tests to verify pass**
 
 Run:
 ```bash
-go test ./internal/tui/jobs/ -v && make vet
+go test ./internal/tui/jobs/ -v && make build && make vet
 ```
-Expected: PASS (including the new and existing resolver tests).
+Expected: PASS (including the new and existing resolver tests); `make build` green (proves `cmd/lens-tui` still compiles after the log edit).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add internal/tui/jobs/binary.go internal/tui/jobs/binary_test.go internal/tui/app/update.go
+git add internal/tui/jobs/binary.go internal/tui/jobs/binary_test.go internal/tui/app/update.go cmd/lens-tui/main.go
 git commit -m "fix(tui): resolve CLI binary as lens"
 ```
 
@@ -349,7 +366,7 @@ Expected: tests PASS; the `rg` returns no hits (all runtime hints now say `lens`
 - [ ] **Step 9: Commit**
 
 ```bash
-git add -A
+git add internal/report/derive.go internal/report/derive_test.go internal/report/markdown_test.go internal/report/json_test.go cmd/lens/main.go internal/mcpserver/handlers.go internal/mcpserver/not_ready.go internal/tui/sections/health/view.go internal/tui/sections/runs/view.go internal/tui/app/view.go
 git commit -m "refactor: emit lens in user-facing CLI/MCP/TUI hints"
 ```
 
@@ -437,7 +454,7 @@ Expected: no hits. (Leave `scripts/release-smoke.sh` untouched — its `github.c
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A
+git add README.md docs/operations.md docs/AGENT_SETUP.md docs/internals.md docs/architecture.md docs/tasks.md CLAUDE.md AGENTS.md agent/ scripts/release-demo.sh
 git commit -m "docs: rename projectlens command to lens across docs, agents, scripts"
 ```
 
@@ -468,29 +485,35 @@ go test -tags integration -run xxx ./internal/storage/writelock/
 ```
 Expected: builds cleanly (no test selected).
 
+All audits exclude planning/historical artifacts that intentionally contain old names as before/after context: this plan, the review, the design spec, and dated/historical docs. The shared exclusion set is:
+```
+-g '!docs/superpowers/**' -g '!docs/plans/**' -g '!docs/20[0-9][0-9]-*.md'
+```
+
 - [ ] **Step 3: Targeted command-guidance audit**
 
 Run:
 ```bash
-rg -n '(^|[ ./"])projectlens( |$| [a-z-]|")'
+rg -n '(^|[ ./"])projectlens( |$| [a-z-]|")' -g '!docs/superpowers/**' -g '!docs/plans/**' -g '!docs/20[0-9][0-9]-*.md'
 ```
-Expected: zero hits that are typed-command instructions. Acceptable remaining: none of this form (env vars use `PROJECTLENS_` uppercase and won't match).
+Expected: zero hits that are typed-command instructions. (Env vars use `PROJECTLENS_` uppercase and won't match this pattern.)
 
 - [ ] **Step 4: Moved-path audit**
 
 Run:
 ```bash
-rg -n 'cmd/projectlens|build-projectlens|/bin/projectlens|go run ./cmd/projectlens'
+rg -n 'cmd/projectlens|build-projectlens|/bin/projectlens|go run ./cmd/projectlens' -g '!docs/superpowers/**' -g '!docs/plans/**' -g '!docs/20[0-9][0-9]-*.md'
 ```
 Expected: zero hits.
 
 - [ ] **Step 5: Allowlist confirmation**
 
-Run:
+Run (the second `rg` filters out every intentionally-retained identity from the Retained-identities list in the header):
 ```bash
-rg -n 'projectlens' | rg -v 'PROJECTLENS_|github.com/hman-pro/projectlens|projectlens:projectlens|POSTGRES_|projectlens-data|schema: projectlens|projectlens-graph|/projectlens/mcp|use-projectlens|NewMCPServer\("projectlens"|ProjectLens'
+rg -n 'projectlens' -g '!docs/superpowers/**' -g '!docs/plans/**' -g '!docs/20[0-9][0-9]-*.md' \
+  | rg -v 'PROJECTLENS_|github.com/hman-pro/projectlens|projectlens:projectlens|POSTGRES_|projectlens-data|projectlens-mcp:|projectlens-mcp"|projectlens-indexer|schema: projectlens|projectlens-graph|projectlens\.graphml|/projectlens/mcp|projectlens-tui\.log|projectlens-tui-runs|use-projectlens|NewMCPServer\("projectlens"|projectlens MCP server listening|projectlens MCP tool|ProjectLens'
 ```
-Expected: zero hits. Every surviving `projectlens` is an intentional identity (env prefix, module path, DB user/name, Docker volume + compose service, schema names, MCP mount/server name, skill id, or "ProjectLens" prose). Investigate any line that prints.
+Expected: zero hits. Every surviving `projectlens` must be one of the Retained identities (env prefix, module path, DB user/name/schema, Docker volume + compose service names, graph artifact filenames + schema, MCP mount/server name + listen log, TUI log/run-dir artifacts, agent-hook MCP-tool text, skill id, or "ProjectLens" prose). Investigate any line that prints — it is a missed rename.
 
 - [ ] **Step 6: Smoke the CLI help output**
 
@@ -503,7 +526,7 @@ Expected: usage shows `lens` as the command name.
 - [ ] **Step 7: Commit (only if the audit fixed anything)**
 
 ```bash
-git add -A
+git add -- <files the audit changed>
 git commit -m "chore: finalize lens rename audit fixes"
 ```
 If nothing changed, skip — the rename is complete.
