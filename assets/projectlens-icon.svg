@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">ProjectLens icon</title>
+  <desc id="desc">A magnifying lens containing connected code graph nodes.</desc>
+  <rect width="512" height="512" rx="96" fill="#f8fafc"/>
+  <g fill="none" stroke="#17232d" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="236" cy="226" r="146" stroke-width="24"/>
+    <path d="M338 328 430 420" stroke-width="34"/>
+    <path d="M188 176h94M188 176l62 62M188 296l62-58M282 176l-32 62M250 238l50 58" stroke-width="10"/>
+    <circle cx="176" cy="176" r="30" fill="#f8fafc" stroke-width="10"/>
+    <circle cx="294" cy="176" r="30" fill="#f8fafc" stroke-width="10"/>
+    <circle cx="176" cy="296" r="30" fill="#f8fafc" stroke-width="10"/>
+  </g>
+  <circle cx="250" cy="238" r="34" fill="#12b8b1"/>
+  <circle cx="300" cy="296" r="25" fill="#12b8b1"/>
+  <text x="250" y="251" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="38" font-weight="700" text-anchor="middle">{}</text>
+  <g fill="none" stroke="#17232d" stroke-linecap="round" stroke-linejoin="round" stroke-width="9">
+    <path d="m156 166 16 14-16 14"/>
+    <path d="M185 196h17"/>
+  </g>
+</svg>
