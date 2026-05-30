@@ -77,7 +77,7 @@ func run() error {
 			return fmt.Errorf("load config: %w", lerr)
 		}
 		if legacyCfg.DatabaseURL == "" {
-			return fmt.Errorf("DATABASE_URL is required (set in .env or config)")
+			return fmt.Errorf("PROJECTLENS_DATABASE_URL is required (set in .env or config)")
 		}
 		p, perr := pgxpool.New(ctx, legacyCfg.DatabaseURL)
 		if perr != nil {

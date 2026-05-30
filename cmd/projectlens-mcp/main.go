@@ -111,7 +111,7 @@ func buildProjectServer(rt *projects.Runtime, port int) *mcpserver.Server {
 
 // runLegacySingle preserves the original single-project behavior used when
 // configs/projects.yaml is absent. It loads configs/index.yaml (or
-// CONFIG_PATH) and serves one MCP endpoint at /mcp on the configured port.
+// PROJECTLENS_CONFIG) and serves one MCP endpoint at /mcp on the configured port.
 func runLegacySingle(ctx context.Context, port int) error {
 	cfgPath := envOr("PROJECTLENS_CONFIG", "configs/index.yaml")
 	cfg, err := config.Load(cfgPath)
@@ -120,7 +120,7 @@ func runLegacySingle(ctx context.Context, port int) error {
 	}
 
 	if cfg.DatabaseURL == "" {
-		return fmt.Errorf("DATABASE_URL is required (set via env or config)")
+		return fmt.Errorf("PROJECTLENS_DATABASE_URL is required (set via env or config)")
 	}
 
 	db, err := storage.Connect(ctx, cfg.DatabaseURL)

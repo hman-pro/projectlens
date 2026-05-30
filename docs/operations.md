@@ -33,8 +33,8 @@ Required for normal local runs:
 |---|---|
 | `PROJECTLENS_REPO_PATH` or `--repo` | Target Go repository to index. The public alpha defaults to indexing this repository (`.`). |
 | `PROJECTLENS_DATABASE_URL` or `--db` | Postgres connection string. Make targets default to `postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable`. |
-| `OLLAMA_ENDPOINT` | Optional, default `http://localhost:11434`. |
-| `CONFIG_PATH` or `--config` | Optional config path, default `configs/index.yaml`. |
+| `PROJECTLENS_OLLAMA_ENDPOINT` | Optional, default `http://localhost:11434`. |
+| `PROJECTLENS_CONFIG` or `--config` | Optional config path, default `configs/index.yaml`. |
 
 ProjectLens is local-first: embeddings come from Ollama and summarization is disabled by default. The public alpha ships no remote provider integrations, so no API keys are required.
 
@@ -363,8 +363,8 @@ The TUI honors two environment variables:
 
 | Variable | Effect |
 |---|---|
-| `PROJECT` | Resolves the active project slug. If unset, the TUI falls back to `default_project` from the registry, or to legacy mode when no registry exists. |
-| `PROJECTS_PATH` | Overrides the registry path (default `configs/projects.yaml`). |
+| `PROJECTLENS_PROJECT` | Resolves the active project slug. If unset, the TUI falls back to `default_project` from the registry, or to legacy mode when no registry exists. |
+| `PROJECTLENS_PROJECTS` | Overrides the registry path (default `configs/projects.yaml`). |
 
 The TUI threads `--project <slug>` into every job it launches, so writer-
 lock and migration semantics match the CLI path.
@@ -398,7 +398,7 @@ A non-zero result indicates a writer that is not yet attaching trust fields; add
 |---|---|---|
 | Missing repo path | CLI says `repository path required: use --repo flag or set repo_path in config`. | Pass `--repo`, set `PROJECTLENS_REPO_PATH`, or set `repo_path` in config. |
 | DB connection failure | `connecting to database` error. | Start Docker Postgres, verify `PROJECTLENS_DATABASE_URL`, and confirm port `5433` is reachable. |
-| Provider failure | Ollama probe failure or `connection refused` when embedding. | Confirm Ollama is running (`ollama serve`), the configured model is pulled, and `OLLAMA_ENDPOINT` is reachable. |
+| Provider failure | Ollama probe failure or `connection refused` when embedding. | Confirm Ollama is running (`ollama serve`), the configured model is pulled, and `PROJECTLENS_OLLAMA_ENDPOINT` is reachable. |
 | Stale index | `index_status` shows old stage ages, wrong git commit, or dirty/stale state. | Run `make reindex` for code changes or `make index-all` for all stages. |
 | Writer lock busy | Exit code 75 plus `another writer holds the lock: pid=<n> host=<h> cmd="<c>" started=<RFC3339>`. | Wait for the holder to finish. Use `projectlens unlock --force` only after confirming auto-recovery failed. |
 | Missing TUI binary | TUI says `projectlens binary not found`. | Run `make build-projectlens`, set `PROJECTLENS_BINARY`, keep `projectlens` next to `projectlens-tui`, or add it to `PATH`. |

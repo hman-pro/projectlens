@@ -2,7 +2,7 @@
 
 A codebase intelligence platform that indexes Go code, database schemas,
 change history, and business documentation into a unified searchable graph.
-It serves any MCP-capable agent (Codex, Cursor, Codex, ...) over
+It serves any MCP-capable agent (Claude, Cursor, Codex, ...) over
 Streamable HTTP MCP.
 
 ## Project Overview
@@ -60,7 +60,7 @@ Use these before editing docs or behavior:
 | Provider config defaults | `configs/index.yaml` |
 | Project registry | `configs/projects.yaml` + `internal/projects/` |
 | Agent skills | `agent/skills/*/SKILL.md` |
-| Codex/Codex wiring | `agent/Codex/`, `agent/codex/` |
+| Claude/Codex wiring | `agent/claude/`, `agent/codex/` |
 
 ## Development Workflow
 
@@ -90,7 +90,7 @@ The `agent/` directory is canonical.
 |---|---|
 | `agent/skills/use-projectlens/SKILL.md` | Mandatory MCP-first workflow for code structure, behavior, history, data flow, and impact questions. |
 | `agent/skills/capture-knowledge/SKILL.md` | Durable knowledge capture workflow using `save_knowledge`. |
-| `agent/Codex/` | Codex MCP config, hooks, and snippet. |
+| `agent/claude/` | Claude Code MCP config, hooks, and snippet. |
 | `agent/codex/` | Codex MCP config and AGENTS.md snippet. |
 
 Vendor adapters should reference canonical skill bodies instead of copying
