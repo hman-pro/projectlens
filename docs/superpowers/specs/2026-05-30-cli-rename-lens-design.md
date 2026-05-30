@@ -93,6 +93,18 @@ invocations:
   `cmd/projectlens/main.go::edgeProvenanceDefaults`, `cmd/projectlens/lock.go`).
 - **Source-of-truth tables**: `CLAUDE.md:54-55` and `AGENTS.md:54-55`
   (`cmd/projectlens/*.go`, `cmd/projectlens/main.go`).
+- **Architecture doc** (owns runtime components/diagrams): `docs/architecture.md`
+  — component labels `projectlens CLI` / `projectlens-tui` / `projectlens-mcp`
+  (`:14-16`, `:63`), entry-point table `cmd/projectlens*` (`:35-37`), the
+  `cmd/projectlens-mcp/main.go` link (`:81`), source-of-truth row
+  `cmd/projectlens/*.go` (`:147`), and the typed commands `projectlens report`
+  / `projectlens export graph` (`:96`). Leave the `/projectlens/mcp` mount path
+  (`:64`), `schema: projectlens` (`:67`), and `projectlens-graph/v2` schema name.
+- **Canonical task list**: `docs/tasks.md` (not historical) — file paths
+  `cmd/projectlens/report.go`, `cmd/projectlens/export.go`, the future
+  `cmd/projectlens/smoke_test.go` (`:40, :41, :194`) → `cmd/lens/...`; typed
+  commands `projectlens report` / `projectlens export graph` (`:40, :41, :56,
+  :60`) → `lens ...`.
 - **Integration test build path**: `internal/storage/writelock/cli_integration_test.go:27`
   `go build ... ../../../cmd/projectlens/` → `../../../cmd/lens/` (also the
   temp binary name at line 26 if it embeds `projectlens`).
