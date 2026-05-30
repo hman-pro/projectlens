@@ -25,7 +25,6 @@ backlogs should be folded here instead of creating another competing list.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P1` | Inspectable artifacts: close out `export graph` closure diagnostics | Active | Commit the in-flight `internal/export/graph.go` + `graph_test.go` work: `Export` returns `Diagnostics`, skip-reason classification, knowledge `table`-anchor fix, closure/endpoint-shape tests. Run `make test`, then close this task. | Closure diagnostics surface skipped edges on stderr + JSON envelope, all endpoint shapes covered by tests, changes committed. |
 | `P1` | PR / review-context ingestion | Active | Write the focused design doc (observability prereq now shipped). Note the document-lane foundation already exists — `internal/storage/context_items.go` (`ExternalID`) and `context_sources.go` (`github:owner/repo`); design the GitHub client, incremental sync, redaction, idempotency on top of it. | Merged PRs, comments, reviews, and inline review metadata can be ingested incrementally with provenance, redaction, pagination tests, idempotency tests, and optional anchors to files/symbols. |
 
 ## Next Tasks
@@ -39,7 +38,8 @@ backlogs should be folded here instead of creating another competing list.
 | Priority | Task | Status | Evidence |
 |---|---|---|---|
 | `P1` | `projectlens report` (markdown/json, `--format`, `--out`, all sections) | Done | `cmd/projectlens/report.go`, `internal/report/` |
-| `P1` | `projectlens export graph` (native-schema nodes+edges, stable IDs, streaming) | Done | `cmd/projectlens/export.go`, `internal/export/graph.go` — closure-diagnostics hardening remaining (see Active) |
+| `P1` | `projectlens export graph` (native-schema nodes+edges, stable IDs, streaming) | Done | `cmd/projectlens/export.go`, `internal/export/graph.go` |
+| `P1` | Inspectable artifacts: `export graph` closure diagnostics | Done | `Export` returns `Diagnostics`; `edgeSkipReason` classifier + `diagnostics.skipped_edges` envelope field + CLI stderr `WARN`; knowledge `table`-anchor JOIN/`edgeEndpoint` fix; endpoint-shape + classifier unit tests in `graph_test.go`; self-contained `TestExportGraph_TableAnchorEdge` integration test |
 | `P1` | Run observability for indexing stages | Done | migration 008 + `internal/storage/indexruns.go` + indexer wiring + report stage detail + TUI runs panel; provider identity + error redaction in place |
 
 ## 1. Inspectable Artifacts

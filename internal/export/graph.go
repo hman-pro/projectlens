@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/hman-pro/projectlens/internal/indexstate"
@@ -41,6 +42,22 @@ func IsValidEdgeType(t string) bool {
 type Options struct {
 	Edges           []string // nil or {"all"} means all
 	IncludeEvidence bool
+}
+
+// SkippedEdge records an edge dropped to keep the exported graph closed,
+// along with the reason. The exporter never silently omits edges: every
+// drop lands here and in the envelope's "diagnostics" field.
+type SkippedEdge struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Type   string `json:"type"`
+	Reason string `json:"reason"`
+}
+
+// Diagnostics carries non-fatal export observations. An empty SkippedEdges
+// slice means every edge resolved to emitted nodes.
+type Diagnostics struct {
+	SkippedEdges []SkippedEdge `json:"skipped_edges"`
 }
 
 func (o Options) resolveEdges() []string {
@@ -97,8 +114,10 @@ func NewGraphExporter(db *storage.DB, insp indexstate.Inspector) *GraphExporter 
 	return &GraphExporter{db: db, inspector: insp}
 }
 
-// Export writes a complete graph JSON envelope to w.
-func (g *GraphExporter) Export(ctx context.Context, w io.Writer, opts Options) error {
+// Export writes a complete graph JSON envelope to w and returns Diagnostics
+// describing any edges skipped to preserve the closure invariant.
+func (g *GraphExporter) Export(ctx context.Context, w io.Writer, opts Options) (Diagnostics, error) {
+	var diag Diagnostics
 	edgeTypes := opts.resolveEdges()
 
 	gs := indexstate.GitState{}
@@ -129,19 +148,19 @@ func (g *GraphExporter) Export(ctx context.Context, w io.Writer, opts Options) e
 	}
 
 	if err := streamSymbols(ctx, g.db, emit); err != nil {
-		return err
+		return diag, err
 	}
 	if err := streamFiles(ctx, g.db, emit); err != nil {
-		return err
+		return diag, err
 	}
 	if err := streamTables(ctx, g.db, emit); err != nil {
-		return err
+		return diag, err
 	}
 	if err := streamPackages(ctx, g.db, emit); err != nil {
-		return err
+		return diag, err
 	}
 	if err := streamKnowledge(ctx, g.db, emit); err != nil {
-		return err
+		return diag, err
 	}
 
 	fmt.Fprintf(w, `],"edges":[`)
@@ -156,11 +175,18 @@ func (g *GraphExporter) Export(ctx context.Context, w io.Writer, opts Options) e
 		_, err := w.Write(jsonBytes)
 		return err
 	}
-	if err := streamEdges(ctx, g.db, edgeTypes, opts.IncludeEvidence, emittedNodes, emitEdge); err != nil {
-		return err
+	skipped, err := streamEdges(ctx, g.db, edgeTypes, opts.IncludeEvidence, emittedNodes, emitEdge)
+	if err != nil {
+		return diag, err
 	}
-	fmt.Fprintf(w, `]}`)
-	return nil
+	diag.SkippedEdges = skipped
+
+	diagBytes, err := json.Marshal(diag)
+	if err != nil {
+		return diag, err
+	}
+	fmt.Fprintf(w, `],"diagnostics":%s}`, diagBytes)
+	return diag, nil
 }
 
 type nodeOut struct {
@@ -345,7 +371,8 @@ func streamKnowledge(ctx context.Context, db *storage.DB, emit func(string, []by
 	return rows.Err()
 }
 
-func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includeEvidence bool, emittedNodes map[string]struct{}, emit func([]byte) error) error {
+func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includeEvidence bool, emittedNodes map[string]struct{}, emit func([]byte) error) ([]SkippedEdge, error) {
+	var skipped []SkippedEdge
 	rows, err := db.Pool.Query(ctx, `
 		SELECT e.source_type, e.source_id, e.target_type, e.target_id,
 		       e.edge_type, e.confidence, e.properties,
@@ -355,9 +382,9 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 		       f_src.package_name, f_tgt.package_name
 		FROM edges e
 		LEFT JOIN datastore_tables dt_src
-		  ON e.source_type = 'datastore_table' AND dt_src.id = e.source_id
+		  ON e.source_type IN ('datastore_table', 'table') AND dt_src.id = e.source_id
 		LEFT JOIN datastore_tables dt_tgt
-		  ON e.target_type = 'datastore_table' AND dt_tgt.id = e.target_id
+		  ON e.target_type IN ('datastore_table', 'table') AND dt_tgt.id = e.target_id
 		LEFT JOIN files f_src
 		  ON e.source_type = 'package' AND f_src.id = e.source_id
 		LEFT JOIN files f_tgt
@@ -366,7 +393,7 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 		ORDER BY e.id
 	`, edgeTypes)
 	if err != nil {
-		return fmt.Errorf("export: edges: %w", err)
+		return nil, fmt.Errorf("export: edges: %w", err)
 	}
 	defer rows.Close()
 
@@ -387,16 +414,19 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 			&tgtEngine, &tgtSchema, &tgtName,
 			&srcPkg, &tgtPkg,
 		); err != nil {
-			return fmt.Errorf("export: edges scan: %w", err)
+			return nil, fmt.Errorf("export: edges scan: %w", err)
 		}
 
 		sourceID := edgeEndpoint(srcType, srcID, srcEngine, srcSchema, srcName, srcPkg, props, true)
 		targetID := edgeEndpoint(tgtType, tgtID, tgtEngine, tgtSchema, tgtName, tgtPkg, props, false)
 
-		if _, ok := emittedNodes[sourceID]; !ok {
-			continue
-		}
-		if _, ok := emittedNodes[targetID]; !ok {
+		if reason := edgeSkipReason(sourceID, targetID, emittedNodes); reason != "" {
+			skipped = append(skipped, SkippedEdge{
+				Source: sourceID,
+				Target: targetID,
+				Type:   etype,
+				Reason: reason,
+			})
 			continue
 		}
 
@@ -425,13 +455,39 @@ func streamEdges(ctx context.Context, db *storage.DB, edgeTypes []string, includ
 		}
 		b, err := json.Marshal(e)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if err := emit(b); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return rows.Err()
+	return skipped, rows.Err()
+}
+
+// edgeSkipReason classifies an edge against the emitted node set to enforce
+// the closure invariant. It returns "" when both endpoints were emitted;
+// otherwise a diagnostic naming which endpoint is unresolved and why. An
+// "unknown:" prefix marks an endpoint type the exporter does not support
+// (an export bug); a missing-but-known id marks a node that was filtered out
+// or references a vanished row.
+func edgeSkipReason(sourceID, targetID string, emitted map[string]struct{}) string {
+	if reason := endpointSkipReason(sourceID, emitted); reason != "" {
+		return "source " + reason
+	}
+	if reason := endpointSkipReason(targetID, emitted); reason != "" {
+		return "target " + reason
+	}
+	return ""
+}
+
+func endpointSkipReason(id string, emitted map[string]struct{}) string {
+	if strings.HasPrefix(id, "unknown:") {
+		return "endpoint type unsupported (" + id + ")"
+	}
+	if _, ok := emitted[id]; !ok {
+		return "endpoint node not emitted (" + id + ")"
+	}
+	return ""
 }
 
 func edgeEndpoint(t string, id int64, engine, schema, name, pkgFromFile *string, props map[string]interface{}, isSource bool) string {
@@ -440,7 +496,11 @@ func edgeEndpoint(t string, id int64, engine, schema, name, pkgFromFile *string,
 		return nodeID(kindSymbol, id, "", "", "", "")
 	case "file":
 		return nodeID(kindFile, id, "", "", "", "")
-	case "datastore_table":
+	case "datastore_table", "table":
+		// save_knowledge stores table anchors as target_type='table'; the
+		// SQL JOIN resolves both 'datastore_table' and 'table' against
+		// datastore_tables so engine/schema/name arrive populated here and
+		// the id matches the emitted datastore_table node.
 		eng := ""
 		sch := ""
 		nm := ""

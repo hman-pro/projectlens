@@ -55,18 +55,44 @@ func newExportGraphCmd() *cobra.Command {
 
 			insp := buildInspector(cfg, db, repoPath)
 
-			return writeExport(out, func(w io.Writer) error {
-				return export.NewGraphExporter(db, insp).Export(ctx, w, export.Options{
+			var diag export.Diagnostics
+			if err := writeExport(out, func(w io.Writer) error {
+				d, e := export.NewGraphExporter(db, insp).Export(ctx, w, export.Options{
 					Edges:           parsed,
 					IncludeEvidence: includeEvidence,
 				})
-			})
+				diag = d
+				return e
+			}); err != nil {
+				return err
+			}
+			reportSkippedEdges(os.Stderr, diag)
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&out, "out", "", "write to this file (default stdout)")
 	cmd.Flags().StringVar(&edges, "edges", "all", "comma-separated edge types or 'all'")
 	cmd.Flags().BoolVar(&includeEvidence, "include-evidence", false, "include properties.evidence blobs")
 	return cmd
+}
+
+// reportSkippedEdges surfaces dropped edges loudly on stderr so a partial
+// graph is never mistaken for a complete one. It prints a count plus up to
+// a few samples; the full list rides along in the artifact's "diagnostics".
+func reportSkippedEdges(w io.Writer, diag export.Diagnostics) {
+	n := len(diag.SkippedEdges)
+	if n == 0 {
+		return
+	}
+	const maxSamples = 5
+	fmt.Fprintf(w, "WARN: %d edge(s) skipped to keep the graph closed (see diagnostics.skipped_edges)\n", n)
+	for i, e := range diag.SkippedEdges {
+		if i >= maxSamples {
+			fmt.Fprintf(w, "  ... and %d more\n", n-maxSamples)
+			break
+		}
+		fmt.Fprintf(w, "  - %s edge %s -> %s: %s\n", e.Type, e.Source, e.Target, e.Reason)
+	}
 }
 
 func parseEdges(spec string) ([]string, error) {
