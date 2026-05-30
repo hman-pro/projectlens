@@ -1,6 +1,6 @@
 # ProjectLens Tasks
 
-Date: 2026-05-23
+Date: 2026-05-30
 Status: canonical project task list
 
 This file owns the current task queue. Older dated priority notes and parked
@@ -25,15 +25,22 @@ backlogs should be folded here instead of creating another competing list.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P1` | Inspectable artifacts: `projectlens report` and `projectlens export graph` | Active | Verify current implementation against the existing report/export plan and close any remaining gaps. | One command explains what ProjectLens knows, graph export has closure tests, and output is deterministic enough for tests and diffs. |
-| `P1` | Run observability for indexing stages | Active | Review and implement `docs/2026-05-23-run-observability-design.md`. | Failed/no-op/successful runs leave durable stage evidence that feeds report/TUI/status without storing secrets. |
+| `P1` | Inspectable artifacts: close out `export graph` closure diagnostics | Active | Commit the in-flight `internal/export/graph.go` + `graph_test.go` work: `Export` returns `Diagnostics`, skip-reason classification, knowledge `table`-anchor fix, closure/endpoint-shape tests. Run `make test`, then close this task. | Closure diagnostics surface skipped edges on stderr + JSON envelope, all endpoint shapes covered by tests, changes committed. |
+| `P1` | PR / review-context ingestion | Active | Write the focused design doc (observability prereq now shipped). Note the document-lane foundation already exists — `internal/storage/context_items.go` (`ExternalID`) and `context_sources.go` (`github:owner/repo`); design the GitHub client, incremental sync, redaction, idempotency on top of it. | Merged PRs, comments, reviews, and inline review metadata can be ingested incrementally with provenance, redaction, pagination tests, idempotency tests, and optional anchors to files/symbols. |
 
 ## Next Tasks
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P1` | PR / review-context ingestion | Next | Write a focused design after run observability is implemented. | Merged PRs, comments, reviews, and inline review metadata can be ingested incrementally with provenance, redaction, pagination tests, idempotency tests, and optional anchors to files/symbols. |
-| `P2` | End-to-end smoke test | Planned | Promote the parked brief below into an implementation plan after the structured-response and observability surfaces settle. | `make smoke` proves the full indexer to storage to MCP loop against a small fixture repo in under 5 minutes. |
+| `P2` | End-to-end smoke test | Planned | Promote the brief below into an implementation plan. Existing `scripts/release-smoke.sh` only covers the embedding+DB contract — it is not the full loop. | `make smoke` proves the full indexer to storage to MCP loop against a small fixture repo in under 5 minutes. |
+
+## Recently Done
+
+| Priority | Task | Status | Evidence |
+|---|---|---|---|
+| `P1` | `projectlens report` (markdown/json, `--format`, `--out`, all sections) | Done | `cmd/projectlens/report.go`, `internal/report/` |
+| `P1` | `projectlens export graph` (native-schema nodes+edges, stable IDs, streaming) | Done | `cmd/projectlens/export.go`, `internal/export/graph.go` — closure-diagnostics hardening remaining (see Active) |
+| `P1` | Run observability for indexing stages | Done | migration 008 + `internal/storage/indexruns.go` + indexer wiring + report stage detail + TUI runs panel; provider identity + error redaction in place |
 
 ## 1. Inspectable Artifacts
 
