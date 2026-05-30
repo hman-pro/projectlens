@@ -624,6 +624,13 @@ func gitOutput(repoPath string, args ...string) (string, error) {
 
 // relativeToRepo computes the path of absPath relative to repoPath.
 func relativeToRepo(repoPath, absPath string) (string, error) {
+	// go/packages yields absolute file paths, while repoPath may be relative
+	// (e.g. the documented `REPO=.` demo). Resolve repoPath to an absolute
+	// path first so the prefix strip below matches; otherwise every parsed
+	// file is dropped and the index ends up empty.
+	if abs, err := filepath.Abs(repoPath); err == nil {
+		repoPath = abs
+	}
 	// filepath.Rel can be used but for safety we do a simple prefix strip.
 	repoPath = strings.TrimSuffix(repoPath, "/") + "/"
 	if strings.HasPrefix(absPath, repoPath) {

@@ -37,6 +37,27 @@ func TestRelativeToRepo(t *testing.T) {
 	}
 }
 
+// TestRelativeToRepoRelativeRoot covers the documented `REPO=.` demo path:
+// go/packages returns absolute file paths while the repo root is the relative
+// ".", so relativeToRepo must resolve the repo to an absolute path before
+// stripping the prefix. Without that, every parsed file is dropped and the
+// index ends up with zero symbols.
+func TestRelativeToRepoRelativeRoot(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(wd, "internal", "foo.go")
+	got, err := relativeToRepo(".", abs)
+	if err != nil {
+		t.Fatalf("relativeToRepo(%q, %q) unexpected error: %v", ".", abs, err)
+	}
+	want := filepath.Join("internal", "foo.go")
+	if got != want {
+		t.Errorf("relativeToRepo(%q, %q) = %q, want %q", ".", abs, got, want)
+	}
+}
+
 func TestMatchSymbol(t *testing.T) {
 	tests := []struct {
 		name    string
