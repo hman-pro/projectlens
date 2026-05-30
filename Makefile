@@ -4,6 +4,12 @@ CLI := $(BIN_DIR)/projectlens
 MCP := $(BIN_DIR)/projectlens-mcp
 TUI := $(BIN_DIR)/projectlens-tui
 
+# Load repo-root .env so recipes (and docker compose, which otherwise only sees
+# docker/.env) inherit PROJECTLENS_REPO_PATH and friends. Optional: absent on
+# fresh clones, where compose defaults below take over.
+-include .env
+export
+
 # Single source of truth for the database URL. PROJECTLENS_DATABASE_URL from
 # .env wins; otherwise fall back to the local-defaults compose URL.
 PROJECTLENS_DATABASE_URL ?= postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable
