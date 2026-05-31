@@ -31,6 +31,7 @@ backlogs should be folded here instead of creating another competing list.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
+| `P1` | Agent setup UX | Planned | Write the focused design spec for `projectlens agent install/status/doctor`, scoped to Claude and Codex setup using the canonical assets under `agent/`. | A user can install ProjectLens wiring for Claude or Codex, check whether it is current, and diagnose the agent-to-MCP loop without manually copying snippets or guessing what is stale. |
 | `P2` | End-to-end smoke test | Planned | Promote the brief below into an implementation plan. Existing `scripts/release-smoke.sh` only covers the embedding+DB contract — it is not the full loop. | `make smoke` proves the full indexer to storage to MCP loop against a small fixture repo in under 5 minutes. |
 
 ## Recently Done
@@ -178,7 +179,74 @@ Risks:
 - Storing sensitive discussion content without enough redaction.
 - Poor retrieval ranking if PR chunks are mixed naively with code chunks.
 
-## 4. End-to-End Smoke Test
+## 4. Agent Setup UX
+
+Goal: make ProjectLens easy to connect to MCP-capable coding agents without
+manual snippet copying or stale local agent assets.
+
+This is the Graphify install-flow lesson, narrowed to ProjectLens's actual
+public-alpha need: CLI-assisted Claude and Codex setup. It should improve the
+agent onboarding loop without taking on binary/package distribution.
+
+Scope:
+
+- `projectlens agent install claude`
+- `projectlens agent install codex`
+- `projectlens agent status`
+- `projectlens agent doctor`
+- Dry-run output for write commands.
+- Idempotent install/update behavior.
+- Clear distinction between generated ProjectLens-managed files and
+  user-owned agent config.
+- Validation that the MCP URL responds and exposes the expected ProjectLens
+  tool list.
+- Validation that installed skills, hooks, and snippets match the canonical
+  files under `agent/`.
+- Actionable repair guidance for missing binary, dead MCP server, wrong MCP
+  URL, stale skills, stale hooks, missing hooks, unsupported agent, and agent
+  config that points at the wrong endpoint.
+
+Out of scope:
+
+- Homebrew, release artifacts, package-manager distribution, or public binary
+  packaging.
+- Snapshot distribution.
+- Supporting every MCP-capable agent in the first pass.
+- Auto-starting background services.
+- Indexing behavior changes.
+
+Acceptance criteria:
+
+- A user can run one install command for Claude or Codex and get the local
+  agent assets into the expected place.
+- Re-running install is safe and reports what changed, what was already current,
+  and what requires manual user approval.
+- `status` reports installed/current/missing/stale state for supported agents
+  without mutating files.
+- `doctor` verifies the configured MCP endpoint, expected tool names, canonical
+  skill/hook/snippet versions, and likely PATH/binary problems.
+- Error output includes concrete next actions rather than only failure text.
+- Tests cover idempotency, dry-run behavior, stale asset detection, unsupported
+  agents, bad endpoints, and user-owned config preservation.
+
+Risks:
+
+- Mutating user agent config too aggressively.
+- Hiding important MCP/server failures behind a generic "not installed" status.
+- Letting copied agent assets drift from the canonical `agent/` directory.
+- Coupling the setup flow to package distribution decisions that should remain
+  separate.
+
+Starting points:
+
+- `agent/skills/use-projectlens/SKILL.md`
+- `agent/skills/capture-knowledge/SKILL.md`
+- `agent/claude/`
+- `agent/codex/`
+- `docs/AGENT_SETUP.md`
+- `docs/2026-05-21-graphify-comparison.md`
+
+## 5. End-to-End Smoke Test
 
 Goal: add one command that proves the full ProjectLens loop is healthy:
 Postgres up, migrations applied, indexer can ingest a tiny fixture repo, and
@@ -215,7 +283,7 @@ Out of scope:
 
 These are valuable, but not immediate:
 
-- One-command local install / agent install flow.
+- One-command local binary install.
 - Snapshot distribution.
 - Jira ingestion. See `docs/2026-05-21-jira-confluence-ingestion-lessons.md` for future-spec guidance.
 - Confluence ingestion. See `docs/2026-05-21-jira-confluence-ingestion-lessons.md` for future-spec guidance.
@@ -231,11 +299,13 @@ Additional future-spec inputs:
 
 ## Suggested Sequence
 
-1. Finish inspectable artifacts using the existing report/export spec.
-2. Extend run observability and wire it into report/TUI/status.
-3. Design PR/review ingestion against the improved run model.
-4. Implement PR/review ingestion with provenance, redaction, and tests.
-5. Revisit Jira/Confluence after the document lane and privacy model are proven.
+1. Design PR/review ingestion against the existing document-lane foundation.
+2. Implement PR/review ingestion with provenance, redaction, and tests.
+3. Design agent setup UX for Claude and Codex around the canonical `agent/`
+   assets.
+4. Implement `projectlens agent install/status/doctor`.
+5. Promote the end-to-end smoke test brief into an implementation plan.
+6. Revisit Jira/Confluence after the document lane and privacy model are proven.
 
 ## Planning Boundary
 
