@@ -23,11 +23,11 @@ func TestCLI_TwoHoldersSerialize(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	binPath := filepath.Join(dir, "projectlens")
-	build := exec.Command("go", "build", "-o", binPath, "../../../cmd/projectlens/")
+	binPath := filepath.Join(dir, "lens")
+	build := exec.Command("go", "build", "-o", binPath, "../../../cmd/lens/")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
-		t.Fatalf("build projectlens: %v", err)
+		t.Fatalf("build lens: %v", err)
 	}
 
 	type result struct {

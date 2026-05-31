@@ -10,17 +10,17 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 go build -o /bin/projectlens       ./cmd/projectlens
-RUN CGO_ENABLED=0 go build -o /bin/projectlens-mcp   ./cmd/projectlens-mcp
+RUN CGO_ENABLED=0 go build -o /bin/lens       ./cmd/lens
+RUN CGO_ENABLED=0 go build -o /bin/lens-mcp   ./cmd/lens-mcp
 
 # ── Runtime stage ─────────────────────────────────────────────
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates git
 
-COPY --from=builder /bin/projectlens      /bin/projectlens
-COPY --from=builder /bin/projectlens-mcp  /bin/projectlens-mcp
+COPY --from=builder /bin/lens      /bin/lens
+COPY --from=builder /bin/lens-mcp  /bin/lens-mcp
 COPY --from=builder /src/migrations/     /migrations/
 COPY --from=builder /src/configs/        /configs/
 
-ENTRYPOINT ["/bin/projectlens"]
+ENTRYPOINT ["/bin/lens"]

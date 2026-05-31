@@ -30,7 +30,7 @@ import (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "projectlens",
+		Use:   "lens",
 		Short: "Repository intelligence layer for Go codebases",
 	}
 
