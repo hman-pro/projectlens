@@ -198,8 +198,8 @@ func (m Model) handleActionKey(key tea.KeyMsg) (Model, tea.Cmd, bool) {
 		// Binary-missing check happens BEFORE preflight.
 		if m.target.BinaryPath == "" {
 			em := errormodal.New("binary not found",
-				"projectlens binary could not be located.").
-				WithHint("set PROJECTLENS_BINARY, place a projectlens binary next to projectlens-tui, or add it to PATH")
+				"lens binary could not be located.").
+				WithHint("set PROJECTLENS_BINARY, place a lens binary next to lens-tui, or add it to PATH")
 			m.errorModal = &em
 			return m, nil, true
 		}

@@ -31,15 +31,15 @@ backlogs should be folded here instead of creating another competing list.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P1` | Agent setup UX | Planned | Write the focused design spec for `projectlens agent install/status/doctor`, scoped to Claude and Codex setup using the canonical assets under `agent/`. | A user can install ProjectLens wiring for Claude or Codex, check whether it is current, and diagnose the agent-to-MCP loop without manually copying snippets or guessing what is stale. |
+| `P1` | Agent setup UX | Planned | Write the focused design spec for `lens agent install/status/doctor`, scoped to Claude and Codex setup using the canonical assets under `agent/`. | A user can install ProjectLens wiring for Claude or Codex, check whether it is current, and diagnose the agent-to-MCP loop without manually copying snippets or guessing what is stale. |
 | `P2` | End-to-end smoke test | Planned | Promote the brief below into an implementation plan. Existing `scripts/release-smoke.sh` only covers the embedding+DB contract — it is not the full loop. | `make smoke` proves the full indexer to storage to MCP loop against a small fixture repo in under 5 minutes. |
 
 ## Recently Done
 
 | Priority | Task | Status | Evidence |
 |---|---|---|---|
-| `P1` | `projectlens report` (markdown/json, `--format`, `--out`, all sections) | Done | `cmd/projectlens/report.go`, `internal/report/` |
-| `P1` | `projectlens export graph` (native-schema nodes+edges, stable IDs, streaming) | Done | `cmd/projectlens/export.go`, `internal/export/graph.go` |
+| `P1` | `lens report` (markdown/json, `--format`, `--out`, all sections) | Done | `cmd/lens/report.go`, `internal/report/` |
+| `P1` | `lens export graph` (native-schema nodes+edges, stable IDs, streaming) | Done | `cmd/lens/export.go`, `internal/export/graph.go` |
 | `P1` | Inspectable artifacts: `export graph` closure diagnostics | Done | `Export` returns `Diagnostics`; `edgeSkipReason` classifier + `diagnostics.skipped_edges` envelope field + CLI stderr `WARN`; knowledge `table`-anchor JOIN/`edgeEndpoint` fix; endpoint-shape + classifier unit tests in `graph_test.go`; self-contained `TestExportGraph_TableAnchorEdge` integration test |
 | `P1` | Run observability for indexing stages | Done | migration 008 + `internal/storage/indexruns.go` + indexer wiring + report stage detail + TUI runs panel; provider identity + error redaction in place |
 
@@ -54,11 +54,11 @@ graph-file-first architecture.
 
 Deliverables:
 
-- `projectlens report`
+- `lens report`
   - Markdown output by default.
   - JSON output with `--format json`.
   - Optional `--out <path>`.
-- `projectlens export graph`
+- `lens export graph`
   - Streams native-schema graph JSON.
   - Includes nodes and edges with stable IDs.
   - Ensures every exported edge endpoint resolves to an exported node.
@@ -190,10 +190,10 @@ agent onboarding loop without taking on binary/package distribution.
 
 Scope:
 
-- `projectlens agent install claude`
-- `projectlens agent install codex`
-- `projectlens agent status`
-- `projectlens agent doctor`
+- `lens agent install claude`
+- `lens agent install codex`
+- `lens agent status`
+- `lens agent doctor`
 - Dry-run output for write commands.
 - Idempotent install/update behavior.
 - Clear distinction between generated ProjectLens-managed files and
@@ -259,7 +259,7 @@ contract is checked mostly by hand.
 Sketch of scope:
 
 - Fixture Go module under `testdata/smoke-repo/` with 3 to 5 files: one exported function, one interface plus implementor, one SQL migration, and one struct with a doc comment.
-- Test driver under `internal/smoketest/` or `cmd/projectlens/smoke_test.go` with build tag `smoke`.
+- Test driver under `internal/smoketest/` or `cmd/lens/smoke_test.go` with build tag `smoke`.
 - The driver should spin up Postgres via `testcontainers-go` or reuse local `5433` when an environment variable says so, run migrations, invoke indexing, start the MCP server in process, and call every tool in `toolRegistry`.
 - Assertions should target `StructuredContent` shape rather than prose text.
 - CI should run the smoke test on every push.
@@ -303,7 +303,7 @@ Additional future-spec inputs:
 2. Implement PR/review ingestion with provenance, redaction, and tests.
 3. Design agent setup UX for Claude and Codex around the canonical `agent/`
    assets.
-4. Implement `projectlens agent install/status/doctor`.
+4. Implement `lens agent install/status/doctor`.
 5. Promote the end-to-end smoke test brief into an implementation plan.
 6. Revisit Jira/Confluence after the document lane and privacy model are proven.
 

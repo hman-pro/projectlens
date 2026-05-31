@@ -310,7 +310,7 @@ busy errors, and missing TUI binaries are covered in
   should respond (probably with a 405 or upgrade hint — that's fine, it
   means the port is open and the server is alive). HTTP 503 from a
   multi-project URL means the schema has not been migrated yet — run
-  `projectlens migrate --project <slug>`. HTTP 404 means the slug is not
+  `lens migrate --project <slug>`. HTTP 404 means the slug is not
   registered in `configs/projects.yaml`.
 - Confirm the agent sees the tools. In Claude Code, run `/mcp` and look
   for `projectlens` with 10 tools.
@@ -331,7 +331,7 @@ If a `make reindex` or other mutating command exits with code 75 and
 
 ```bash
 # Auto-recovery normally handles crashed holders. If it doesn't:
-go run ./cmd/projectlens/ unlock --force
+go run ./cmd/lens/ unlock --force
 ```
 
 `unlock --force` kills the holder's DB session, which auto-releases the
@@ -358,4 +358,4 @@ To migrate:
 1. Update your agent's MCP config to register the server name as `projectlens`.
 2. Update any skill snippets or saved knowledge that reference `mcp__projectlens__*` tools.
 3. Drop the old local schema/database (the public alpha uses the schema `projectlens`).
-4. Rerun `projectlens migrate` and `projectlens index-all` against the new schema.
+4. Rerun `lens migrate` and `lens index-all` against the new schema.

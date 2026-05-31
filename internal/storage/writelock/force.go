@@ -15,7 +15,7 @@ import (
 // ForceUnlock terminates the holder's Postgres backend (which causes
 // Postgres to auto-release the holder's session-scoped advisory lock)
 // and deletes the index_locks bookkeeping row. Used by
-// `projectlens unlock --force` when auto-recovery has failed.
+// `lens unlock --force` when auto-recovery has failed.
 //
 // Postgres session advisory locks can ONLY be released by the session
 // that holds them. pg_advisory_unlock_all on a fresh connection only

@@ -30,7 +30,7 @@ func TestQuit_DuringRunDrainsBeforeExit(t *testing.T) {
 			Headline:  func(int, string) string { return "" },
 		},
 	}
-	target := jobs.RunnerTarget{BinaryPath: "/bin/projectlens"}
+	target := jobs.RunnerTarget{BinaryPath: "/bin/lens"}
 	var m tea.Model = app.New(context.Background(), secs).WithJobs(f, runner, registry, target)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 

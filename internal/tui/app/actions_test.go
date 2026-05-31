@@ -62,7 +62,7 @@ func drainCmd(t *testing.T, m tea.Model, cmd tea.Cmd) tea.Model {
 }
 
 func TestActionKey_OpensConfirmModalAfterPreflight(t *testing.T) {
-	m, _, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/projectlens"}, newStubRunner())
+	m, _, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/lens"}, newStubRunner())
 	m, cmd := m.Update(keyPress("R"))
 	if m.(app.Model).HasConfirmModal() {
 		t.Fatal("modal opened before preflight returned")
@@ -88,7 +88,7 @@ func TestActionKey_BinaryMissingRefuses(t *testing.T) {
 }
 
 func TestYesNo_NCancels(t *testing.T) {
-	m, runner, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/projectlens"}, newStubRunner())
+	m, runner, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/lens"}, newStubRunner())
 	m, cmd := m.Update(keyPress("R"))
 	m = drainCmd(t, m, cmd)
 	mNext, _ := m.Update(keyPress("n"))
@@ -101,7 +101,7 @@ func TestYesNo_NCancels(t *testing.T) {
 }
 
 func TestYesNo_YStartsRunner(t *testing.T) {
-	m, runner, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/projectlens"}, newStubRunner())
+	m, runner, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/lens"}, newStubRunner())
 	m, cmd := m.Update(keyPress("R"))
 	m = drainCmd(t, m, cmd)
 	m, cmd = m.Update(keyPress("y"))
@@ -112,7 +112,7 @@ func TestYesNo_YStartsRunner(t *testing.T) {
 }
 
 func TestTyped_RequiresExactPhrase(t *testing.T) {
-	m, runner, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/projectlens"}, newStubRunner())
+	m, runner, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/lens"}, newStubRunner())
 	m, cmd := m.Update(keyPress("F"))
 	m = drainCmd(t, m, cmd)
 	for _, r := range "rein" {
@@ -133,7 +133,7 @@ func TestTyped_RequiresExactPhrase(t *testing.T) {
 }
 
 func TestPreflight_StaleResultDropped(t *testing.T) {
-	m, _, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/projectlens"}, newStubRunner())
+	m, _, _ := newActionApp(t, jobs.RunnerTarget{BinaryPath: "/bin/lens"}, newStubRunner())
 	mAfterR, cmdR := m.Update(keyPress("R"))
 	if cmdR == nil {
 		t.Fatal("expected preflight cmd from R")

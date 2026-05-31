@@ -30,7 +30,7 @@ import (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "projectlens",
+		Use:   "lens",
 		Short: "Repository intelligence layer for Go codebases",
 	}
 
@@ -234,7 +234,7 @@ func newStatusCmd() *cobra.Command {
 				if slug := cs.Slug(); slug != "" {
 					fmt.Printf("project: %s (storage_schema=%s)\n", slug, cs.StorageSchema())
 				}
-				fmt.Println("No index runs found. Run 'projectlens bootstrap' first.")
+				fmt.Println("No index runs found. Run 'lens bootstrap' first.")
 				return nil
 			}
 
@@ -604,7 +604,7 @@ func newIndexSummarizeCmd() *cobra.Command {
 }
 
 // edgeProvenanceDefaults defines the per-edge_type defaults applied by
-// `projectlens index backfill-provenance`. Mirrors the table in
+// `lens index backfill-provenance`. Mirrors the table in
 // docs/2026-05-22-confidence-and-provenance-design.md.
 var edgeProvenanceDefaults = []struct {
 	EdgeType   string

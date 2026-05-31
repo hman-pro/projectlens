@@ -556,7 +556,7 @@ func TestIntegration_GetChangeHistory_BySymbol(t *testing.T) {
 // message when the server is configured without a repoPath and the
 // symbol_history table has no rows for the target symbol. The message should
 // direct the user to configure repoPath (since symbol-level git history needs
-// the on-disk repo) and must NOT suggest running 'projectlens index-history'
+// the on-disk repo) and must NOT suggest running 'lens index-history'
 // (which only populates file_history, not symbol_history).
 func TestIntegration_GetChangeHistory_BySymbol_NoRepoPath(t *testing.T) {
 	// setupIntegrationServer already constructs a Server with repoPath="".

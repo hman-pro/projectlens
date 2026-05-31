@@ -14,9 +14,9 @@ Source stays on your machine. Agents talk to the ProjectLens MCP server, and the
 
 | Binary | Install |
 |---|---|
-| CLI | `go install github.com/hman-pro/projectlens/cmd/projectlens@latest` |
-| MCP server | `go install github.com/hman-pro/projectlens/cmd/projectlens-mcp@latest` |
-| TUI | `go install github.com/hman-pro/projectlens/cmd/projectlens-tui@latest` |
+| CLI | `go install github.com/hman-pro/projectlens/cmd/lens@latest` |
+| MCP server | `go install github.com/hman-pro/projectlens/cmd/lens-mcp@latest` |
+| TUI | `go install github.com/hman-pro/projectlens/cmd/lens-tui@latest` |
 
 The quick start below uses a local clone plus `make build` to get all three binaries consistently.
 
@@ -31,8 +31,8 @@ cd docker && docker compose up -d
 cd ..
 make migrate
 make index-all REPO=.
-make build-projectlens-mcp
-./bin/projectlens-mcp
+make build-lens-mcp
+./bin/lens-mcp
 ```
 
 Summarization is disabled by default. To enable it, edit `configs/index.yaml`:

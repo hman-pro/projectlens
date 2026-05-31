@@ -1,6 +1,6 @@
 # ProjectLens Architecture
 
-Last verified against: source tree on 2026-05-22 (`internal/mcpserver/tools.go`, `cmd/projectlens`, `internal/tui`).
+Last verified against: source tree on 2026-05-22 (`internal/mcpserver/tools.go`, `cmd/lens`, `internal/tui`).
 
 Audience: first-time maintainers and agents who need to understand how ProjectLens fits together before changing it.
 
@@ -11,9 +11,9 @@ ProjectLens is a local intelligence service for Go repositories. It indexes sour
 ```mermaid
 flowchart LR
     Agent["MCP-capable agent<br/>Claude, Codex, Cursor, ..."]
-    CLI["projectlens CLI"]
-    TUI["projectlens-tui"]
-    MCP["projectlens-mcp<br/>Streamable HTTP"]
+    CLI["lens CLI"]
+    TUI["lens-tui"]
+    MCP["lens-mcp<br/>Streamable HTTP"]
     DB[("Postgres 16<br/>pgvector")]
     Repo["Target Go repository<br/>read-only input"]
     Providers["Providers<br/>Ollama embeddings<br/>(summaries disabled by default)"]
@@ -32,9 +32,9 @@ flowchart LR
 
 | Component | Entry point | Role |
 |---|---|---|
-| CLI | `cmd/projectlens` | Builds and maintains the index, runs inspections, reports, exports, migrations, and knowledge maintenance commands. |
-| MCP server | `cmd/projectlens-mcp` | Serves the indexed state to agents over Streamable HTTP at `/mcp`. |
-| TUI | `cmd/projectlens-tui` | Operational dashboard for health, pipeline, storage, config, runs, and indexer job execution. |
+| CLI | `cmd/lens` | Builds and maintains the index, runs inspections, reports, exports, migrations, and knowledge maintenance commands. |
+| MCP server | `cmd/lens-mcp` | Serves the indexed state to agents over Streamable HTTP at `/mcp`. |
+| TUI | `cmd/lens-tui` | Operational dashboard for health, pipeline, storage, config, runs, and indexer job execution. |
 | Postgres + pgvector | `docker/docker-compose.yml`, `migrations/` | Stores source facts, graph edges, history, chunks, embeddings, summaries, knowledge, index runs, and locks. |
 | Target repo | configured by `--repo`, `PROJECTLENS_REPO_PATH`, or config | Read-only source for census, parsing, datastore scan, and git history. |
 | Providers | `internal/providers/*` | Embeddings and package summaries. Defaults are config-driven. |
@@ -60,7 +60,7 @@ endpoint per registered project — backed by one schema each.
 
 ```mermaid
 flowchart LR
-    MCP["projectlens-mcp<br/>one process"]
+    MCP["lens-mcp<br/>one process"]
     Mount1["/projectlens/mcp"]
     Mount2["/ingest/mcp"]
     DB[("Postgres 16<br/>pgvector (public)")]
@@ -78,7 +78,7 @@ flowchart LR
 Identity (`slug`, `storage_schema`, `repo_path`) lives in the project
 registry (`configs/projects.yaml`, parsed by
 [`internal/projects/`](../internal/projects/)). The multi-mount HTTP layer
-in [`cmd/projectlens-mcp/main.go`](../cmd/projectlens-mcp/main.go) resolves
+in [`cmd/lens-mcp/main.go`](../cmd/lens-mcp/main.go) resolves
 one `projects.Runtime` per project, each owning a
 `storage.ConnectScoped` pgxpool pinned to its schema via `AfterConnect`.
 
@@ -93,7 +93,7 @@ Edges carry two trust axes alongside the numeric `confidence` score:
 - `provenance` — which producer wrote the edge (`parser`, `callgraph`, `sql_scanner`, `history`, `knowledge`, `docs`).
 - `confidence_class` — graphify-style epistemic strength (`extracted`, `inferred`, `ambiguous`).
 
-Both are CHECK-constrained. `projectlens report`, `projectlens export graph` (schema `projectlens-graph/v2`), and the three pilot MCP tools (`get_symbol_context`, `get_table_context`, `get_coupling`) surface them as per-hit fields and a top-level `Trust.worst_class` summary.
+Both are CHECK-constrained. `lens report`, `lens export graph` (schema `projectlens-graph/v2`), and the three pilot MCP tools (`get_symbol_context`, `get_table_context`, `get_coupling`) surface them as per-hit fields and a top-level `Trust.worst_class` summary.
 
 ## Indexing Flow
 
@@ -144,7 +144,7 @@ Use these files before updating docs or behavior:
 | Topic | Source |
 |---|---|
 | Make targets | `Makefile` |
-| CLI subcommands and flags | `cmd/projectlens/*.go` |
+| CLI subcommands and flags | `cmd/lens/*.go` |
 | MCP tool list | `internal/mcpserver/tools.go` |
 | TUI navigation keys | `internal/tui/app/keys.go` |
 | TUI action keys | `internal/tui/jobs/registry.go` |

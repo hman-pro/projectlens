@@ -41,8 +41,8 @@ echo "== Step 4: index this repo =="
 make index-all REPO="$REPO_DIR"
 
 echo "== Step 5: MCP smoke =="
-make build-projectlens-mcp
-./bin/projectlens-mcp >/tmp/projectlens-mcp.log 2>&1 &
+make build-lens-mcp
+./bin/lens-mcp >/tmp/lens-mcp.log 2>&1 &
 MCP_PID=$!
 trap 'kill "$MCP_PID" 2>/dev/null || true' EXIT
 sleep 2
@@ -53,4 +53,4 @@ curl -sS http://localhost:8484/mcp \
   | head -c 400
 echo
 echo "== Demo PASS =="
-echo "MCP server log: /tmp/projectlens-mcp.log"
+echo "MCP server log: /tmp/lens-mcp.log"

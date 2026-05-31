@@ -102,11 +102,11 @@ func run() error {
 		jobssec.New(ctx),
 	}
 
-	// Resolve projectlens binary for the runner. Empty path is fine —
+	// Resolve lens binary for the runner. Empty path is fine —
 	// the app shows a toast on action keys when the binary is missing.
 	binPath, berr := jobs.ResolveBinary()
 	if berr != nil {
-		log.Printf("projectlens binary not resolvable: %v", berr)
+		log.Printf("lens binary not resolvable: %v", berr)
 	}
 	target := jobs.RunnerTarget{
 		BinaryPath:   binPath,

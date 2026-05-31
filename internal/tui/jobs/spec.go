@@ -1,4 +1,4 @@
-// Package jobs runs single-slot subprocess invocations of projectlens
+// Package jobs runs single-slot subprocess invocations of lens
 // from inside the TUI. Each Spec describes a triggerable action; the
 // Runner executes one Spec at a time and emits Bubbletea messages
 // (JobStartedMsg, JobLineMsg, JobTickMsg, JobCompletedMsg, JobBusyMsg)

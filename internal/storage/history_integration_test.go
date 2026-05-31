@@ -6,7 +6,7 @@
 //
 // Prerequisites:
 //   - Postgres running on localhost:5433 with projectlens database
-//   - Migrations applied (bootstrap or `projectlens migrate` will do this).
+//   - Migrations applied (bootstrap or `lens migrate` will do this).
 //
 // These tests are destructive to the file_history and files tables in the
 // rows they insert: they clean up after themselves with explicit deletes.

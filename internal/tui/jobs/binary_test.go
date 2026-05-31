@@ -44,3 +44,24 @@ func TestResolveBinary_NotFound(t *testing.T) {
 		t.Fatal("expected error when binary cannot be resolved")
 	}
 }
+
+// TestResolveBinary_PathNamedLens confirms the resolver looks for "lens" on PATH
+// (not the old "projectlens" name). The sibling branch (step 2) is not covered
+// here because os.Executable() returns the test runner path.
+func TestResolveBinary_PathNamedLens(t *testing.T) {
+	// A binary named "lens" on PATH should resolve (proves the resolver looks for "lens").
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "lens")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PROJECTLENS_BINARY", "")
+	t.Setenv("PATH", dir)
+	got, err := jobs.ResolveBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != bin {
+		t.Fatalf("got %q, want %q", got, bin)
+	}
+}

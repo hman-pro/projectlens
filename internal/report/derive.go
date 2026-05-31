@@ -9,11 +9,11 @@ import (
 var stageOrder = []string{"code", "summarize", "embed", "history", "datastore"}
 
 var stageMissingAction = map[string]string{
-	"code":      "run projectlens reindex",
-	"summarize": "run projectlens index-summarize",
-	"embed":     "run projectlens index-embed",
-	"history":   "run projectlens index-history",
-	"datastore": "run projectlens index-datastore",
+	"code":      "run lens reindex",
+	"summarize": "run lens index-summarize",
+	"embed":     "run lens index-embed",
+	"history":   "run lens index-history",
+	"datastore": "run lens index-datastore",
 }
 
 func deriveDegradation(stages map[string]StageDetail, providers []indexstate.ProviderHealth) []StageDegradation {
@@ -32,7 +32,7 @@ func deriveDegradation(stages map[string]StageDetail, providers []indexstate.Pro
 			out = append(out, StageDegradation{
 				Stage:           s,
 				Reason:          fmt.Sprintf("stage age %.0fm exceeds 24h", st.AgeMinutes),
-				SuggestedAction: "run projectlens reindex",
+				SuggestedAction: "run lens reindex",
 			})
 		}
 	}

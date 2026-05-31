@@ -63,7 +63,7 @@ func (m Model) View() string {
 }
 
 func (m Model) renderHeader() string {
-	left := theme.TitleStyle().Render(" projectlens · dashboard ")
+	left := theme.TitleStyle().Render(" ProjectLens · dashboard ")
 	right := ""
 	if d := m.since(); d > 0 {
 		right = theme.MutedStyle().Render(fmt.Sprintf(" refreshed %s ago ", durationShort(d)))

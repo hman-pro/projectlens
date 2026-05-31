@@ -51,8 +51,8 @@ Use these before editing docs or behavior:
 | Topic | Source |
 |---|---|
 | Make targets | `Makefile` |
-| CLI subcommands and flags | `cmd/projectlens/*.go` |
-| Edge provenance defaults | `cmd/projectlens/main.go` and `docs/2026-05-22-confidence-and-provenance-design.md` |
+| CLI subcommands and flags | `cmd/lens/*.go` |
+| Edge provenance defaults | `cmd/lens/main.go` and `docs/2026-05-22-confidence-and-provenance-design.md` |
 | MCP tools | `internal/mcpserver/tools.go` |
 | TUI navigation keys | `internal/tui/app/keys.go` |
 | TUI action keys | `internal/tui/jobs/registry.go` |
@@ -65,7 +65,7 @@ Use these before editing docs or behavior:
 ## Development Workflow
 
 The Makefile is the supported entrypoint. It builds binaries into `./bin/`
-and runs them from there because the TUI shells out to a real `projectlens`
+and runs them from there because the TUI shells out to a real `lens`
 binary.
 
 Daily command details live in [`docs/operations.md`](docs/operations.md).

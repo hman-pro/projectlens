@@ -9,7 +9,7 @@ import (
 
 func TestEverySpec_BuildArgsContainsExplicitTarget(t *testing.T) {
 	target := jobs.RunnerTarget{
-		BinaryPath:  "/usr/local/bin/projectlens",
+		BinaryPath:  "/usr/local/bin/lens",
 		ConfigPath:  "/etc/projectlens/index.yaml",
 		DatabaseURL: "postgres://projectlens@localhost/projectlens",
 		RepoPath:    "/repos/ingest",

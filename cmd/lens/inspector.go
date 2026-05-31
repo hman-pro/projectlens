@@ -11,7 +11,7 @@ import (
 )
 
 // buildInspector builds an indexstate.Inspector for read-only commands
-// (report, export). Mirrors cmd/projectlens-mcp/main.go's wiring so the
+// (report, export). Mirrors cmd/lens-mcp/main.go's wiring so the
 // CLI report and index_status see identical provider health. Do NOT use
 // buildProviders — that is fail-fast and returns indexer types.
 func buildInspector(cfg *config.Config, db *storage.DB, repoPath string) *indexstate.DefaultInspector {

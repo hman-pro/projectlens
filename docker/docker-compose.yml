@@ -19,7 +19,7 @@ services:
     build:
       context: ../
       dockerfile: docker/Dockerfile
-    entrypoint: ["/bin/projectlens-mcp"]
+    entrypoint: ["/bin/lens-mcp"]
     command: []
     ports:
       - "${PROJECTLENS_MCP_PORT:-8484}:8484"

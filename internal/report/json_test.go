@@ -31,7 +31,7 @@ func fixtureReport() *Report {
 			CountsByCategory: map[string]int{"lesson": 2},
 			RecentEntries:    []storage.KnowledgeSummary{{ID: 1, Title: "t", Category: "lesson", Source: "test", CreatedAt: time.Date(2026, 5, 21, 11, 0, 0, 0, time.UTC)}},
 		},
-		Degraded:    []StageDegradation{{Stage: "embed", Reason: "missing", SuggestedAction: "run projectlens index-embed"}},
+		Degraded:    []StageDegradation{{Stage: "embed", Reason: "missing", SuggestedAction: "run lens index-embed"}},
 		Suggestions: []AgentQuestion{{Topic: "x", SuggestedTool: "find_symbol", Example: "find_symbol X"}},
 	}
 }

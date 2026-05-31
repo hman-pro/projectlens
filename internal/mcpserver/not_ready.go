@@ -13,7 +13,7 @@ func NotReadyHandler(slug string, cause error) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		hint := "projectlens migrate --project " + slug
+		hint := "lens migrate --project " + slug
 		body := map[string]string{
 			"error":   "project not ready",
 			"project": slug,
