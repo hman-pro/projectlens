@@ -17,7 +17,7 @@ func (m *Model) View() string {
 		return theme.MutedStyle().Render("(loading…)")
 	}
 	if m.snap.StartedAt.IsZero() {
-		return theme.MutedStyle().Render("no runs yet — run \"projectlens bootstrap\"")
+		return theme.MutedStyle().Render("no runs yet — run \"lens bootstrap\"")
 	}
 
 	s := m.snap

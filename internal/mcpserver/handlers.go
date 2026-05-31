@@ -345,7 +345,7 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 	if table == nil {
 		return mcp.NewToolResultStructured(
 			TableContextPayload{TableName: tableName, NotFound: true},
-			fmt.Sprintf("No table found matching %q. Run 'projectlens index-datastore' to index database schemas.", tableName),
+			fmt.Sprintf("No table found matching %q. Run 'lens index-datastore' to index database schemas.", tableName),
 		), nil
 	}
 
@@ -412,7 +412,7 @@ func (s *Server) handleGetTableContext(ctx context.Context, req mcp.CallToolRequ
 		}
 	}
 	if len(readEdges) == 0 && len(writeEdges) == 0 {
-		b.WriteString("\nNo code references discovered. Run 'projectlens index-datastore' to scan for SQL usage.\n")
+		b.WriteString("\nNo code references discovered. Run 'lens index-datastore' to scan for SQL usage.\n")
 	}
 
 	if wc := worstClassOf(edgeClasses); wc != "" {
@@ -505,7 +505,7 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 	b.WriteString("ProjectLens Index Status\n")
 	b.WriteString("=======================\n")
 	if len(payload.Stages) == 0 {
-		b.WriteString("No index runs found. Run 'projectlens bootstrap' to create the initial index.\n")
+		b.WriteString("No index runs found. Run 'lens bootstrap' to create the initial index.\n")
 	} else {
 		for _, stage := range []string{"code", "summarize", "embed", "history", "datastore"} {
 			st, ok := payload.Stages[stage]
@@ -575,7 +575,7 @@ func (s *Server) handleGetChangeHistory(ctx context.Context, req mcp.CallToolReq
 		payload.Records = make([]ChangeRecord, 0, len(records))
 		var b strings.Builder
 		if len(records) == 0 {
-			fmt.Fprintf(&b, "No change history found for %s. Run 'projectlens index-history' to index git history.", name)
+			fmt.Fprintf(&b, "No change history found for %s. Run 'lens index-history' to index git history.", name)
 			return mcp.NewToolResultStructured(payload, b.String()), nil
 		}
 
@@ -749,7 +749,7 @@ func (s *Server) handleGetCoupling(ctx context.Context, req mcp.CallToolRequest)
 
 	var b strings.Builder
 	if len(couplings) == 0 {
-		fmt.Fprintf(&b, "No co-change coupling found for %s (min strength: %.1f). Run 'projectlens index-history' to build coupling data.", name, minStrength)
+		fmt.Fprintf(&b, "No co-change coupling found for %s (min strength: %.1f). Run 'lens index-history' to build coupling data.", name, minStrength)
 		return mcp.NewToolResultStructured(payload, b.String()), nil
 	}
 

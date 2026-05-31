@@ -33,7 +33,7 @@ func TestMarkdownRenderer_SectionsPresent(t *testing.T) {
 		"pkg/a",
 		"public.orders",
 		"a.go",
-		"run projectlens index-embed",
+		"run lens index-embed",
 		"| calls | callgraph | 0 | 100 | 0 | 0 | 100 |",
 		"| implements | parser | 7 | 0 | 0 | 0 | 7 |",
 	} {

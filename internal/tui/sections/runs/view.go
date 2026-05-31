@@ -19,7 +19,7 @@ func (m *Model) View() string {
 		return theme.MutedStyle().Render("(loading…)")
 	}
 	if len(m.snap.Runs) == 0 {
-		return theme.MutedStyle().Render("no runs yet — run \"projectlens bootstrap\"")
+		return theme.MutedStyle().Render("no runs yet — run \"lens bootstrap\"")
 	}
 
 	var b strings.Builder

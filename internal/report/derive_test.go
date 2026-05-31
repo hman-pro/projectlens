@@ -22,10 +22,10 @@ func TestDeriveDegradation_MissingStagesUseRealCommands(t *testing.T) {
 	})
 	got := deriveDegradation(stages, nil)
 	wantSuggested := map[string]string{
-		"summarize": "run projectlens index-summarize",
-		"embed":     "run projectlens index-embed",
-		"history":   "run projectlens index-history",
-		"datastore": "run projectlens index-datastore",
+		"summarize": "run lens index-summarize",
+		"embed":     "run lens index-embed",
+		"history":   "run lens index-history",
+		"datastore": "run lens index-datastore",
 	}
 	for stage, want := range wantSuggested {
 		var found bool
@@ -45,8 +45,8 @@ func TestDeriveDegradation_MissingCodeUsesReindex(t *testing.T) {
 	got := deriveDegradation(map[string]StageDetail{}, nil)
 	for _, d := range got {
 		if d.Stage == "code" {
-			if d.SuggestedAction != "run projectlens reindex" {
-				t.Errorf("code action: got %q want %q", d.SuggestedAction, "run projectlens reindex")
+			if d.SuggestedAction != "run lens reindex" {
+				t.Errorf("code action: got %q want %q", d.SuggestedAction, "run lens reindex")
 			}
 			return
 		}
@@ -95,7 +95,7 @@ func TestDeriveDegradation_StageOlderThan24h(t *testing.T) {
 	})
 	got := deriveDegradation(stages, nil)
 	for _, d := range got {
-		if d.Stage == "code" && d.SuggestedAction == "run projectlens reindex" {
+		if d.Stage == "code" && d.SuggestedAction == "run lens reindex" {
 			return
 		}
 	}
