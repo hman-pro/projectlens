@@ -9,7 +9,7 @@ import (
 
 func TestBuildArgs_LegacyAppendsConfigDBRepo(t *testing.T) {
 	target := jobs.RunnerTarget{
-		BinaryPath:  "/bin/projectlens",
+		BinaryPath:  "/bin/lens",
 		ConfigPath:  "/etc/index.yaml",
 		DatabaseURL: "postgres://u:p@h:5432/d",
 		RepoPath:    "/repos/ingest",

@@ -258,7 +258,7 @@ func (db *DB) GetCouplingEdges(ctx context.Context, fileID int64, minStrength fl
 // BackfillProvenance fills (provenance, confidence_class) on rows where
 // either column is NULL. COALESCE preserves any already-set value so the
 // operation is partial-field repair, not blanket overwrite. Returns the
-// number of rows touched. Used by `projectlens index-backfill-provenance`
+// number of rows touched. Used by `lens index-backfill-provenance`
 // to apply per-type defaults to edges written before migration 006 and
 // to repair partial rows left by older/broken writers.
 func (db *DB) BackfillProvenance(ctx context.Context, edgeType, provenance, class string) (int64, error) {
