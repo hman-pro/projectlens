@@ -1,6 +1,6 @@
 # ProjectLens Operations
 
-Last verified against: `make help`, `cmd/projectlens`, `internal/mcpserver/tools.go`, `internal/tui/app/keys.go`, and `internal/tui/jobs/registry.go` on 2026-05-22.
+Last verified against: `make help`, `cmd/lens`, `internal/mcpserver/tools.go`, `internal/tui/app/keys.go`, and `internal/tui/jobs/registry.go` on 2026-05-22.
 
 This guide is for daily use: setup, indexing, querying, reporting, TUI operation, MCP server operation, Docker, migrations, and common failures.
 
@@ -8,14 +8,14 @@ This guide is for daily use: setup, indexing, querying, reporting, TUI operation
 
 `make` targets are repo-local conveniences. They build binaries into `./bin/` and then run them with common flags.
 
-Raw `projectlens` subcommands are the product surface. Use them directly when you already have `./bin/projectlens` on disk or installed in `PATH`.
+Raw `lens` subcommands are the product surface. Use them directly when you already have `./bin/lens` on disk or installed in `PATH`.
 
 | Use | Make target | Raw CLI |
 |---|---|---|
 | Build everything | `make build` | `go build ./cmd/...` or targeted `go build` |
-| Run index status | `make status` | `projectlens status --db "$PROJECTLENS_DATABASE_URL"` |
-| Incremental reindex | `make reindex REPO=/path/to/repo` | `projectlens reindex --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"` |
-| Free-form command | `make cli ARGS="inspect-symbol Foo"` | `projectlens inspect-symbol Foo` |
+| Run index status | `make status` | `lens status --db "$PROJECTLENS_DATABASE_URL"` |
+| Incremental reindex | `make reindex REPO=/path/to/repo` | `lens reindex --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"` |
+| Free-form command | `make cli ARGS="inspect-symbol Foo"` | `lens inspect-symbol Foo` |
 
 ## Everyday Commands
 
@@ -43,9 +43,9 @@ ProjectLens is local-first: embeddings come from Ollama and summarization is dis
 ```bash
 make help
 make build
-make build-projectlens
-make build-projectlens-mcp
-make build-projectlens-tui
+make build-lens
+make build-lens-mcp
+make build-lens-tui
 make test
 make test-int
 make fmt
@@ -73,13 +73,13 @@ make cli ARGS="index-backfill-provenance" # edge provenance backfill
 Raw equivalents:
 
 ```bash
-./bin/projectlens bootstrap --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
-./bin/projectlens reindex --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
-./bin/projectlens reindex --full --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
-./bin/projectlens reindex --dry-run --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
-./bin/projectlens index-all --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
-./bin/projectlens index-history --full --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
-./bin/projectlens index-backfill-provenance --db "$PROJECTLENS_DATABASE_URL"
+./bin/lens bootstrap --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/lens reindex --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/lens reindex --full --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/lens reindex --dry-run --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/lens index-all --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/lens index-history --full --repo /path/to/repo --db "$PROJECTLENS_DATABASE_URL"
+./bin/lens index-backfill-provenance --db "$PROJECTLENS_DATABASE_URL"
 ```
 
 Mutating indexer commands acquire the writer lock: `bootstrap`, `reindex`, `index-datastore`, `index-history`, `index-embed`, `index-summarize`, `index-all`, and `index-backfill-provenance`.
@@ -172,7 +172,7 @@ For docs, pair a Gephi screenshot with a small legend:
 make tui
 ```
 
-The TUI builds `./bin/projectlens` and `./bin/projectlens-tui`, then runs the dashboard. It reads `.env` through the Go autoload path used by the binaries.
+The TUI builds `./bin/lens` and `./bin/lens-tui`, then runs the dashboard. It reads `.env` through the Go autoload path used by the binaries.
 
 Views:
 
@@ -217,7 +217,7 @@ TUI operational details:
 |---|---|
 | Main TUI log | `PROJECTLENS_TUI_LOG_FILE`, default `/tmp/projectlens-tui.log`. |
 | Subprocess logs | `PROJECTLENS_TUI_RUNS_DIR`, default `~/.projectlens/tui-runs`, fallback `/tmp/projectlens-tui-runs`. |
-| Binary resolution | `PROJECTLENS_BINARY` first, then sibling `projectlens` next to `projectlens-tui`, then `PATH`. |
+| Binary resolution | `PROJECTLENS_BINARY` first, then sibling `lens` next to `lens-tui`, then `PATH`. |
 | Missing binary | Blocking error modal with hint to set `PROJECTLENS_BINARY`, place sibling binary, or add to `PATH`. |
 | Writer lock busy | The launched CLI exits with code 75; the Jobs view and drawer show the log tail containing the holder line. |
 | Refresh after actions | Successful terminal messages refresh the action's configured sections plus Jobs. |
@@ -227,7 +227,7 @@ TUI operational details:
 ```bash
 make mcp
 # or
-make build-projectlens-mcp && ./bin/projectlens-mcp
+make build-lens-mcp && ./bin/lens-mcp
 ```
 
 Default endpoint: `http://localhost:8484/mcp`.
@@ -304,8 +304,8 @@ settings only, never identity.
 Inspect the registry:
 
 ```bash
-./bin/projectlens projects list --projects configs/projects.yaml
-./bin/projectlens projects validate --projects configs/projects.yaml
+./bin/lens projects list --projects configs/projects.yaml
+./bin/lens projects validate --projects configs/projects.yaml
 ```
 
 `--projects` defaults to `configs/projects.yaml`; pass it only when the
@@ -318,24 +318,24 @@ Every mutating CLI (`bootstrap`, `reindex`, `index-all`, `index-datastore`,
 `migrate`, `unlock`) accepts `--project <slug>`:
 
 ```bash
-./bin/projectlens migrate --project projectlens
-./bin/projectlens bootstrap --project projectlens
-./bin/projectlens index-all --project projectlens
-./bin/projectlens reindex --project projectlens
+./bin/lens migrate --project projectlens
+./bin/lens bootstrap --project projectlens
+./bin/lens index-all --project projectlens
+./bin/lens reindex --project projectlens
 ```
 
 `--project` and `--repo` are mutually exclusive — the CLI rejects requests
 that pass both. Omit `--project` and skip `configs/projects.yaml` to keep
 the legacy `--repo`/`public` flow.
 
-`projectlens migrate --project <slug>` creates the schema if missing,
+`lens migrate --project <slug>` creates the schema if missing,
 records `schema_migrations` rows inside that schema, and is idempotent.
 The `pgvector` extension is database-global (lives in `public`); only the
 project tables are schema-local.
 
 #### MCP routing
 
-When `configs/projects.yaml` exists, `projectlens-mcp` mounts one MCP
+When `configs/projects.yaml` exists, `lens-mcp` mounts one MCP
 endpoint per project:
 
 ```text
@@ -349,7 +349,7 @@ mount. Behavior summary:
 | Request | Response |
 |---|---|
 | `/{slug}/mcp` where `<slug>` is registered and migrated | Streamable HTTP MCP for that project. |
-| `/{slug}/mcp` where `<slug>` is registered but the storage schema is missing | HTTP 503 with a JSON `hint` pointing at `projectlens migrate --project <slug>`. |
+| `/{slug}/mcp` where `<slug>` is registered but the storage schema is missing | HTTP 503 with a JSON `hint` pointing at `lens migrate --project <slug>`. |
 | Any other path (unknown slug or stray URL) | HTTP 404. |
 
 A broken project does not prevent the other endpoints from serving.
@@ -374,14 +374,14 @@ lock and migration semantics match the CLI path.
 ```bash
 make migrate
 # or
-./bin/projectlens migrate --db "$PROJECTLENS_DATABASE_URL"
+./bin/lens migrate --db "$PROJECTLENS_DATABASE_URL"
 # or per project
-./bin/projectlens migrate --project <slug>
+./bin/lens migrate --project <slug>
 ```
 
 `bootstrap` also applies migrations before indexing. Use `migrate` to catch up an existing database without reindexing. With `--project`, migrations run inside the project's storage schema; without it, the legacy `public` schema is used.
 
-`index-backfill-provenance` is an idempotent post-migration repair command for edge rows that pre-date migration 006 or were written by older/broken producers. It performs partial-field repair via `COALESCE` — rows are touched when **either** `provenance` or `confidence_class` is NULL, and an already-set value on the other column is preserved. Per-edge-type defaults live in `cmd/projectlens/main.go::edgeProvenanceDefaults`; see `docs/2026-05-22-confidence-and-provenance-design.md` for the design rationale and full vocabulary. Re-runs on a fully-filled set update zero rows.
+`index-backfill-provenance` is an idempotent post-migration repair command for edge rows that pre-date migration 006 or were written by older/broken producers. It performs partial-field repair via `COALESCE` — rows are touched when **either** `provenance` or `confidence_class` is NULL, and an already-set value on the other column is preserved. Per-edge-type defaults live in `cmd/lens/main.go::edgeProvenanceDefaults`; see `docs/2026-05-22-confidence-and-provenance-design.md` for the design rationale and full vocabulary. Re-runs on a fully-filled set update zero rows.
 
 Verify the trust invariant after the backfill:
 
@@ -400,10 +400,10 @@ A non-zero result indicates a writer that is not yet attaching trust fields; add
 | DB connection failure | `connecting to database` error. | Start Docker Postgres, verify `PROJECTLENS_DATABASE_URL`, and confirm port `5433` is reachable. |
 | Provider failure | Ollama probe failure or `connection refused` when embedding. | Confirm Ollama is running (`ollama serve`), the configured model is pulled, and `PROJECTLENS_OLLAMA_ENDPOINT` is reachable. |
 | Stale index | `index_status` shows old stage ages, wrong git commit, or dirty/stale state. | Run `make reindex` for code changes or `make index-all` for all stages. |
-| Writer lock busy | Exit code 75 plus `another writer holds the lock: pid=<n> host=<h> cmd="<c>" started=<RFC3339>`. | Wait for the holder to finish. Use `projectlens unlock --force` only after confirming auto-recovery failed. |
-| Missing TUI binary | TUI says `projectlens binary not found`. | Run `make build-projectlens`, set `PROJECTLENS_BINARY`, keep `projectlens` next to `projectlens-tui`, or add it to `PATH`. |
+| Writer lock busy | Exit code 75 plus `another writer holds the lock: pid=<n> host=<h> cmd="<c>" started=<RFC3339>`. | Wait for the holder to finish. Use `lens unlock --force` only after confirming auto-recovery failed. |
+| Missing TUI binary | TUI says `lens binary not found`. | Run `make build-lens`, set `PROJECTLENS_BINARY`, keep `lens` next to `lens-tui`, or add it to `PATH`. |
 | Agent does not use ProjectLens | Agent sees no tools or greps first. | Confirm MCP server is running, agent config points at `/mcp`, and skills/hooks from `docs/AGENT_SETUP.md` are installed. |
-| Edge trust NULLs in report | Edge Trust section shows non-zero `Unknown` column, or the NULL-count psql query above returns > 0. | Run `projectlens index-backfill-provenance`. If non-zero rows remain, a writer is not attaching trust fields — add it to the writer table in `docs/internals.md`. |
+| Edge trust NULLs in report | Edge Trust section shows non-zero `Unknown` column, or the NULL-count psql query above returns > 0. | Run `lens index-backfill-provenance`. If non-zero rows remain, a writer is not attaching trust fields — add it to the writer table in `docs/internals.md`. |
 | Edge CHECK constraint violation | INSERT fails with `edges_confidence_class_check` or `edges_provenance_check`. | A writer is emitting a value outside the documented vocabulary. Fix the writer or extend the CHECK in a new migration (and document the new producer). |
 
 ## Docs Review Checklist

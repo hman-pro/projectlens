@@ -1,6 +1,6 @@
 # ProjectLens Internals
 
-Last verified against: `cmd/projectlens`, `internal/indexer`, `internal/datastore`, `internal/history`, `internal/mcpserver`, `internal/tui`, `internal/storage`, and `migrations/*.up.sql` on 2026-05-22.
+Last verified against: `cmd/lens`, `internal/indexer`, `internal/datastore`, `internal/history`, `internal/mcpserver`, `internal/tui`, `internal/storage`, and `migrations/*.up.sql` on 2026-05-22.
 
 This guide explains how ProjectLens works under the hood without requiring a code walk.
 
@@ -71,7 +71,7 @@ The next embedding run picks up knowledge chunks without a separate pipeline.
 
 Endpoint resolution is type-aware (`edgeEndpoint`). Datastore endpoints stored as either `datastore_table` or the knowledge anchor type `table` both resolve through the `datastore_tables` JOIN to the same `table:<engine>:<schema>.<name>` node id, so a `save_knowledge` anchor of type `table` produces a real `knowledge_about` edge rather than a dropped `unknown:table:<id>`. When an endpoint still cannot be resolved to an emitted node — an unsupported endpoint type or a dangling reference — the edge is dropped to preserve closure but is never silent: it is recorded in the envelope's additive top-level `diagnostics.skipped_edges` array (`{source, target, type, reason}`) and the CLI prints a `WARN` summary with samples to stderr. An empty `skipped_edges` means the graph is fully closed. The `diagnostics` object is operational metadata sibling to `nodes`/`edges`; v2 readers that only consume the graph content ignore it.
 
-`index-backfill-provenance` is an idempotent maintenance command for databases with edge rows that pre-date migration 006 or that were written by older/broken writers. It performs partial-field repair via `COALESCE`: rows are touched when **either** `provenance` or `confidence_class` is NULL, and an already-set value on the other column is preserved (not overwritten). Per-edge-type defaults live in `cmd/projectlens/main.go::edgeProvenanceDefaults`. Re-runs against a fully-filled set update zero rows.
+`index-backfill-provenance` is an idempotent maintenance command for databases with edge rows that pre-date migration 006 or that were written by older/broken writers. It performs partial-field repair via `COALESCE`: rows are touched when **either** `provenance` or `confidence_class` is NULL, and an already-set value on the other column is preserved (not overwritten). Per-edge-type defaults live in `cmd/lens/main.go::edgeProvenanceDefaults`. Re-runs against a fully-filled set update zero rows.
 
 ## Storage Model
 
@@ -104,7 +104,7 @@ Every edge carries two text-enum axes alongside the numeric `confidence` score:
 
 Both are CHECK-constrained (migrations 006 and 007). Adding a new producer requires extending the `provenance` CHECK in the same migration that adds the writer.
 
-Writers and their defaults (see `cmd/projectlens/main.go::edgeProvenanceDefaults` and per-package writer code):
+Writers and their defaults (see `cmd/lens/main.go::edgeProvenanceDefaults` and per-package writer code):
 
 | Writer call site | Edge type(s) | Provenance | Confidence class |
 |---|---|---|---|
@@ -172,7 +172,7 @@ places:
 
 1. Asserts the schema exists (`information_schema.schemata` lookup). A
    missing schema surfaces an actionable error pointing at
-   `projectlens migrate --project <slug>` — this is the trigger for the
+   `lens migrate --project <slug>` — this is the trigger for the
    MCP server's HTTP 503 hint and the CLI bootstrap branch.
 2. Runs `SET search_path TO "<schema>",public`. The schema identifier is
    quoted via `pgx.Identifier{}.Sanitize()` (`QuoteSchema`) AFTER passing
@@ -200,9 +200,9 @@ runner to be schema-aware:
    `CREATE TABLE`, indexes, and references resolve inside the project's
    schema.
 
-This is invoked from `cmd/projectlens/migrate` when `--project` is set, and
+This is invoked from `cmd/lens/migrate` when `--project` is set, and
 from the CLI bootstrap branch in
-[`cmd/projectlens/lock.go`](../cmd/projectlens/lock.go) when the scoped pool
+[`cmd/lens/lock.go`](../cmd/lens/lock.go) when the scoped pool
 fails to open because the project schema does not yet exist.
 
 The legacy single-project path keeps using `storage.Connect` +
@@ -254,7 +254,7 @@ sequenceDiagram
     participant App as TUI app
     participant Store as TUI store
     participant Runner as Job runner
-    participant CLI as projectlens CLI
+    participant CLI as lens CLI
     participant DB as Postgres
 
     User->>App: action key, for example A
@@ -265,7 +265,7 @@ sequenceDiagram
     App-->>User: confirmation modal
     User->>App: confirm
     App->>Runner: start subprocess
-    Runner->>CLI: projectlens index-all ...
+    Runner->>CLI: lens index-all ...
     CLI->>DB: acquire writer lock
     CLI->>DB: write index state
     CLI-->>Runner: stdout/stderr + exit code
@@ -273,7 +273,7 @@ sequenceDiagram
     App->>Store: refresh affected sections
 ```
 
-The TUI does not reimplement indexing. It shells out to the real `projectlens` binary so operational behavior matches the CLI.
+The TUI does not reimplement indexing. It shells out to the real `lens` binary so operational behavior matches the CLI.
 
 ## Writer Lock
 
@@ -285,7 +285,7 @@ When another writer owns the lock, the command exits with code 75 and prints:
 another writer holds the lock: pid=<n> host=<h> cmd="<c>" started=<RFC3339>
 ```
 
-Auto-recovery reaps orphaned rows when the database session behind the advisory lock is gone. `projectlens unlock --force` terminates the holder's DB backend and should be treated as an operator escape hatch, not normal flow.
+Auto-recovery reaps orphaned rows when the database session behind the advisory lock is gone. `lens unlock --force` terminates the holder's DB backend and should be treated as an operator escape hatch, not normal flow.
 
 ## Implementation Boundaries
 

@@ -178,7 +178,7 @@ another writer holds the lock: pid=<n> host=<h> cmd="<c>" started=<RFC3339>
    running indexer job.
 2. **Default: wait** for the holder to finish, then retry. Auto-recovery
    reaps the row if the holder crashes.
-3. `projectlens unlock --force` is a **last resort**, only when
+3. `lens unlock --force` is a **last resort**, only when
    auto-recovery has clearly failed (holder PID is dead, row pinned
    for hours). It kills the holder's DB session and rolls back any
    in-flight transactions.
