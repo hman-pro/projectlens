@@ -1,6 +1,6 @@
 # ProjectLens Tasks
 
-Date: 2026-05-30
+Date: 2026-06-01
 Status: canonical project task list
 
 This file owns the current task queue. Older dated priority notes and parked
@@ -25,13 +25,12 @@ backlogs should be folded here instead of creating another competing list.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P1` | PR / review-context ingestion | Active | Write the focused design doc (observability prereq now shipped). Note the document-lane foundation already exists — `internal/storage/context_items.go` (`ExternalID`) and `context_sources.go` (`github:owner/repo`); design the GitHub client, incremental sync, redaction, idempotency on top of it. | Merged PRs, comments, reviews, and inline review metadata can be ingested incrementally with provenance, redaction, pagination tests, idempotency tests, and optional anchors to files/symbols. |
+| `P1` | Agent setup UX | Active | Write the focused design spec for `lens agent install/status/doctor`, scoped to Claude and Codex setup using the canonical assets under `agent/`. | A user can install ProjectLens wiring for Claude or Codex, check whether it is current, and diagnose the agent-to-MCP loop without manually copying snippets or guessing what is stale. |
 
 ## Next Tasks
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P1` | Agent setup UX | Planned | Write the focused design spec for `lens agent install/status/doctor`, scoped to Claude and Codex setup using the canonical assets under `agent/`. | A user can install ProjectLens wiring for Claude or Codex, check whether it is current, and diagnose the agent-to-MCP loop without manually copying snippets or guessing what is stale. |
 | `P2` | End-to-end smoke test | Planned | Promote the brief below into an implementation plan. Existing `scripts/release-smoke.sh` only covers the embedding+DB contract — it is not the full loop. | `make smoke` proves the full indexer to storage to MCP loop against a small fixture repo in under 5 minutes. |
 
 ## Recently Done
@@ -42,6 +41,7 @@ backlogs should be folded here instead of creating another competing list.
 | `P1` | `lens export graph` (native-schema nodes+edges, stable IDs, streaming) | Done | `cmd/lens/export.go`, `internal/export/graph.go` |
 | `P1` | Inspectable artifacts: `export graph` closure diagnostics | Done | `Export` returns `Diagnostics`; `edgeSkipReason` classifier + `diagnostics.skipped_edges` envelope field + CLI stderr `WARN`; knowledge `table`-anchor JOIN/`edgeEndpoint` fix; endpoint-shape + classifier unit tests in `graph_test.go`; self-contained `TestExportGraph_TableAnchorEdge` integration test |
 | `P1` | Run observability for indexing stages | Done | migration 008 + `internal/storage/indexruns.go` + indexer wiring + report stage detail + TUI runs panel; provider identity + error redaction in place |
+| `P1` | CLI command and binary rename from `projectlens` to `lens` | Done | `cmd/lens/`, `cmd/lens-mcp/`, `cmd/lens-tui/`; `Makefile` builds `bin/lens*`; user-facing docs, agent assets, TUI hints, Docker entrypoints, and current source-of-truth docs use `lens` while retaining ProjectLens product/env/MCP identities |
 
 ## 1. Inspectable Artifacts
 
@@ -126,60 +126,7 @@ Starting point:
 
 - `docs/2026-05-23-run-observability-design.md`
 
-## 3. PR / Review-Context Ingestion
-
-Goal: add the first document-like business/human-context lane, starting with
-merged PRs and review discussions.
-
-This is the highest-value corpus expansion before Jira/Confluence because PR
-context is close to code and often carries file/path/line metadata.
-
-Scope:
-
-- Merged PR title/body/metadata.
-- Top-level issue comments on PRs.
-- Review summaries.
-- Inline review comments.
-- Relevant path/line/commit metadata where available.
-
-Out of scope for the first pass:
-
-- Jira.
-- Confluence.
-- Slack.
-- Generic web/docs ingestion.
-- Agent install/distribution.
-
-Storage direction:
-
-- Use a document-like lane rather than flattening the typed code model.
-- Store stable external IDs such as `github:owner/repo#123`.
-- Preserve metadata for author, merged time, URL, state, path, line, and review state.
-- Add optional edges from PR chunks to files/symbols when anchors resolve.
-
-Retrieval direction:
-
-- Answer why code changed, what reviewers decided, whether behavior was debated, which PR introduced a path, and what human context exists around a symbol/table/package.
-- Complement typed tools instead of replacing them.
-- Let broad context search include PR chunks as supporting evidence.
-
-Acceptance criteria:
-
-- Incremental ingestion is possible by merge/update timestamp.
-- Re-running ingestion is idempotent.
-- Every stored chunk has stable provenance and a URL.
-- Inline comments preserve path/line metadata when GitHub provides it.
-- Content is scrubbed before embedding.
-- Tests cover pagination, idempotency, and anchor resolution behavior.
-
-Risks:
-
-- GitHub API rate limits and auth variability.
-- Review comment positions becoming stale relative to current HEAD.
-- Storing sensitive discussion content without enough redaction.
-- Poor retrieval ranking if PR chunks are mixed naively with code chunks.
-
-## 4. Agent Setup UX
+## 3. Agent Setup UX
 
 Goal: make ProjectLens easy to connect to MCP-capable coding agents without
 manual snippet copying or stale local agent assets.
@@ -246,7 +193,7 @@ Starting points:
 - `docs/AGENT_SETUP.md`
 - `docs/2026-05-21-graphify-comparison.md`
 
-## 5. End-to-End Smoke Test
+## 4. End-to-End Smoke Test
 
 Goal: add one command that proves the full ProjectLens loop is healthy:
 Postgres up, migrations applied, indexer can ingest a tiny fixture repo, and
@@ -288,6 +235,7 @@ These are valuable, but not immediate:
 - Jira ingestion. See `docs/2026-05-21-jira-confluence-ingestion-lessons.md` for future-spec guidance.
 - Confluence ingestion. See `docs/2026-05-21-jira-confluence-ingestion-lessons.md` for future-spec guidance.
 - Slack ingestion.
+- PR / review-context ingestion.
 - Public packaging.
 - Replacing ProjectLens's typed schema with a flat RAG chunk store.
 
@@ -299,13 +247,12 @@ Additional future-spec inputs:
 
 ## Suggested Sequence
 
-1. Design PR/review ingestion against the existing document-lane foundation.
-2. Implement PR/review ingestion with provenance, redaction, and tests.
-3. Design agent setup UX for Claude and Codex around the canonical `agent/`
+1. Design agent setup UX for Claude and Codex around the canonical `agent/`
    assets.
-4. Implement `lens agent install/status/doctor`.
-5. Promote the end-to-end smoke test brief into an implementation plan.
-6. Revisit Jira/Confluence after the document lane and privacy model are proven.
+2. Implement `lens agent install/status/doctor`.
+3. Promote the end-to-end smoke test brief into an implementation plan.
+4. Revisit Jira/Confluence only if external document/context ingestion becomes
+   a product priority again.
 
 ## Planning Boundary
 

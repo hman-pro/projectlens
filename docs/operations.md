@@ -1,6 +1,6 @@
 # ProjectLens Operations
 
-Last verified against: `make help`, `cmd/lens`, `internal/mcpserver/tools.go`, `internal/tui/app/keys.go`, and `internal/tui/jobs/registry.go` on 2026-05-22.
+Last verified against: `make help`, `cmd/lens`, `internal/mcpserver/tools.go`, `internal/tui/app/keys.go`, and `internal/tui/jobs/registry.go` on 2026-06-01.
 
 This guide is for daily use: setup, indexing, querying, reporting, TUI operation, MCP server operation, Docker, migrations, and common failures.
 
@@ -165,6 +165,32 @@ For docs, pair a Gephi screenshot with a small legend:
 | `file -> file` | `co_changes` |
 | `symbol -> table` | `reads_table`, `writes_table` |
 | `knowledge -> target` | `knowledge_about` |
+
+### Architecture dashboard
+
+`make understand-dashboard` serves the Understand-Anything knowledge-graph
+dashboard for this repo: an interactive view of architectural layers,
+components, and edges produced by the `/understand` Claude Code skill. This is
+contributor tooling for exploring structure, distinct from `make tui` (the
+operational product TUI).
+
+```bash
+make understand-dashboard
+```
+
+Prerequisites:
+
+- Run the `/understand` skill in Claude Code once to generate
+  `.understand-anything/knowledge-graph.json` (gitignored, local only). The
+  target aborts with a hint if the graph is missing.
+- The understand-anything plugin must be installed; the target resolves its
+  bundled Vite dashboard under `~/.claude/plugins/cache/` (newest version
+  wins). Override with `UNDERSTAND_GLOB=/path/to/packages/dashboard` if it
+  lives elsewhere.
+
+The dev server prints a tokenized URL (e.g. `http://127.0.0.1:5173/?token=...`);
+open it in a browser — the `?token=` is required or the dashboard shows an
+access gate. Stop the server with `Ctrl+C`.
 
 ### TUI
 
