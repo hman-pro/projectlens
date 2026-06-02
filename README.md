@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/projectlens-icon.png" alt="ProjectLens logo" width="140">
-</p>
-
 # ProjectLens
 
 **Local-first codebase intelligence for AI coding agents.**
