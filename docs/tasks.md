@@ -1,6 +1,6 @@
 # ProjectLens Tasks
 
-Date: 2026-06-01
+Date: 2026-11-13
 Status: canonical project task list
 
 This file owns the current task queue. Older dated priority notes and parked
@@ -241,7 +241,6 @@ These are valuable, but not immediate:
 
 Additional future-spec inputs:
 
-- `docs/2026-05-21-resource-safety-lessons-from-pnphive.md`
 - `docs/2026-05-21-document-retrieval-quality-lessons.md`
 - `docs/2026-05-21-privacy-egress-and-redaction-lessons.md`
 
