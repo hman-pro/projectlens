@@ -25,18 +25,19 @@ backlogs should be folded here instead of creating another competing list.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P1` | Agent setup UX | Active | Write the focused design spec for `lens agent install/status/doctor`, scoped to Claude and Codex setup using the canonical assets under `agent/`. | A user can install ProjectLens wiring for Claude or Codex, check whether it is current, and diagnose the agent-to-MCP loop without manually copying snippets or guessing what is stale. |
+| `P2` | End-to-end smoke test | Active | Promote the brief below into an implementation plan. Existing `scripts/release-smoke.sh` only covers the embedding+DB contract — it is not the full loop. | `make smoke` proves the full indexer to storage to MCP loop against a small fixture repo in under 5 minutes. |
 
 ## Next Tasks
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P2` | End-to-end smoke test | Planned | Promote the brief below into an implementation plan. Existing `scripts/release-smoke.sh` only covers the embedding+DB contract — it is not the full loop. | `make smoke` proves the full indexer to storage to MCP loop against a small fixture repo in under 5 minutes. |
+| - | None queued. | - | - | - |
 
 ## Recently Done
 
 | Priority | Task | Status | Evidence |
 |---|---|---|---|
+| `P1` | Agent setup UX (`lens agent install/uninstall/status/doctor` for Claude and Codex, personal and git-invisible) | Done | `cmd/lens/agent.go`, `internal/agentsetup/` |
 | `P1` | `lens report` (markdown/json, `--format`, `--out`, all sections) | Done | `cmd/lens/report.go`, `internal/report/` |
 | `P1` | `lens export graph` (native-schema nodes+edges, stable IDs, streaming) | Done | `cmd/lens/export.go`, `internal/export/graph.go` |
 | `P1` | Inspectable artifacts: `export graph` closure diagnostics | Done | `Export` returns `Diagnostics`; `edgeSkipReason` classifier + `diagnostics.skipped_edges` envelope field + CLI stderr `WARN`; knowledge `table`-anchor JOIN/`edgeEndpoint` fix; endpoint-shape + classifier unit tests in `graph_test.go`; self-contained `TestExportGraph_TableAnchorEdge` integration test |
@@ -246,11 +247,10 @@ Additional future-spec inputs:
 
 ## Suggested Sequence
 
-1. Design agent setup UX for Claude and Codex around the canonical `agent/`
-   assets.
-2. Implement `lens agent install/status/doctor`.
-3. Promote the end-to-end smoke test brief into an implementation plan.
-4. Revisit Jira/Confluence only if external document/context ingestion becomes
+1. Done: agent setup UX (`lens agent install/uninstall/status/doctor`).
+2. Promote the end-to-end smoke test brief into an implementation plan, then
+   build it.
+3. Revisit Jira/Confluence only if external document/context ingestion becomes
    a product priority again.
 
 ## Planning Boundary

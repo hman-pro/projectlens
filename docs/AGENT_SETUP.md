@@ -18,6 +18,8 @@ server, CLI, TUI, Docker, and troubleshooting commands, see
 - [Connect Your Agent](#connect-your-agent)
 - [Install the Skills](#install-the-skills)
 - [Install the Hooks](#install-the-hooks)
+- [Check, Repair, and Uninstall](#check-repair-and-uninstall)
+- [Limitations](#limitations)
 - [How It All Fits Together](#how-it-all-fits-together)
 - [Verifying It Works](#verifying-it-works)
 - [Troubleshooting](#troubleshooting)
@@ -38,101 +40,120 @@ you've set up a project registry:
 See [`docs/operations.md#projects`](operations.md#projects) for the
 registry format and per-project commands.
 
+`lens agent install` wires Claude Code or Codex into one repository for you
+alone. Run it from inside the target repository (or pass `--project <slug>`
+to pick a registered project). It needs a built `lens` binary; see
+[`operations.md`](operations.md) for the Make targets.
+
+The URL it writes comes from, in order: `--url`; `--project <slug>` with
+`--port` (or `$PROJECTLENS_MCP_PORT`, default 8484); the project in
+`configs/projects.yaml` whose `repo_path` is this repository; otherwise the
+legacy `http://localhost:8484/mcp`. In multi-project mode, if no registered
+project matches the repository, install stops and asks for `--project` or
+`--url`.
+
+### What install writes
+
+Install is personal: nothing it writes shows up in `git status`.
+
+| Agent | MCP entry | Skills | Hooks |
+|---|---|---|---|
+| Claude Code | `.mcp.json` (`mcpServers.projectlens`) | `.claude/skills/` | `.claude/settings.local.json` |
+| Codex | `.codex/config.toml` (`mcp_servers.projectlens`) | `.agents/skills/` | none (Codex has no hooks) |
+
+It also records what it owns in `.projectlens/agent-manifest.json`.
+
+Example (Claude Code):
+
+```text
+$ lens agent install claude
+  written   .mcp.json                          (mcpServers.projectlens)
+  written   .claude/skills/capture-knowledge/
+  written   .claude/skills/use-projectlens/
+  written   .claude/settings.local.json        (4 hooks)
+  written   .git/info/exclude                  (5 paths)
+```
+
+Add `--dry-run` to see what would change without writing anything. Re-running
+install is safe: items that are already current are left alone and stale
+ones are updated.
+
+### Keeping the wiring out of git
+
+- Every path install creates is listed in a marked block in your
+  repository's `.git/info/exclude`, never in `.gitignore`. That file is
+  local to your clone, so teammates see nothing.
+- **Do not hand-edit the marked block.** It belongs to lens; lines you add
+  inside it are dropped on the next run. Put your own excludes outside the
+  block.
+- A file git already tracks is never written. Install prints the entry for
+  you to add by hand and reports the item as `manual`.
+- If you already had an untracked `.mcp.json`, `.claude/settings.local.json`,
+  or `.codex/config.toml`, install edits it in place. It keeps its own
+  visibility in `git status` and all its other content. JSON files are
+  re-serialized (2-space indent, sorted keys), so expect a formatting diff.
+- A hand-written `mcp_servers.projectlens` definition in
+  `.codex/config.toml` outside the managed block is never rewritten: the same
+  URL counts as `current`, a different URL is `blocked`.
+- Content you edited is never overwritten or removed without `--force`.
+  `--force` still never writes a tracked file and never writes through a
+  symlink.
+
+### Linked worktrees
+
+All worktrees of a repository share one `.git/info/exclude`. Each worktree
+gets its own marked block, and install only wires the worktree you run it in.
+Run `lens agent install` in every worktree you use.
+
 ### Claude Code
 
-Add to your Claude Code MCP configuration (typically `~/.claude.json` or per-
-project `.claude/mcp.json`). Replace `<slug>` with the project slug from
-`configs/projects.yaml`:
-
-```json
-{
-  "mcpServers": {
-    "projectlens": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "http://localhost:8484/<slug>/mcp"]
-    }
-  }
-}
+```bash
+lens agent install claude
 ```
 
-To wire multiple projects, register multiple servers (`projectlens-foo`,
-`projectlens-bar`) each pointing at its own `/{slug}/mcp` URL.
+Then restart Claude Code in the repo, run `/mcp`, and approve the
+`projectlens` server (Claude Code asks before using a project-scoped
+server). Finish with `lens agent doctor claude`.
 
-**Legacy single-project mode.** If you have not created
-`configs/projects.yaml`, use the legacy URL instead:
-
-```json
-{
-  "mcpServers": {
-    "projectlens": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "http://localhost:8484/mcp"]
-    }
-  }
-}
-```
-
-A ready-to-copy legacy version lives at
-[`agent/claude/mcp-config.json`](../agent/claude/mcp-config.json).
+To wire several projects, run install in each repository; each gets the URL
+of its own registered project.
 
 ### Cursor
 
-Settings → MCP → **Add new MCP server**. Fill in:
+Cursor is not covered by `lens agent`. Settings → MCP → **Add new MCP
+server**. Fill in:
 
 - **Name:** `projectlens` (or `projectlens-<slug>` when running multiple projects)
 - **Type:** `streamable-http`
 - **URL:** `http://localhost:8484/<slug>/mcp` (multi-project) or
   `http://localhost:8484/mcp` (legacy single-project mode)
 
-Cursor will list the 10 ProjectLens tools the next time you open the agent
+Cursor will list the ProjectLens tools the next time you open the agent
 panel.
 
 ### Codex
 
-Codex spawns MCP servers as stdio subprocesses, so wrap the Streamable
-HTTP endpoint with `mcp-remote` (same bridge Claude Code uses
-implicitly).
+```bash
+lens agent install codex
+```
 
-1. Install the bridge once: `npm i -g mcp-remote` — or rely on `npx -y`
-   in the config and skip the global install.
-2. Add to `~/.codex/config.toml` (see
-   [`agent/codex/config.toml.snippet`](../agent/codex/config.toml.snippet)
-   in this repo). Replace `<slug>` with the project slug:
+Then open Codex in the repo and **trust the project**: Codex ignores
+`.codex/config.toml` in projects it does not trust. Finish with
+`lens agent doctor codex`.
 
-   ```toml
-   [mcp_servers.projectlens]
-   command = "npx"
-   args = ["-y", "mcp-remote", "http://localhost:8484/<slug>/mcp"]
-   ```
-
-   **Legacy single-project mode** — use `http://localhost:8484/mcp` instead
-   of `/<slug>/mcp` when no `configs/projects.yaml` is present.
-
-3. Restart Codex. The 10 ProjectLens tools appear in the tool list.
-
-Codex does **not** auto-load `.claude/skills/*.md` the way Claude Code
-does. Instead, paste the contents of
-[`agent/codex/AGENTS.md.snippet`](../agent/codex/AGENTS.md.snippet)
-into your target repo's `AGENTS.md` (or the Codex system-prompt
-override). It compresses the mandatory rule, tool picker, and
-knowledge-capture instructions into the prompt body so Codex actually
-reaches for the tools. The canonical skill bodies live at
-[`agent/skills/use-projectlens/SKILL.md`](../agent/skills/use-projectlens/SKILL.md)
-and
-[`agent/skills/capture-knowledge/SKILL.md`](../agent/skills/capture-knowledge/SKILL.md);
-read them directly when you need the longer playbook (workflows,
-anti-patterns, structured-content fields, writer-lock awareness).
-
-When Codex calls `save_knowledge`, pass `source: "codex"` so the
+Codex has no hooks, so install prints an AGENTS.md snippet at the end. Paste
+it into your repo's `AGENTS.md` for always-on guidance (the source is
+[`agent/codex/AGENTS.md.snippet`](../agent/codex/AGENTS.md.snippet)). The
+snippet tells Codex to pass `source: "codex"` to `save_knowledge` so the
 audit trail distinguishes agents.
 
 ### Other MCP-compatible agents
 
-Any client that supports Streamable HTTP MCP works (Cline, Continue,
+These are manual steps; `lens agent` does not cover them. Any client that supports Streamable HTTP MCP works (Cline, Continue,
 Windsurf, Zed, custom agents built on the Anthropic / OpenAI SDKs, ...).
 Point it at `http://localhost:8484/<slug>/mcp` (multi-project mode) or
 `http://localhost:8484/mcp` (legacy single-project mode) — that one URL
-is everything the agent needs. The server exposes 10 tools the agent loop
+is everything the agent needs. The server exposes ten tools the agent loop
 can call like any function-calling tool.
 
 ---
@@ -150,17 +171,9 @@ ProjectLens:
 
 ### Install
 
-In your target repo:
-
-```bash
-# Symlink the skills so they auto-update with ProjectLens
-mkdir -p .claude/skills
-ln -s /path/to/projectlens/agent/skills/use-projectlens    .claude/skills/use-projectlens
-ln -s /path/to/projectlens/agent/skills/capture-knowledge .claude/skills/capture-knowledge
-```
-
-(Or copy the directories instead of symlinking if your agent doesn't follow
-symlinks — copies need manual re-sync when ProjectLens updates the skills.)
+`lens agent install claude` or `lens agent install codex` installs both
+skills (see [Connect Your Agent](#connect-your-agent) for where they go).
+There are no manual copy or symlink steps.
 
 ### `use-projectlens` at a glance
 
@@ -219,15 +232,88 @@ private code.
 
 ### Install
 
-Merge the snippet into your repo's `.claude/settings.json`. If the file
-doesn't exist yet, just copy it:
+`lens agent install claude` merges the four hooks into
+`.claude/settings.local.json`, keeping any other settings in that file.
+Codex has no hooks. Each hook carries an ID prefix so lens can find, update,
+and remove its own hooks without touching yours.
+
+---
+
+## Check, Repair, and Uninstall
+
+### Status
 
 ```bash
-cp /path/to/projectlens/agent/claude/settings-snippet.json .claude/settings.json
+lens agent status [claude|codex]   # add --json for scripts
 ```
 
-If the file already has hooks, merge the `hooks` keys by hand — JSON does
-not deep-merge automatically.
+`status` compares what is on disk with what install would write, and
+changes nothing. With no argument it covers every agent you installed.
+
+| State | Meaning | What to do |
+|---|---|---|
+| `current` | Matches what install would write. | Nothing. |
+| `missing` | Not on disk. | `lens agent install <agent>`. |
+| `stale` | Lens wrote it, and the canonical asset has since changed. | `lens agent install <agent>` updates it. |
+| `modified` | You edited content lens wrote. | Keep it, or `install --force` to overwrite. |
+| `unmanaged` | Something is at that path that lens did not write (including a symlinked skill directory). | `install --force` to take it over (a symlink is replaced by a copy), or leave it. |
+| `manual` | The file is tracked by git, so lens will not write it. | Add the entry install printed, by hand. |
+| `orphaned` | Lens recorded it, but it is no longer in the canonical assets (for example a renamed skill). | `lens agent install <agent>` removes it if you did not change it; `--force` otherwise. |
+| `removed-locally` | You deleted a hook lens installed. | Install leaves it removed; `install --force` restores it. |
+| `blocked` | A symlink, a foreign definition, or a scratch directory is in the way, and lens will not write through it. | Move the obstacle, then re-run install. |
+
+### Exit codes
+
+| Command | Exit |
+|---|---|
+| `status` | 0 when everything is `current`; 1 when anything is not. |
+| `doctor` | 0 when no check failed; 1 when a check failed. |
+| any | 2 for a usage error (unknown subcommand, bad flag, wrong arguments). |
+| `install`, `uninstall` | 0, even when some items were skipped, blocked, or need a manual step. Run `lens agent status` to check the result. |
+
+### Doctor
+
+```bash
+lens agent doctor [claude|codex]   # add --json, or --url to check another URL
+```
+
+`doctor` checks, in order: the canonical assets are found, the installed
+items are current, the server answers at the configured URL, the server's
+tool list matches, the installed URL matches the expected one, no
+user-level config shadows the project entry, the agent will load the entry
+(Claude Code approval, Codex trust), and `lens` is on your `PATH`. A
+failure prints one next action. A check that cannot be read reliably (the
+approval and trust steps) prints a manual instruction.
+
+### Uninstall
+
+```bash
+lens agent uninstall <claude|codex|all> [--dry-run] [--force]
+```
+
+Uninstall removes only what the manifest says install created or edited:
+skills, the lens hooks and MCP entry, and the exclude entries. Your other
+settings in shared files stay. Anything you changed is kept unless you pass
+`--force`, which still never touches a tracked file or a symlink. A config
+file that install created and that is empty after removal is deleted.
+
+---
+
+## Limitations
+
+- If `.projectlens/agent-manifest.json` is deleted, the next install
+  recovers ownership from the marked block in `.git/info/exclude`. Uninstall
+  after that may leave empty parent directories (`.claude/`, `.agents/`,
+  `.codex/`).
+- If you commit a file install created, the manifest and exclude entry stay
+  until you delete that file.
+- If a directory of yours is named `.<skill>.lens-tmp` or
+  `.<skill>.lens-old` beside an installed skill, that skill is reported
+  `blocked` until you move it.
+- A config file that install created and you leave empty is deleted on
+  uninstall.
+- A hard crash while writing a config file can leave a `.tmp-*` file that
+  shows in `git status`. Delete it and re-run install.
 
 ---
 
@@ -243,8 +329,8 @@ This section covers agent-side wiring. The full runtime architecture lives in
 │  ┌──────────────┐    ┌─────────────┐    ┌──────────────┐   │
 │  │   Skills     │    │   Hooks     │    │  MCP Tools   │   │
 │  │              │    │             │    │              │   │
-│  │ use-repo-    │    │ PreToolUse  │    │ find_symbol  │   │
-│  │   intel      │    │   on Edit   │    │ search_go_…  │   │
+│  │ use-         │    │ PreToolUse  │    │ find_symbol  │   │
+│  │  projectlens │    │   on Edit   │    │ search_go_…  │   │
 │  │ capture-     │    │ Stop x2     │    │ get_…        │   │
 │  │   knowledge  │    │             │    │ save_…       │   │
 │  └──────┬───────┘    └──────┬──────┘    └──────┬───────┘   │
@@ -253,8 +339,8 @@ This section covers agent-side wiring. The full runtime architecture lives in
 │         └─────────┬─────────┴───────┬───────────┘           │
 │                   │                 │                       │
 │            ┌──────┴────────┐   ┌────┴──────┐                │
-│            │ "Use Repo     │   │ MCP call  │                │
-│            │  Intel first" │   │ over HTTP │                │
+│            │ "Use          │   │ MCP call  │                │
+│            │ ProjectLens   │   │ over HTTP │                │
 │            └───────────────┘   └────┬──────┘                │
 └─────────────────────────────────────┼───────────────────────┘
                                       │
@@ -273,8 +359,8 @@ and the system still works, just less reliably.
 
 ## Verifying It Works
 
-After connecting the agent and installing skills + hooks, test the loop end
-to end:
+After `lens agent install` and `lens agent doctor`, test the loop end to
+end:
 
 1. **MCP connectivity.** Ask the agent: *"Call `index_status` and show me
    the result."* You should see a freshness summary with timestamps per
@@ -282,8 +368,7 @@ to end:
 2. **Skill activation.** Ask: *"Where is supplier funding approval
    implemented?"* The agent should call `find_symbol` (or
    `search_go_context`) first, **before** any Read/Grep. If it greps
-   first, the skill isn't loaded — check `.claude/skills/use-projectlens/`
-   exists.
+   first, the skill isn't loaded — run `lens agent status`.
 3. **Hook activation.** Ask the agent to make a small edit to an exported
    Go function. Before the edit, the PreToolUse hook should trigger a
    `<system-reminder>` reminding the agent about impact-checking. (You
@@ -305,7 +390,10 @@ busy errors, and missing TUI binaries are covered in
 
 ### The agent isn't using ProjectLens
 
-- Confirm the MCP server is reachable: `curl http://localhost:8484/<slug>/mcp`
+- Run `lens agent doctor`. It checks the install, the server URL, the tool
+  list, and the approval or trust step, and prints one next action per
+  failure.
+- To check by hand, confirm the MCP server is reachable: `curl http://localhost:8484/<slug>/mcp`
   (multi-project) or `curl http://localhost:8484/mcp` (legacy single-project)
   should respond (probably with a 405 or upgrade hint — that's fine, it
   means the port is open and the server is alive). HTTP 503 from a
@@ -313,8 +401,9 @@ busy errors, and missing TUI binaries are covered in
   `lens migrate --project <slug>`. HTTP 404 means the slug is not
   registered in `configs/projects.yaml`.
 - Confirm the agent sees the tools. In Claude Code, run `/mcp` and look
-  for `projectlens` with 10 tools.
-- Confirm the skill is installed: `ls .claude/skills/use-projectlens/SKILL.md`.
+  for `projectlens` with its tools. If it is listed as pending, approve it.
+  For Codex, check that the project is trusted.
+- Confirm the skill is installed: `lens agent status`.
 - Some agents need a session restart after adding MCP servers.
 
 ### Results look stale
@@ -341,21 +430,13 @@ live).
 
 ### Hooks aren't firing
 
-- Confirm `.claude/settings.json` parses: `python3 -m json.tool .claude/settings.json`.
+- Run `lens agent doctor claude`, then `lens agent status claude`. A hook
+  reported `modified` or `removed-locally` is not what lens installed.
+- Confirm `.claude/settings.local.json` parses: `python3 -m json.tool .claude/settings.local.json`.
 - For Claude Code: run `/hooks` and check the PreToolUse and Stop entries
   are listed.
 - The `<system-reminder>` blocks are intentionally invisible to the user
   — you'll only see the *effect* (agent course-correcting). To verify
   the hook fires at all, temporarily change `echo` to `echo "$(date) HOOK
-  FIRED" >> /tmp/projectlens-hook.log` in the snippet and watch the file.
-
-## Migrating from the private `projectlens` build
-
-ProjectLens registers its MCP server under the name `projectlens`, so client tool prefixes change from `mcp__projectlens__*` to `mcp__projectlens__*`. There is no client-side alias.
-
-To migrate:
-
-1. Update your agent's MCP config to register the server name as `projectlens`.
-2. Update any skill snippets or saved knowledge that reference `mcp__projectlens__*` tools.
-3. Drop the old local schema/database (the public alpha uses the schema `projectlens`).
-4. Rerun `lens migrate` and `lens index-all` against the new schema.
+  FIRED" >> /tmp/projectlens-hook.log` in the hook command (this makes the
+  hook `modified`; `lens agent install claude --force` restores it).
