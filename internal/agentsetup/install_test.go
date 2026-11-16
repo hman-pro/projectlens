@@ -1357,3 +1357,50 @@ func TestInstall_BothAgents(t *testing.T) {
 		t.Fatalf("porcelain %q", p)
 	}
 }
+
+func TestInstall_TamperedManifestNeverDeletesOutside(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	assets := defaultFixture().dir(t)
+	runInstall(t, tg, assets, claudeOpts())
+
+	sibling, err := os.MkdirTemp(filepath.Dir(root), "sibling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(sibling, "sentinel"), "sentinel")
+
+	for name, path := range map[string]string{
+		"relative":       "../" + filepath.Base(sibling),
+		"through skills": ".claude/skills/../../../" + filepath.Base(sibling),
+		"absolute":       sibling,
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := loadManifest(t, tg)
+			ar := m.Agents[AgentClaude]
+			ar.Items = append(ar.Items, Record{Kind: KindSkill, ID: "gamma", Path: path, Hash: "h"})
+			b, err := json.MarshalIndent(m, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := readFile(t, tg.Abs(ManifestPath))
+			write(t, tg.Abs(ManifestPath), string(b))
+			t.Cleanup(func() { write(t, tg.Abs(ManifestPath), original) })
+
+			snap, outsideSnap, excl := snapshot(t, root), snapshot(t, sibling), excludeBytes(t, tg)
+			for _, force := range []bool{false, true} {
+				o := claudeOpts()
+				o.Force = force
+				if _, err := Install(tg, assets, o); !errors.Is(err, ErrInvalidManifest) {
+					t.Fatalf("force=%v: want ErrInvalidManifest, got %v", force, err)
+				}
+			}
+			if !reflect.DeepEqual(snapshot(t, sibling), outsideSnap) {
+				t.Fatal("outside directory changed")
+			}
+			if !reflect.DeepEqual(snapshot(t, root), snap) || excludeBytes(t, tg) != excl {
+				t.Fatal("work tree or exclude file changed")
+			}
+		})
+	}
+}

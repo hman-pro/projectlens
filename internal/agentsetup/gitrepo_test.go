@@ -225,4 +225,23 @@ func TestCheckContained(t *testing.T) {
 	if !tg.IsSymlink("leaf") || tg.IsSymlink("real") || !tg.Exists("leaf") || tg.Exists("nope") {
 		t.Fatal("IsSymlink/Exists wrong")
 	}
+
+	// A path that is not local to the root, or that reaches into .git, is
+	// refused before anything is inspected.
+	for _, rel := range []string{
+		"", ".", "/abs", root, "..", "../x", "a/../../x", "a/../b", ".git", ".git/info/exclude", ".GIT/config",
+	} {
+		for name, check := range map[string]func(string) error{
+			"CheckContained": tg.CheckContained, "CheckParentsContained": tg.CheckParentsContained,
+		} {
+			if err := check(rel); !errors.Is(err, ErrEscapesTarget) {
+				t.Errorf("%s(%q) = %v, want ErrEscapesTarget", name, rel, err)
+			}
+		}
+	}
+	for _, rel := range []string{".claude/skills/x", ".mcp.json", ".gitignore", "a/.git"} {
+		if err := tg.CheckContained(rel); err != nil {
+			t.Errorf("CheckContained(%q) = %v", rel, err)
+		}
+	}
 }

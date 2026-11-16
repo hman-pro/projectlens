@@ -234,6 +234,9 @@ func planCanonical(t Target, o InstallOpts, c Canon, st ItemStatus, m *Manifest)
 // planOrphan decides what to do with a record whose item is no longer canonical.
 func planOrphan(t Target, o InstallOpts, st ItemStatus, m *Manifest) (installOp, error) {
 	op := installOp{ItemResult: ItemResult{ItemStatus: st}}
+	if err := checkLocal(st.Path); err != nil { // LoadManifest already refuses these
+		return installOp{}, fmt.Errorf("orphan %s %s: %w", st.Kind, st.ID, err)
+	}
 	if err := t.CheckContained(st.Path); err != nil {
 		if !errors.Is(err, ErrEscapesTarget) {
 			return installOp{}, err

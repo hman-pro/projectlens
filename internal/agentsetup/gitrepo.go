@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 )
 
-// ErrEscapesTarget reports a symlinked path component inside the target.
-var ErrEscapesTarget = errors.New("path passes through a symlink")
+// ErrEscapesTarget reports a path that could reach outside the target work
+// tree: a symlinked component, or a path that is not local to the root.
+var ErrEscapesTarget = errors.New("path escapes the target work tree")
 
 // Target is a git work tree that wiring is installed into.
 type Target struct {
@@ -113,7 +115,29 @@ func (t Target) Abs(rel string) string {
 	return filepath.Join(t.Root, filepath.FromSlash(rel))
 }
 
+// checkLocal refuses a path that is empty, ".", absolute, holds a ".." segment,
+// or starts inside .git. Paths come from files on disk (the manifest, the
+// exclude block), so they are validated before anything is joined to the root.
+func checkLocal(rel string) error {
+	slash := filepath.ToSlash(rel)
+	if rel == "" || rel == "." || !filepath.IsLocal(filepath.FromSlash(rel)) {
+		return fmt.Errorf("%w: %q is not a path inside it", ErrEscapesTarget, rel)
+	}
+	for _, seg := range strings.Split(slash, "/") {
+		if seg == ".." {
+			return fmt.Errorf("%w: %q is not a path inside it", ErrEscapesTarget, rel)
+		}
+	}
+	if first := strings.Split(path.Clean(slash), "/")[0]; strings.EqualFold(first, ".git") {
+		return fmt.Errorf("%w: %q is inside .git", ErrEscapesTarget, rel)
+	}
+	return nil
+}
+
 func (t Target) checkComponents(rel string, includeLeaf bool) error {
+	if err := checkLocal(rel); err != nil {
+		return err
+	}
 	parts := strings.Split(filepath.ToSlash(filepath.Clean(rel)), "/")
 	if !includeLeaf {
 		parts = parts[:len(parts)-1]
@@ -130,15 +154,15 @@ func (t Target) checkComponents(rel string, includeLeaf bool) error {
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
 			name, _ := filepath.Rel(t.Root, cur)
-			return fmt.Errorf("%w: %s", ErrEscapesTarget, filepath.ToSlash(name))
+			return fmt.Errorf("%w: %s is a symlink", ErrEscapesTarget, filepath.ToSlash(name))
 		}
 	}
 	return nil
 }
 
-// CheckContained returns ErrEscapesTarget, naming the offending component, when
-// any component of rel (including rel itself) is a symlink. Components that do
-// not exist yet are fine.
+// CheckContained returns ErrEscapesTarget when rel is not local to the root
+// (see checkLocal) or, naming the offending component, when any component of rel
+// (including rel itself) is a symlink. Components that do not exist yet are fine.
 func (t Target) CheckContained(rel string) error { return t.checkComponents(rel, true) }
 
 // CheckParentsContained is CheckContained for every component except rel itself.

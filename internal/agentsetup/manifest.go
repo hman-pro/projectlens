@@ -15,6 +15,10 @@ const manifestVersion = 1
 // ErrManifestTracked reports that git tracks the manifest, so lens must not write it.
 var ErrManifestTracked = errors.New(ManifestPath + " is tracked by git")
 
+// ErrInvalidManifest reports a manifest entry that is not a path install could
+// have written: not local to the target root, or not where its agent and kind live.
+var ErrInvalidManifest = errors.New("invalid manifest")
+
 // Record is one item lens installed for an agent.
 type Record struct {
 	Kind    Kind     `json:"kind"`
@@ -68,7 +72,66 @@ func LoadManifest(t Target) (*Manifest, error) {
 	if m.Agents == nil {
 		m.Agents = map[Agent]*AgentRecord{}
 	}
+	if err := m.validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w: %v", ManifestPath, ErrInvalidManifest, err)
+	}
 	return &m, nil
+}
+
+// validate checks that every path in the manifest is one install could have
+// written. The manifest is data on disk; a tampered entry must never steer a
+// write or a delete outside the work tree or to an unexpected file.
+func (m *Manifest) validate() error {
+	for a, ar := range m.Agents {
+		if ar == nil {
+			continue
+		}
+		pl, err := PlacementFor(a, ScopePersonal)
+		if err != nil {
+			return err
+		}
+		for _, r := range ar.Items {
+			if err := validRecordPath(pl, r); err != nil {
+				return fmt.Errorf("%s %s %q: %w", a, r.Kind, r.ID, err)
+			}
+		}
+	}
+	for _, list := range [][]string{m.CreatedPaths, m.CreatedDirs} {
+		for _, p := range list {
+			if err := checkLocal(p); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validRecordPath requires the path the placement table gives for the record's kind.
+func validRecordPath(pl Placement, r Record) error {
+	if err := checkLocal(r.Path); err != nil {
+		return err
+	}
+	var want string
+	switch r.Kind {
+	case KindMCP:
+		want = pl.MCPFile
+	case KindHook:
+		if pl.HooksFile == "" {
+			return errors.New("agent has no hooks file")
+		}
+		want = pl.HooksFile
+	case KindSkill:
+		if r.ID == "" || r.ID == "." || r.ID == ".." || strings.ContainsAny(r.ID, `/\`) {
+			return fmt.Errorf("skill ID %q is not a single path segment", r.ID)
+		}
+		want = pl.SkillsDir + "/" + r.ID
+	default:
+		return fmt.Errorf("unknown kind %q", r.Kind)
+	}
+	if r.Path != want {
+		return fmt.Errorf("path %q, want %q", r.Path, want)
+	}
+	return nil
 }
 
 // existingPaths returns the sorted, de-duplicated entries of paths that exist on
@@ -246,7 +309,8 @@ func CheckManifestWritable(t Target) error {
 
 // RecoverCreated is used when the manifest is missing but this work tree's exclude
 // block exists: it returns the block's paths that are present on disk, without the
-// leading "/" and trailing "/", excluding ManifestPath.
+// leading "/" and trailing "/", excluding ManifestPath and any path that is not
+// local to the root (see checkLocal).
 func RecoverCreated(t Target) ([]string, error) {
 	block, err := t.ExcludeBlock()
 	if err != nil {
@@ -255,7 +319,7 @@ func RecoverCreated(t Target) ([]string, error) {
 	var out []string
 	for _, pattern := range block {
 		p := strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/")
-		if p == "" || p == ManifestPath || !t.Exists(p) {
+		if checkLocal(p) != nil || p == ManifestPath || !t.Exists(p) {
 			continue
 		}
 		out = append(out, p)

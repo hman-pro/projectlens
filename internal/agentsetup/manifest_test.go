@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -255,9 +256,18 @@ func TestCheckManifestWritable(t *testing.T) {
 func TestRecoverCreated(t *testing.T) {
 	root := newRepo(t)
 	tg := mustTarget(t, root)
-	if err := tg.SetExcludeBlock([]string{"/.mcp.json", "/.claude/skills/a/", "/.gone", "/.projectlens/agent-manifest.json"}); err != nil {
+	sibling, err := os.MkdirTemp(filepath.Dir(root), "sibling")
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := tg.SetExcludeBlock([]string{
+		"/.mcp.json", "/.claude/skills/a/", "/.gone", "/.projectlens/agent-manifest.json",
+		// Entries that exist but are not local to the root are never recovered.
+		"/../" + filepath.Base(sibling) + "/", "/.git/", "/d/../.mcp.json", "//" + strings.TrimPrefix(sibling, "/"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "d", "keep"), "d")
 	write(t, filepath.Join(root, ".mcp.json"), "{}\n")
 	write(t, filepath.Join(root, ".claude", "skills", "a", "SKILL.md"), "a")
 	write(t, tg.Abs(ManifestPath), "{}") // present, but never recovered as a created path
@@ -281,5 +291,72 @@ func TestManifest_NilSafeLookups(t *testing.T) {
 	}
 	if m.Created(".mcp.json") {
 		t.Error("Created on nil manifest")
+	}
+}
+
+func TestManifest_LoadRejectsUnsafePaths(t *testing.T) {
+	rec := func(a Agent, kind Kind, id, path string) *Manifest {
+		return &Manifest{Version: 1, Agents: map[Agent]*AgentRecord{a: {URL: evalURL, Items: []Record{
+			{Kind: kind, ID: id, Path: path, Hash: "h"},
+		}}}}
+	}
+	created := func(paths, dirs []string) *Manifest {
+		return &Manifest{Version: 1, Agents: map[Agent]*AgentRecord{}, CreatedPaths: paths, CreatedDirs: dirs}
+	}
+	cases := map[string]*Manifest{
+		"record path ../outside":        rec(AgentClaude, KindSkill, "outside", "../outside"),
+		"record path absolute":          rec(AgentClaude, KindMCP, "projectlens", "/etc/passwd"),
+		"skill path with ..":            rec(AgentClaude, KindSkill, "x", ".claude/skills/../../x"),
+		"skill ID ..":                   rec(AgentClaude, KindSkill, "..", ".claude/skills/.."),
+		"skill ID with a slash":         rec(AgentClaude, KindSkill, "a/b", ".claude/skills/a/b"),
+		"skill ID empty":                rec(AgentClaude, KindSkill, "", ".claude/skills/"),
+		"skill under another agent dir": rec(AgentCodex, KindSkill, "x", ".claude/skills/x"),
+		"mcp at the wrong file":         rec(AgentCodex, KindMCP, "projectlens", ".mcp.json"),
+		"hook in another file":          rec(AgentClaude, KindHook, "start", ".claude/settings.json"),
+		"codex has no hooks file":       rec(AgentCodex, KindHook, "start", ""),
+		"record inside .git":            rec(AgentClaude, KindSkill, "x", ".git/x"),
+		"unknown kind":                  rec(AgentClaude, Kind("script"), "x", ".mcp.json"),
+		"unknown agent":                 rec(Agent("cursor"), KindMCP, "projectlens", ".mcp.json"),
+		"CreatedPaths ../x":             created([]string{"../x"}, nil),
+		"CreatedPaths absolute":         created([]string{"/x"}, nil),
+		"CreatedPaths .":                created([]string{"."}, nil),
+		"CreatedPaths .git":             created([]string{".git"}, nil),
+		"CreatedDirs ../x":              created([]string{".mcp.json"}, []string{"../x"}),
+		"CreatedDirs empty":             created([]string{".mcp.json"}, []string{""}),
+	}
+	for name, m := range cases {
+		t.Run(name, func(t *testing.T) {
+			tg := mustTarget(t, newRepo(t))
+			b, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(t, tg.Abs(ManifestPath), string(b))
+			if _, err := LoadManifest(tg); !errors.Is(err, ErrInvalidManifest) || !strings.Contains(err.Error(), ManifestPath) {
+				t.Fatalf("LoadManifest = %v, want ErrInvalidManifest naming the file", err)
+			}
+		})
+	}
+
+	// Every path an install records is accepted.
+	tg := mustTarget(t, newRepo(t))
+	good := &Manifest{Version: 1, Agents: map[Agent]*AgentRecord{
+		AgentClaude: {URL: evalURL, Items: []Record{
+			{Kind: KindMCP, ID: "projectlens", Path: ".mcp.json"},
+			{Kind: KindSkill, ID: "alpha", Path: ".claude/skills/alpha"},
+			{Kind: KindHook, ID: "start", Path: ".claude/settings.local.json"},
+		}},
+		AgentCodex: {URL: evalURL, Items: []Record{
+			{Kind: KindMCP, ID: "projectlens", Path: ".codex/config.toml"},
+			{Kind: KindSkill, ID: "alpha", Path: ".agents/skills/alpha"},
+		}},
+	}, CreatedPaths: []string{".mcp.json", ".agents/skills/alpha"}, CreatedDirs: []string{".agents", ".agents/skills"}}
+	b, err := json.Marshal(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, tg.Abs(ManifestPath), string(b))
+	if _, err := LoadManifest(tg); err != nil {
+		t.Fatalf("valid manifest rejected: %v", err)
 	}
 }
