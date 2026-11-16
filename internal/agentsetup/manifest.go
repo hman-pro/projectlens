@@ -156,19 +156,89 @@ func isSkillsDir(dir string) bool {
 // placementShaped reports whether p is a path install writes for a known agent:
 // its MCP file, its hooks file, or one entry of its skills directory.
 func placementShaped(p string) bool {
+	_, ok := placementAgent(p)
+	return ok
+}
+
+// placementAgent returns the known agent whose MCP file, hooks file, or skills
+// directory entry p is.
+func placementAgent(p string) (Agent, bool) {
 	for _, a := range knownAgents() {
 		pl, err := PlacementFor(a, ScopePersonal)
 		if err != nil {
 			continue
 		}
 		if p == pl.MCPFile || (pl.HooksFile != "" && p == pl.HooksFile) {
-			return true
+			return a, true
 		}
 		if name, ok := strings.CutPrefix(p, pl.SkillsDir+"/"); ok && singleSegment(name) {
-			return true
+			return a, true
 		}
 	}
-	return false
+	return "", false
+}
+
+// RecoveryAgents returns, sorted, the agents whose placement holds any of paths.
+func RecoveryAgents(paths []string) []Agent {
+	seen := map[Agent]bool{}
+	for _, p := range paths {
+		if a, ok := placementAgent(p); ok {
+			seen[a] = true
+		}
+	}
+	var out []Agent
+	for _, a := range knownAgents() {
+		if seen[a] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// RecoverablePaths returns, when there is no manifest, the paths this work
+// tree's exclude block still hides that are where install writes and exist (see
+// RecoverCreated), without skill siblings. They may hold live wiring that only
+// install can take back into a manifest. It returns nil when the manifest exists.
+func RecoverablePaths(t Target) ([]string, error) {
+	if t.Exists(ManifestPath) {
+		return nil, nil
+	}
+	paths, err := RecoverCreated(t)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, p := range paths {
+		if !isSkillSibling(p) {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// UnreferencedPaths returns the CreatedPaths entries no record refers to: paths
+// install created that stay excluded from git although no agent manages them.
+func (m *Manifest) UnreferencedPaths() []string {
+	if m == nil {
+		return nil
+	}
+	referenced := map[string]bool{}
+	for _, ar := range m.Agents {
+		if ar == nil {
+			continue
+		}
+		for _, r := range ar.Items {
+			referenced[r.Path] = true
+		}
+	}
+	var out []string
+	for _, p := range m.CreatedPaths {
+		if !referenced[p] {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // existingPaths returns the sorted, de-duplicated entries of paths that exist on

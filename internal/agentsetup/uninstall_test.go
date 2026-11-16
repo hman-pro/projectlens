@@ -1056,3 +1056,90 @@ func TestSkillSibling_RegularFileIsForeign(t *testing.T) {
 		t.Fatal("file changed by uninstall")
 	}
 }
+
+// addPermissions adds a key of the developer's own to a JSON file, as Claude
+// Code does to .claude/settings.local.json on any "always allow".
+func addPermissions(t *testing.T, p string) {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(readFile(t, p)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["permissions"] = map[string]any{"allow": []any{"Bash(ls:*)"}}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, p, string(b))
+}
+
+// A config file install created and the developer added content to is kept by
+// uninstall, so only CreatedPaths keeps the manifest alive. Once the file is
+// deleted, the next uninstall must finish the lifecycle.
+func TestUninstall_CreatedPathsOnlyFinishesLifecycle(t *testing.T) {
+	const settings = ".claude/settings.local.json"
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	snap, excl := snapshot(t, root), excludeBytes(t, tg)
+	runInstall(t, tg, defaultFixture().dir(t), claudeOpts())
+	addPermissions(t, tg.Abs(settings))
+	runUninstall(t, tg, uninstallOf(AgentClaude))
+
+	m := loadManifest(t, tg)
+	if len(m.Agents) != 0 || !reflect.DeepEqual(m.CreatedPaths, []string{settings}) {
+		t.Fatalf("setup: manifest %+v", m)
+	}
+	// (a) The file is still there: it is reported as excluded but not managed.
+	res := runUninstall(t, tg, uninstallOf(AgentClaude, AgentCodex))
+	if !res.Nothing || !reflect.DeepEqual(res.Unmanaged, []string{settings}) || len(res.Recoverable) != 0 {
+		t.Fatalf("file present: result %+v", res)
+	}
+	if !tg.Exists(ManifestPath) || !tg.Exists(settings) {
+		t.Fatal("file present: manifest or file removed")
+	}
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("porcelain %q", p)
+	}
+
+	// (b) The developer deletes it: uninstall removes the manifest, .projectlens/,
+	// the created directory, and the block.
+	if err := os.Remove(tg.Abs(settings)); err != nil {
+		t.Fatal(err)
+	}
+	res = runUninstall(t, tg, uninstallOf(AgentClaude, AgentCodex))
+	if !res.Nothing || len(res.Unmanaged) != 0 || len(res.Recoverable) != 0 {
+		t.Fatalf("file deleted: result %+v", res)
+	}
+	wantGone(t, tg, ManifestPath, ".projectlens", ".claude")
+	if !reflect.DeepEqual(snapshot(t, root), snap) || excludeBytes(t, tg) != excl {
+		t.Fatalf("not restored: %v\nexclude:\n%s", snapshot(t, root), excludeBytes(t, tg))
+	}
+}
+
+// (c) With no manifest, live wiring the block still hides is reported as
+// recoverable, never as "nothing installed".
+func TestUninstall_NoManifestReportsRecoverablePaths(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	runInstall(t, tg, defaultFixture().dir(t), claudeOpts())
+	deleteManifest(t, tg)
+	snap := snapshot(t, root)
+	for _, dry := range []bool{true, false} {
+		o := uninstallOf(AgentClaude, AgentCodex)
+		o.DryRun = dry
+		res := runUninstall(t, tg, o)
+		want := []string{".claude/settings.local.json", ".claude/skills/alpha", ".claude/skills/beta", ".mcp.json"}
+		if !res.Nothing || !reflect.DeepEqual(res.Recoverable, want) {
+			t.Fatalf("dry=%v: result %+v", dry, res)
+		}
+	}
+	if !reflect.DeepEqual(snapshot(t, root), snap) {
+		t.Fatal("work tree changed")
+	}
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("porcelain %q", p)
+	}
+	if got := RecoveryAgents([]string{".mcp.json", ".agents/skills/x", ".claude/skills/y"}); !reflect.DeepEqual(got, []Agent{AgentClaude, AgentCodex}) {
+		t.Fatalf("RecoveryAgents = %v", got)
+	}
+}

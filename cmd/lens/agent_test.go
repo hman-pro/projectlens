@@ -446,3 +446,119 @@ func TestAgentCmd_CodexMissingSnippetFailsBeforeWriting(t *testing.T) {
 		t.Fatalf("install wrote files before failing: %v", serr)
 	}
 }
+
+// addOwnSettings adds a key of the developer's own to the installed
+// .claude/settings.local.json, as Claude Code does on any "always allow".
+func addOwnSettings(t *testing.T, root string) {
+	t.Helper()
+	p := filepath.Join(root, ".claude", "settings.local.json")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["permissions"] = map[string]any{"allow": []any{"Bash(ls:*)"}}
+	data, _ = json.Marshal(doc)
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readExclude(t *testing.T, root string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".git", "info", "exclude"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestAgentCmd_CreatedPathOnlyLifecycle(t *testing.T) {
+	root := agentFixture(t)
+	excl := readExclude(t, root)
+	if _, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	addOwnSettings(t, root)
+	if out, _, err := runAgent(t, "uninstall", "claude"); err != nil {
+		t.Fatalf("uninstall: %v\n%s", err, out)
+	}
+
+	// (a) The kept file is listed, with how to finish.
+	unmanaged := []string{
+		"Excluded from git but not managed (left by an earlier install):",
+		"  .claude/settings.local.json",
+		"Re-own with: lens agent install <agent>, or delete the path, then run: lens agent uninstall all",
+	}
+	out, _, err := runAgent(t, "status")
+	if exitCode(t, err) != 1 {
+		t.Fatalf("status: %v", err)
+	}
+	for _, want := range append([]string{"nothing installed"}, unmanaged...) {
+		if !strings.Contains(out, want) {
+			t.Errorf("status missing %q:\n%s", want, out)
+		}
+	}
+	out, errOut, err := runAgent(t, "status", "--json")
+	if exitCode(t, err) != 1 || strings.TrimSpace(out) != "[]" {
+		t.Fatalf("status --json: err=%v stdout:\n%s", err, out)
+	}
+	for _, want := range unmanaged {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("status --json stderr missing %q:\n%s", want, errOut)
+		}
+	}
+	out, _, err = runAgent(t, "uninstall", "all")
+	if err != nil || !strings.Contains(out, "nothing installed") || !strings.Contains(out, unmanaged[1]) {
+		t.Fatalf("uninstall all with the file present: err=%v\n%s", err, out)
+	}
+
+	// (b) Once the file is deleted, uninstall all leaves no trace.
+	if err := os.Remove(filepath.Join(root, ".claude", "settings.local.json")); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, err := runAgent(t, "uninstall", "all"); err != nil {
+		t.Fatalf("uninstall all: %v\n%s", err, out)
+	}
+	for _, p := range []string{agentsetup.ManifestPath, ".projectlens", ".claude"} {
+		if _, err := os.Lstat(filepath.Join(root, p)); !os.IsNotExist(err) {
+			t.Errorf("%s still exists", p)
+		}
+	}
+	if got := readExclude(t, root); got != excl {
+		t.Errorf("exclude file not restored:\n%s", got)
+	}
+}
+
+// (c) With the manifest deleted, live wiring is never reported as "nothing
+// installed": every command names the install that recovers it.
+func TestAgentCmd_ManifestDeletedPointsToRecovery(t *testing.T) {
+	root := agentFixture(t)
+	if _, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, agentsetup.ManifestPath)); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"status"}, {"doctor"}, {"uninstall", "all"}, {"uninstall", "claude"}} {
+		out, _, err := runAgent(t, args...)
+		wantCode := 1
+		if args[0] == "uninstall" {
+			wantCode = 0
+		}
+		if (wantCode == 0 && err != nil) || (wantCode != 0 && exitCode(t, err) != wantCode) {
+			t.Errorf("%v: err=%v", args, err)
+		}
+		if strings.Contains(out, "nothing installed") || strings.Contains(out, "is not installed") ||
+			!strings.Contains(out, "  .mcp.json") || !strings.Contains(out, "run: lens agent install claude") {
+			t.Errorf("%v output:\n%s", args, out)
+		}
+	}
+	out, errOut, err := runAgent(t, "status", "--json")
+	if exitCode(t, err) != 1 || strings.TrimSpace(out) != "[]" || !strings.Contains(errOut, "run: lens agent install claude") {
+		t.Fatalf("status --json: err=%v stdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+}

@@ -357,7 +357,7 @@ func newAgentUninstallCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			dryRunHeader(w, dry)
 			if res.Nothing {
-				fmt.Fprintln(w, "nothing installed")
+				printNotInstalled(w, t, "nothing installed", res.Unmanaged, res.Recoverable)
 				return nil
 			}
 			fmt.Fprintf(w, "Target: %s\n\n", t.Root)
@@ -387,9 +387,52 @@ func targetAgents(args []string, m *agentsetup.Manifest) ([]agentsetup.Agent, er
 	return m.InstalledAgents(), nil
 }
 
-func printNothingInstalled(w io.Writer, root string) {
-	fmt.Fprintf(w, "nothing installed in %s\n", root)
-	fmt.Fprintln(w, "run: lens agent install <claude|codex>")
+// printNotInstalled reports a run that found no agent to act on. With no
+// manifest, paths the exclude block still hides may be live wiring, so it
+// points to the install that recovers them instead of saying nothing is
+// installed. Otherwise it prints lead and the created paths that stay excluded.
+func printNotInstalled(w io.Writer, t agentsetup.Target, lead string, unmanaged, recoverable []string) {
+	if len(recoverable) > 0 {
+		fmt.Fprintf(w, "no manifest in %s, but %s still hides paths lens writes:\n", t.Root, excludeDisplay(t))
+		for _, p := range recoverable {
+			fmt.Fprintf(w, "  %s\n", p)
+		}
+		fmt.Fprintln(w, "They may still hold ProjectLens wiring. To take them back under management:")
+		for _, a := range agentsetup.RecoveryAgents(recoverable) {
+			fmt.Fprintf(w, "  run: lens agent install %s\n", a)
+		}
+		return
+	}
+	fmt.Fprintln(w, lead)
+	printUnmanaged(w, unmanaged, false)
+}
+
+// printNothingInstalled is printNotInstalled for status and doctor.
+func printNothingInstalled(w io.Writer, t agentsetup.Target, m *agentsetup.Manifest) error {
+	recoverable, err := agentsetup.RecoverablePaths(t)
+	if err != nil {
+		return fmt.Errorf("read exclude block: %w", err)
+	}
+	printNotInstalled(w, t, "nothing installed in "+t.Root+"\nrun: lens agent install <claude|codex>", m.UnreferencedPaths(), recoverable)
+	return nil
+}
+
+// printUnmanaged lists created paths that stay excluded from git although no
+// record refers to them. With no agent installed, deleting such a path leaves
+// its exclude entry until the next uninstall, so the hint names it.
+func printUnmanaged(w io.Writer, paths []string, installed bool) {
+	if len(paths) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "\nExcluded from git but not managed (left by an earlier install):")
+	for _, p := range paths {
+		fmt.Fprintf(w, "  %s\n", p)
+	}
+	if installed {
+		fmt.Fprintln(w, "Re-own with: lens agent install <agent>, or delete the path.")
+	} else {
+		fmt.Fprintln(w, "Re-own with: lens agent install <agent>, or delete the path, then run: lens agent uninstall all")
+	}
 }
 
 func newAgentStatusCmd() *cobra.Command {
@@ -418,14 +461,18 @@ func newAgentStatusCmd() *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			if len(agents) == 0 {
+				// With --json, stdout stays a JSON array and the text goes to stderr.
+				tw := w
 				if asJSON {
-					fmt.Fprintln(cmd.ErrOrStderr(), "nothing installed in "+t.Root)
-					fmt.Fprintln(cmd.ErrOrStderr(), "run: lens agent install <claude|codex>")
+					tw = cmd.ErrOrStderr()
+				}
+				if err := printNothingInstalled(tw, t, m); err != nil {
+					return err
+				}
+				if asJSON {
 					if err := printJSON(w, []agentsetup.ItemStatus{}); err != nil {
 						return err
 					}
-				} else {
-					printNothingInstalled(w, t.Root)
 				}
 				return failure()
 			}
@@ -473,12 +520,8 @@ func newAgentStatusCmd() *cobra.Command {
 				if err := printJSON(w, all); err != nil {
 					return err
 				}
-			} else if orphans := unreferencedPaths(m); len(orphans) > 0 {
-				fmt.Fprintln(w, "\nExcluded from git but not managed (left by an earlier install):")
-				for _, p := range orphans {
-					fmt.Fprintf(w, "  %s\n", p)
-				}
-				fmt.Fprintln(w, "Re-own with: lens agent install <agent>, or delete the path.")
+			} else {
+				printUnmanaged(w, m.UnreferencedPaths(), true)
 			}
 			if unhealthy {
 				return failure()
@@ -489,26 +532,6 @@ func newAgentStatusCmd() *cobra.Command {
 	cmd.Flags().String("assets", "", "path to the projectlens agent/ directory")
 	cmd.Flags().Bool("json", false, "print the item statuses as JSON")
 	return quiet(cmd)
-}
-
-// unreferencedPaths returns every created path that no record refers to.
-func unreferencedPaths(m *agentsetup.Manifest) []string {
-	referenced := map[string]bool{}
-	for _, ar := range m.Agents {
-		if ar == nil {
-			continue
-		}
-		for _, r := range ar.Items {
-			referenced[r.Path] = true
-		}
-	}
-	var out []string
-	for _, p := range m.CreatedPaths {
-		if !referenced[p] {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 func newAgentDoctorCmd() *cobra.Command {
@@ -537,14 +560,18 @@ func newAgentDoctorCmd() *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			if len(agents) == 0 {
+				// With --json, stdout stays a JSON array and the text goes to stderr.
+				tw := w
 				if asJSON {
-					fmt.Fprintln(cmd.ErrOrStderr(), "nothing installed in "+t.Root)
-					fmt.Fprintln(cmd.ErrOrStderr(), "run: lens agent install <claude|codex>")
+					tw = cmd.ErrOrStderr()
+				}
+				if err := printNothingInstalled(tw, t, m); err != nil {
+					return err
+				}
+				if asJSON {
 					if err := printJSON(w, []agentsetup.Check{}); err != nil {
 						return err
 					}
-				} else {
-					printNothingInstalled(w, t.Root)
 				}
 				return failure()
 			}

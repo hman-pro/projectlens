@@ -19,6 +19,10 @@ type UninstallOpts struct {
 type UninstallResult struct {
 	Items   []ItemResult // Action is "removed", "skipped", "manual", or "blocked"
 	Nothing bool         // no agent in Agents had a manifest record
+
+	// Set only with Nothing:
+	Unmanaged   []string // no agent installed at all: created paths kept, still excluded (see Manifest.UnreferencedPaths)
+	Recoverable []string // no manifest, but the block hides these existing paths (see RecoverablePaths)
 }
 
 type uninstallOp struct {
@@ -52,14 +56,7 @@ func Uninstall(t Target, o UninstallOpts) (UninstallResult, error) {
 		seen[a] = true
 	}
 	if len(agents) == 0 {
-		// A run that crashed after deleting the manifest may have left patterns of
-		// paths that are gone; with no manifest, nothing else can remove them.
-		if !o.DryRun {
-			if err := pruneStaleBlock(t); err != nil {
-				return UninstallResult{}, err
-			}
-		}
-		return UninstallResult{Nothing: true}, nil
+		return uninstallNothing(t, m, own, o)
 	}
 
 	var ops []uninstallOp
@@ -104,6 +101,44 @@ func Uninstall(t Target, o UninstallOpts) (UninstallResult, error) {
 	}
 	if err := j.save(nil); err != nil {
 		return UninstallResult{}, err
+	}
+	return res, nil
+}
+
+// uninstallNothing handles a run where no requested agent has a record. It
+// still finishes the lifecycle: a manifest kept alive only by CreatedPaths is
+// pruned, and deleted with its block once those paths are gone. Without a
+// manifest, it reports the paths the block still hides, for recovery.
+func uninstallNothing(t Target, m *Manifest, own map[string]bool, o UninstallOpts) (UninstallResult, error) {
+	if !o.DryRun {
+		// A run that crashed after deleting the manifest may have left patterns of
+		// paths that are gone; with no manifest, nothing else can remove them.
+		if err := pruneStaleBlock(t); err != nil {
+			return UninstallResult{}, err
+		}
+		if t.Exists(ManifestPath) {
+			j := &journal{
+				t: t, m: m, name: "uninstall", failAt: o.failAt,
+				skills: skillPaths(nil, m), own: own, dirsBeforeDelete: true, onSave: o.onSave,
+			}
+			if err := j.cleanSiblings(); err != nil {
+				return UninstallResult{}, err
+			}
+			if err := j.removeEmptyDirs(); err != nil {
+				return UninstallResult{}, err
+			}
+			if err := j.save(nil); err != nil {
+				return UninstallResult{}, err
+			}
+		}
+	}
+	recoverable, err := RecoverablePaths(t)
+	if err != nil {
+		return UninstallResult{}, err
+	}
+	res := UninstallResult{Nothing: true, Recoverable: recoverable}
+	if len(m.Agents) == 0 {
+		res.Unmanaged = m.UnreferencedPaths()
 	}
 	return res, nil
 }
