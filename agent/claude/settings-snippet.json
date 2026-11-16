@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '<system-reminder>ProjectLens session note. For the first high-impact task this session (change-impact estimate, multi-file refactor, data-flow audit, migration planning, deep debug of unfamiliar code), call projectlens index_status BEFORE answering. If stages.code.age_minutes > 60, git.dirty is true and the question is about current state, or any providers[].state is error/not_configured — tell the user the index looks stale and suggest make reindex (or make index-all). Skip for quick lookups (single find_symbol / get_symbol_context). Do not narrate this check.</system-reminder>'"
+            "command": ": projectlens-hook=session-index-status; echo '<system-reminder>ProjectLens session note. For the first high-impact task this session (change-impact estimate, multi-file refactor, data-flow audit, migration planning, deep debug of unfamiliar code), call projectlens index_status BEFORE answering. If stages.code.age_minutes > 60, git.dirty is true and the question is about current state, or any providers[].state is error/not_configured — tell the user the index looks stale and suggest make reindex (or make index-all). Skip for quick lookups (single find_symbol / get_symbol_context). Do not narrate this check.</system-reminder>'"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '<system-reminder>Pre-edit impact check (use-projectlens skill). If this edit touches an exported Go symbol, interface, or a file under migrations/, you MUST have already called the matching projectlens MCP tool: get_symbol_context for symbols/interfaces, get_table_context for migrations, plus get_coupling on the target file. If you have not, STOP, run those calls now, then proceed. If the edit is local/private/non-Go/test-only, ignore this reminder. Do not narrate this check.</system-reminder>'"
+            "command": ": projectlens-hook=pre-edit-impact; echo '<system-reminder>Pre-edit impact check (use-projectlens skill). If this edit touches an exported Go symbol, interface, or a file under migrations/, you MUST have already called the matching projectlens MCP tool: get_symbol_context for symbols/interfaces, get_table_context for migrations, plus get_coupling on the target file. If you have not, STOP, run those calls now, then proceed. If the edit is local/private/non-Go/test-only, ignore this reminder. Do not narrate this check.</system-reminder>'"
           }
         ]
       }
@@ -28,11 +28,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '<system-reminder>Before stopping: scan this turn against the capture-knowledge skill (.claude/skills/capture-knowledge/SKILL.md). If any of the 9 signals fired, search_knowledge first to dedup, then call save_knowledge (set the source field to the agent name) if no matching entry exists. If nothing qualifies, stop silently. Do not narrate this check.</system-reminder>'"
+            "command": ": projectlens-hook=stop-capture-knowledge; echo '<system-reminder>Before stopping: scan this turn against the capture-knowledge skill (.claude/skills/capture-knowledge/SKILL.md). If any of the 9 signals fired, search_knowledge first to dedup, then call save_knowledge (set the source field to the agent name) if no matching entry exists. If nothing qualifies, stop silently. Do not narrate this check.</system-reminder>'"
           },
           {
             "type": "command",
-            "command": "echo '<system-reminder>use-projectlens compliance check. If this turn answered a question about code structure, behavior, history, data flow, or impact AND you used Read/Grep/Glob WITHOUT first calling a projectlens MCP tool (find_symbol, search_go_context, get_symbol_context, get_package_summary, get_table_context, get_change_history, get_coupling), note the gap and prefer ProjectLens first next time. If the question was non-structural, or you used ProjectLens correctly, stop silently. Do not narrate this check.</system-reminder>'"
+            "command": ": projectlens-hook=stop-compliance-audit; echo '<system-reminder>use-projectlens compliance check. If this turn answered a question about code structure, behavior, history, data flow, or impact AND you used Read/Grep/Glob WITHOUT first calling a projectlens MCP tool (find_symbol, search_go_context, get_symbol_context, get_package_summary, get_table_context, get_change_history, get_coupling), note the gap and prefer ProjectLens first next time. If the question was non-structural, or you used ProjectLens correctly, stop silently. Do not narrate this check.</system-reminder>'"
           }
         ]
       }
