@@ -52,6 +52,13 @@ func Uninstall(t Target, o UninstallOpts) (UninstallResult, error) {
 		seen[a] = true
 	}
 	if len(agents) == 0 {
+		// A run that crashed after deleting the manifest may have left patterns of
+		// paths that are gone; with no manifest, nothing else can remove them.
+		if !o.DryRun {
+			if err := pruneStaleBlock(t); err != nil {
+				return UninstallResult{}, err
+			}
+		}
 		return UninstallResult{Nothing: true}, nil
 	}
 
@@ -131,7 +138,7 @@ func planRemoval(t Target, a Agent, rec Record, own map[string]bool, force bool)
 	}
 
 	switch {
-	case !disk.present || disk.foreign: // a foreign Codex definition means the managed block is gone
+	case lensAbsent(disk):
 		op.State = StateMissing
 		if disk.foreign {
 			op.Detail = detailForeign

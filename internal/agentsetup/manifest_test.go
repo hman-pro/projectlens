@@ -262,6 +262,8 @@ func TestRecoverCreated(t *testing.T) {
 	}
 	if err := tg.SetExcludeBlock([]string{
 		"/.mcp.json", "/.claude/skills/a/", "/.gone", "/.projectlens/agent-manifest.json",
+		// Entries that exist but are not a path install writes are never recovered.
+		"/d/keep", "/.claude/other.json", "/.claude/skills/a/SKILL.md",
 		// Entries that exist but are not local to the root are never recovered.
 		"/../" + filepath.Base(sibling) + "/", "/.git/", "/d/../.mcp.json", "//" + strings.TrimPrefix(sibling, "/"),
 	}); err != nil {

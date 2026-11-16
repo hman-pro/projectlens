@@ -94,14 +94,16 @@ func (j *journal) save(extra []string) error {
 			return err
 		}
 	}
-	// The first write only widens the block: it keeps every pattern already
-	// there and adds what is about to exist. Only the write after Save narrows
-	// it, once the manifest and every dropped path are really gone.
+	// The first write never exposes anything: it keeps every pattern whose path
+	// still exists and adds what is about to exist. Dropping a pattern whose
+	// path is gone is always safe, so a crash after the manifest is deleted
+	// leaves at most the manifest pattern (see pruneStaleBlock). Only the write
+	// after Save drops patterns of paths that still exist.
 	cur, err := j.t.ExcludeBlock()
 	if err != nil {
 		return fmt.Errorf("update exclude block: %w", err)
 	}
-	pre := append(excludePatterns(j.t, live, j.skills, willExist || j.t.Exists(ManifestPath), extra), cur...)
+	pre := append(excludePatterns(j.t, live, j.skills, willExist || j.t.Exists(ManifestPath), extra), existingPatterns(j.t, cur)...)
 	sort.Strings(pre)
 	if err := j.t.SetExcludeBlock(compactStrings(pre)); err != nil {
 		return fmt.Errorf("update exclude block: %w", err)
@@ -224,7 +226,7 @@ func (j *journal) removeSkillSibling(rel string, strict bool) error {
 		}
 		return nil
 	}
-	if !j.own[rel] {
+	if !lensSibling(j.t, j.own, rel) {
 		return refuse(errors.New("not created by lens"))
 	}
 	tracked, err := j.t.IsTracked(rel)
@@ -373,7 +375,10 @@ func isSkillSibling(p string) bool {
 }
 
 // ownSiblings returns the skill siblings whose pattern is in this work tree's
-// exclude block: the only siblings lens may delete in this run.
+// exclude block: the only siblings lens may delete in this run. The exclude
+// file is editable, so a line counts only when it has the exact shape lens
+// writes: "/<skills dir>/.<name>.lens-tmp/" or ".lens-old/", where the skills
+// dir is a known agent's and <name> is a single path segment.
 func ownSiblings(t Target) (map[string]bool, error) {
 	block, err := t.ExcludeBlock()
 	if err != nil {
@@ -385,11 +390,37 @@ func ownSiblings(t Target) (map[string]bool, error) {
 			continue
 		}
 		p := strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/")
-		if isSkillSibling(p) && checkLocal(p) == nil {
+		if skillSiblingShaped(p) && checkLocal(p) == nil {
 			own[p] = true
 		}
 	}
 	return own, nil
+}
+
+// skillSiblingShaped reports whether p is the temp or aside sibling of a skill
+// in a known agent's skills directory.
+func skillSiblingShaped(p string) bool {
+	if !isSkillSibling(p) || !isSkillsDir(path.Dir(p)) {
+		return false
+	}
+	base := strings.TrimPrefix(path.Base(p), ".")
+	for _, suffix := range []string{skillTempSuffix, skillAsideSuffix} {
+		if name, ok := strings.CutSuffix(base, suffix); ok && singleSegment(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// lensSibling reports whether rel is a sibling lens created: listed in the block
+// when the run started, and a directory. Sibling patterns match directories
+// only, so anything else at that name was never hidden and is the developer's.
+func lensSibling(t Target, own map[string]bool, rel string) bool {
+	if !own[rel] {
+		return false
+	}
+	fi, err := os.Lstat(t.Abs(rel))
+	return err == nil && fi.IsDir()
 }
 
 // foreignSibling returns the first temp or aside sibling of skill that exists
@@ -397,12 +428,52 @@ func ownSiblings(t Target) (map[string]bool, error) {
 // journal would exclude that name, and a later run would take it for lens's.
 func foreignSibling(t Target, own map[string]bool, skill string) string {
 	for _, s := range []string{skillTempPath(skill), skillAsidePath(skill)} {
-		if t.Exists(s) && !own[s] {
+		if t.Exists(s) && !lensSibling(t, own, s) {
 			return s
 		}
 	}
 	return ""
 }
+
+// existingPatterns drops the patterns of local paths that no longer exist:
+// dropping those never makes anything visible to git. Any other line is kept.
+func existingPatterns(t Target, patterns []string) []string {
+	var out []string
+	for _, pattern := range patterns {
+		p := strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/")
+		if strings.HasPrefix(pattern, "/") && checkLocal(p) == nil && !t.Exists(p) {
+			continue
+		}
+		out = append(out, pattern)
+	}
+	return out
+}
+
+// pruneStaleBlock, when there is no manifest, reduces this work tree's block to
+// the patterns whose paths still exist (they stay excluded, as after manifest
+// loss) and removes the block when none remain. It finishes a run that crashed
+// after deleting the manifest but before narrowing the block.
+func pruneStaleBlock(t Target) error {
+	if t.Exists(ManifestPath) {
+		return nil
+	}
+	block, err := t.ExcludeBlock()
+	if err != nil {
+		return err
+	}
+	kept := existingPatterns(t, block)
+	if len(kept) == len(block) {
+		return nil
+	}
+	if err := t.SetExcludeBlock(kept); err != nil {
+		return fmt.Errorf("update exclude block: %w", err)
+	}
+	return nil
+}
+
+// lensAbsent reports that nothing of lens's is on disk for an item: it is not
+// there, or (Codex) the definition found is outside the managed block.
+func lensAbsent(disk installed) bool { return !disk.present || disk.foreign }
 
 // blockForeignSibling marks r blocked, and reports true, when it is a skill
 // whose temp or aside name is taken by something lens did not create.

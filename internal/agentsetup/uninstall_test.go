@@ -881,3 +881,178 @@ func TestJournal_SaveNeverExposesPaths(t *testing.T) {
 	}
 	wantGone(t, tg, ".projectlens")
 }
+
+// crashAt runs f with o's onSave hook panicking at the n-th save point (1-based).
+func crashAt(t *testing.T, n int, f func(hook func(string))) {
+	t.Helper()
+	calls := 0
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("no crash at save point %d (%d points)", n, calls)
+		}
+	}()
+	f(func(string) {
+		calls++
+		if calls == n {
+			panic("crash")
+		}
+	})
+}
+
+// A crash at either point of the save that deletes the manifest is finished by
+// the next run, uninstall or an install of the other agent.
+func TestUninstall_CrashInManifestDeletingSave(t *testing.T) {
+	assets := defaultFixture().dir(t)
+	// Find the save points of the manifest-deleting save in a clean run.
+	deleting := 0
+	{
+		tg := mustTarget(t, newRepo(t))
+		runInstall(t, tg, assets, claudeOpts())
+		o := uninstallOf(AgentClaude)
+		calls := 0
+		o.onSave = func(stage string) {
+			calls++
+			if deleting == 0 && stage == "manifest saved" && !tg.Exists(ManifestPath) {
+				deleting = calls
+			}
+		}
+		runUninstall(t, tg, o)
+		if deleting < 2 {
+			t.Fatalf("manifest-deleting save not found (%d)", deleting)
+		}
+	}
+
+	for _, point := range []int{deleting - 1, deleting} {
+		for _, next := range []string{"uninstall", "install codex"} {
+			root := newRepo(t)
+			tg := mustTarget(t, root)
+			snap, excl := snapshot(t, root), excludeBytes(t, tg)
+			runInstall(t, tg, assets, claudeOpts())
+			crashAt(t, point, func(hook func(string)) {
+				o := uninstallOf(AgentClaude)
+				o.onSave = hook
+				_, _ = Uninstall(tg, o)
+			})
+			if p := porcelain(t, root); p != "" {
+				t.Fatalf("point %d: crash state visible %q", point, p)
+			}
+			// The first write dropped the patterns of deleted paths; only the
+			// manifest's was left for the crash to strand.
+			if got := excludeBlock(t, tg); point == deleting && !reflect.DeepEqual(got, []string{"/" + ManifestPath}) {
+				t.Fatalf("block after the crash %v", got)
+			}
+			switch next {
+			case "uninstall":
+				runUninstall(t, tg, uninstallOf(AgentClaude))
+			case "install codex":
+				runInstall(t, tg, assets, codexOpts())
+				if got := excludeBlock(t, tg); !reflect.DeepEqual(got, codexBlockPaths) {
+					t.Fatalf("point %d: stale patterns after install: %v", point, got)
+				}
+				// Before the manifest is deleted, claude's last record is still journaled.
+				runUninstall(t, tg, uninstallOf(AgentClaude, AgentCodex))
+			}
+			if got := excludeBytes(t, tg); got != excl {
+				t.Fatalf("point %d, %s: exclude file %q, want %q", point, next, got, excl)
+			}
+			if !reflect.DeepEqual(snapshot(t, root), snap) || porcelain(t, root) != "" {
+				t.Fatalf("point %d, %s: not restored: %v", point, next, snapshot(t, root))
+			}
+		}
+	}
+
+	t.Run("dry run writes nothing", func(t *testing.T) {
+		root := newRepo(t)
+		tg := mustTarget(t, root)
+		runInstall(t, tg, assets, claudeOpts())
+		crashAt(t, deleting, func(hook func(string)) {
+			o := uninstallOf(AgentClaude)
+			o.onSave = hook
+			_, _ = Uninstall(tg, o)
+		})
+		excl := excludeBytes(t, tg)
+		o := uninstallOf(AgentClaude)
+		o.DryRun = true
+		if res := runUninstall(t, tg, o); !res.Nothing {
+			t.Fatalf("result %+v", res)
+		}
+		if excludeBytes(t, tg) != excl {
+			t.Fatal("dry run changed the exclude file")
+		}
+	})
+}
+
+// The exclude file is developer-editable: a sibling-shaped line outside a
+// skills directory never makes lens delete anything.
+func TestSkillSibling_ShapedLineOutsideSkillsDir(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	assets := defaultFixture().dir(t)
+	runInstall(t, tg, assets, claudeOpts())
+	const dev = "src/.notes.lens-old"
+	write(t, tg.Abs(dev+"/mine"), "mine")
+	if err := tg.SetExcludeBlock(append(excludeBlock(t, tg), "/"+dev+"/")); err != nil {
+		t.Fatal(err)
+	}
+	devSnap := snapshot(t, tg.Abs(dev))
+	runInstall(t, tg, assets, codexOpts())
+	if !reflect.DeepEqual(snapshot(t, tg.Abs(dev)), devSnap) {
+		t.Fatal("deleted by install")
+	}
+	if err := tg.SetExcludeBlock(append(excludeBlock(t, tg), "/"+dev+"/")); err != nil {
+		t.Fatal(err)
+	}
+	runUninstall(t, tg, uninstallOf(AgentClaude, AgentCodex))
+	if !reflect.DeepEqual(snapshot(t, tg.Abs(dev)), devSnap) {
+		t.Fatal("deleted by uninstall")
+	}
+}
+
+// A hand-added pattern that is not a path install writes is never recovered
+// into CreatedPaths after manifest loss, and never deleted.
+func TestInstall_ManifestLossIgnoresForeignPatterns(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	assets := defaultFixture().dir(t)
+	runInstall(t, tg, assets, claudeOpts())
+	write(t, tg.Abs("src/secret.txt"), "secret")
+	if err := tg.SetExcludeBlock(append(excludeBlock(t, tg), "/src/secret.txt")); err != nil {
+		t.Fatal(err)
+	}
+	deleteManifest(t, tg)
+	runInstall(t, tg, assets, claudeOpts())
+	if loadManifest(t, tg).Created("src/secret.txt") {
+		t.Fatal("foreign pattern recovered into CreatedPaths")
+	}
+	runUninstall(t, tg, uninstallOf(AgentClaude))
+	if readFile(t, tg.Abs("src/secret.txt")) != "secret" {
+		t.Fatal("foreign file changed")
+	}
+}
+
+// Sibling patterns match only directories, so a regular file at a sibling's
+// name is the developer's even when the block lists the name: never deleted,
+// and the skill that needs the name is blocked.
+func TestSkillSibling_RegularFileIsForeign(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	assets := defaultFixture().dir(t)
+	o := claudeOpts()
+	o.failAt = 3 // alpha's write is journaled: its sibling patterns are in the block
+	if _, err := Install(tg, assets, o); err == nil {
+		t.Fatal("no error")
+	}
+	const file = ".claude/skills/.alpha.lens-old"
+	write(t, tg.Abs(file), "mine")
+	res := runInstall(t, tg, assets, claudeOpts())
+	if r := resultFor(t, res, KindSkill, "alpha"); r.Action != ActionBlocked || r.Detail != "foreign sibling "+file {
+		t.Fatalf("alpha %+v", r)
+	}
+	if readFile(t, tg.Abs(file)) != "mine" {
+		t.Fatal("file changed by install")
+	}
+	runUninstall(t, tg, uninstallOf(AgentClaude))
+	if readFile(t, tg.Abs(file)) != "mine" {
+		t.Fatal("file changed by uninstall")
+	}
+}

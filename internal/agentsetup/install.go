@@ -119,6 +119,11 @@ func Install(t Target, assetsDir string, o InstallOpts) (InstallResult, error) {
 	if o.DryRun {
 		res.ExcludePaths = projectExclude(t, o.Agent, m, ops, skills)
 	} else {
+		// A run that crashed after deleting the manifest may have left patterns
+		// of paths that are gone.
+		if err := pruneStaleBlock(t); err != nil {
+			return InstallResult{}, err
+		}
 		r := &installer{
 			journal: &journal{t: t, m: m, name: "install", failAt: o.failAt, skills: skills, own: own, onSave: o.onSave},
 			agent:   o.Agent, url: o.URL, force: o.Force,
@@ -278,9 +283,12 @@ func planOrphan(t Target, o InstallOpts, st ItemStatus, m *Manifest, own map[str
 		return fail(err)
 	}
 	switch {
-	case !disk.present:
+	case lensAbsent(disk):
 		// Nothing of lens's is there: drop the record, even for a tracked path.
 		op.Action, op.kind = ActionRemoved, opDrop
+		if disk.foreign {
+			op.Detail = detailForeign
+		}
 	case op.Tracked:
 		op.Action, op.Snippet = ActionManual, removeByHandSnippet(st.Item)
 	default:

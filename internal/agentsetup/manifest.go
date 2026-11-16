@@ -121,7 +121,7 @@ func validRecordPath(pl Placement, r Record) error {
 		}
 		want = pl.HooksFile
 	case KindSkill:
-		if r.ID == "" || r.ID == "." || r.ID == ".." || strings.ContainsAny(r.ID, `/\`) {
+		if !singleSegment(r.ID) {
 			return fmt.Errorf("skill ID %q is not a single path segment", r.ID)
 		}
 		want = pl.SkillsDir + "/" + r.ID
@@ -132,6 +132,43 @@ func validRecordPath(pl Placement, r Record) error {
 		return fmt.Errorf("path %q, want %q", r.Path, want)
 	}
 	return nil
+}
+
+// singleSegment reports whether s is one path segment: not empty, ".", or "..",
+// and without a separator.
+func singleSegment(s string) bool {
+	return s != "" && s != "." && s != ".." && !strings.ContainsAny(s, `/\`)
+}
+
+// knownAgents lists every supported agent.
+func knownAgents() []Agent { return []Agent{AgentClaude, AgentCodex} }
+
+// isSkillsDir reports whether dir is a known agent's skills directory.
+func isSkillsDir(dir string) bool {
+	for _, a := range knownAgents() {
+		if pl, err := PlacementFor(a, ScopePersonal); err == nil && dir == pl.SkillsDir {
+			return true
+		}
+	}
+	return false
+}
+
+// placementShaped reports whether p is a path install writes for a known agent:
+// its MCP file, its hooks file, or one entry of its skills directory.
+func placementShaped(p string) bool {
+	for _, a := range knownAgents() {
+		pl, err := PlacementFor(a, ScopePersonal)
+		if err != nil {
+			continue
+		}
+		if p == pl.MCPFile || (pl.HooksFile != "" && p == pl.HooksFile) {
+			return true
+		}
+		if name, ok := strings.CutPrefix(p, pl.SkillsDir+"/"); ok && singleSegment(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // existingPaths returns the sorted, de-duplicated entries of paths that exist on
@@ -310,7 +347,8 @@ func CheckManifestWritable(t Target) error {
 // RecoverCreated is used when the manifest is missing but this work tree's exclude
 // block exists: it returns the block's paths that are present on disk, without the
 // leading "/" and trailing "/", excluding ManifestPath and any path that is not
-// local to the root (see checkLocal).
+// local to the root (see checkLocal) or not a path install writes (see
+// placementShaped): the exclude file is editable, so anything else is ignored.
 func RecoverCreated(t Target) ([]string, error) {
 	block, err := t.ExcludeBlock()
 	if err != nil {
@@ -319,7 +357,7 @@ func RecoverCreated(t Target) ([]string, error) {
 	var out []string
 	for _, pattern := range block {
 		p := strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/")
-		if checkLocal(p) != nil || p == ManifestPath || !t.Exists(p) {
+		if checkLocal(p) != nil || p == ManifestPath || !placementShaped(p) || !t.Exists(p) {
 			continue
 		}
 		out = append(out, p)
