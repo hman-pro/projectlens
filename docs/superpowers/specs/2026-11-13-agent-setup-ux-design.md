@@ -572,10 +572,12 @@ Approved by the maintainer:
 
 - The `github.com/BurntSushi/toml` dependency.
 - Re-serializing pre-existing JSON config files (semantic, not byte, equality).
+- `install` and `uninstall` exit 0 when items were skipped, blocked, or need a
+  manual step. A tracked config file always yields `manual`, so a non-zero
+  exit would be permanent for such a repository; scripts check `status`.
 
 Made by the builder, and open to reversal:
 
-- `install` and `uninstall` exit 0 when items were skipped or blocked.
 - The `blocked` state, and `--force` never adopting a tracked file, a
   non-skill symlink, or a hand-written Codex definition.
 - Treating the manifest and the exclude block as untrusted input.
