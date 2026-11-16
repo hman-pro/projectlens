@@ -22,8 +22,36 @@ type Target struct {
 	LinkedWorktree bool   // git-dir differs from git-common-dir
 }
 
+// isGitLocalEnvVar reports whether name is one of the repository-local
+// variables git lists with `git rev-parse --local-env-vars`. Inherited from the
+// caller (a git hook, or GIT_DIR exported by hand), they would point git at
+// another repository.
+func isGitLocalEnvVar(name string) bool {
+	switch name {
+	case "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_CONFIG", "GIT_CONFIG_COUNT",
+		"GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_GRAFT_FILE", "GIT_IMPLICIT_WORK_TREE",
+		"GIT_INDEX_FILE", "GIT_INTERNAL_SUPER_PREFIX", "GIT_NAMESPACE", "GIT_NO_REPLACE_OBJECTS",
+		"GIT_OBJECT_DIRECTORY", "GIT_PREFIX", "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_WORK_TREE":
+		return true
+	}
+	return false
+}
+
+// ScrubGitEnv returns env without the repository-local git variables, so a git
+// command run with it finds the repository from its -C directory alone.
+func ScrubGitEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if name, _, _ := strings.Cut(kv, "="); !isGitLocalEnvVar(name) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 func runGit(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = ScrubGitEnv(os.Environ())
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

@@ -245,3 +245,48 @@ func TestCheckContained(t *testing.T) {
 		}
 	}
 }
+
+func TestScrubGitEnv(t *testing.T) {
+	in := []string{
+		"HOME=/h", "GIT_DIR=/a/.git", "GIT_WORK_TREE=/a", "GIT_INDEX_FILE=/a/i", "GIT_COMMON_DIR=/a",
+		"GIT_OBJECT_DIRECTORY=/o", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/o2", "GIT_CONFIG=/c",
+		"GIT_CONFIG_PARAMETERS='x.y'='z'", "GIT_CONFIG_COUNT=1", "GIT_NAMESPACE=n", "GIT_PREFIX=p/",
+		"GIT_IMPLICIT_WORK_TREE=0", "GIT_GRAFT_FILE=/g", "GIT_NO_REPLACE_OBJECTS=1", "GIT_REPLACE_REF_BASE=r",
+		"GIT_SHALLOW_FILE=/s", "GIT_INTERNAL_SUPER_PREFIX=s/", "GIT_AUTHOR_NAME=A", "GIT_DIRX=keep", "PATH=/bin",
+	}
+	want := []string{"HOME=/h", "GIT_AUTHOR_NAME=A", "GIT_DIRX=keep", "PATH=/bin"}
+	if got := ScrubGitEnv(in); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ScrubGitEnv = %v, want %v", got, want)
+	}
+}
+
+// An inherited GIT_DIR (as in a git hook, or exported by hand) must not make lens
+// consult another repository: a file tracked in the target stays manual, and the
+// other repository's exclude file is untouched.
+func TestInstall_IgnoresInheritedGitDir(t *testing.T) {
+	other := newRepo(t)
+	otherExcl := excludeBytes(t, mustTarget(t, other))
+	root := newRepo(t)
+	write(t, filepath.Join(root, ".mcp.json"), "{}\n")
+	git(t, root, "add", ".mcp.json")
+	git(t, root, "commit", "-q", "-m", "mcp")
+
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	tg := mustTarget(t, root)
+	if tg.CommonDir != filepath.Join(root, ".git") {
+		t.Fatalf("CommonDir = %s", tg.CommonDir)
+	}
+	res := runInstall(t, tg, defaultFixture().dir(t), claudeOpts())
+	if r := resultFor(t, res, KindMCP, "projectlens"); r.Action != ActionManual || !r.Tracked {
+		t.Fatalf("mcp %+v", r)
+	}
+	if got := readFile(t, filepath.Join(root, ".mcp.json")); got != "{}\n" {
+		t.Fatalf("tracked .mcp.json written: %q", got)
+	}
+	if got := excludeBytes(t, mustTarget(t, other)); got != otherExcl {
+		t.Fatalf("other repository's exclude file changed:\n%s", got)
+	}
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("porcelain %q", p)
+	}
+}

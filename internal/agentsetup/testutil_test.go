@@ -8,9 +8,18 @@ import (
 	"testing"
 )
 
+// testGitEnv is the environment for test git commands: no repository-local
+// variables inherited from the caller (see ScrubGitEnv), and no global or system
+// git config, so the developer's settings never leak into a test.
+func testGitEnv() []string {
+	return append(ScrubGitEnv(os.Environ()), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+}
+
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = testGitEnv()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}

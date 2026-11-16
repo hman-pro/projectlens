@@ -33,6 +33,17 @@ func agentRepoRoot(t *testing.T) string {
 	}
 }
 
+// gitCmd runs git in dir with no repository-local variables inherited from the
+// caller and no global or system git config, so neither leaks into a test.
+func gitCmd(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(agentsetup.ScrubGitEnv(os.Environ()), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
 // agentFixture points bakedCheckout at the checkout, then moves into a fresh
 // git repository. It returns the repo root.
 func agentFixture(t *testing.T) string {
@@ -50,9 +61,7 @@ func agentFixture(t *testing.T) string {
 		{"config", "core.excludesFile", os.DevNull},
 		{"commit", "-q", "--allow-empty", "-m", "init"},
 	} {
-		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+		gitCmd(t, repo, args...)
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Chdir(repo)
@@ -391,11 +400,8 @@ func TestAgentCmd_ManualItemPrintsSnippet(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte("{\"mcpServers\":{}}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"add", ".mcp.json"}, {"commit", "-q", "-m", "mcp"}} {
-		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
+	gitCmd(t, root, "add", ".mcp.json")
+	gitCmd(t, root, "commit", "-q", "-m", "mcp")
 	out, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp")
 	if err != nil {
 		t.Fatal(err)
@@ -415,9 +421,7 @@ func TestAgentCmd_ManualItemPrintsSnippet(t *testing.T) {
 func TestAgentCmd_WorktreeNotice(t *testing.T) {
 	root := agentFixture(t)
 	wt := filepath.Join(t.TempDir(), "wt")
-	if out, err := exec.Command("git", "-C", root, "worktree", "add", "-q", "-b", "wt", wt).CombinedOutput(); err != nil {
-		t.Fatalf("worktree add: %v\n%s", err, out)
-	}
+	gitCmd(t, root, "worktree", "add", "-q", "-b", "wt", wt)
 	t.Chdir(wt)
 	out, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp")
 	if err != nil {
