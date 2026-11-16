@@ -243,3 +243,36 @@ func TestLoadCanonical_SymlinkInSkillSourceErrors(t *testing.T) {
 		t.Fatalf("want ErrSymlinkInSkill, got %v", err)
 	}
 }
+
+// Finder writes .DS_Store into any directory it opens: it is neither hashed nor
+// copied, so viewing an installed skill does not make it modified.
+func TestHashDirAndCopyDir_IgnoreDSStore(t *testing.T) {
+	src := t.TempDir()
+	write(t, filepath.Join(src, "SKILL.md"), "skill")
+	write(t, filepath.Join(src, "sub", "x.md"), "x")
+	before, err := HashDir(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(src, ".DS_Store"), "finder")
+	write(t, filepath.Join(src, "sub", ".DS_Store"), "finder")
+	after, err := HashDir(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatal(".DS_Store changed the hash")
+	}
+	dst := filepath.Join(t.TempDir(), "copy")
+	if err := CopyDir(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{".DS_Store", "sub/.DS_Store"} {
+		if _, err := os.Lstat(filepath.Join(dst, p)); !os.IsNotExist(err) {
+			t.Errorf("%s copied: %v", p, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dst, "sub", "x.md")); err != nil {
+		t.Fatal(err)
+	}
+}

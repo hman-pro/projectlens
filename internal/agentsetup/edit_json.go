@@ -193,8 +193,11 @@ func loadHooksDoc(path string) (doc jsonObject, events hookEvents, exists bool, 
 	}
 	events = hookEvents{}
 	if raw, ok := doc["hooks"]; ok {
-		if err := json.Unmarshal(raw, &events); err != nil || events == nil {
+		if err := json.Unmarshal(raw, &events); err != nil {
 			return nil, nil, exists, invalidJSON(path, fmt.Errorf("hooks has an unexpected shape: %v", err))
+		}
+		if events == nil {
+			return nil, nil, exists, invalidJSON(path, errors.New("hooks is null, not an object"))
 		}
 	}
 	return doc, events, exists, nil

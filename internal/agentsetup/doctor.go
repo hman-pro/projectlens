@@ -270,6 +270,9 @@ func serverReachable(ctx context.Context, d DoctorDeps, u string) Check {
 	case status == http.StatusServiceUnavailable:
 		c.Result, c.Detail = CheckFail, fmt.Sprintf("%s: HTTP 503", u)
 		c.Next = "run: lens migrate --project " + urlSlug(u)
+		if p != nil && strings.TrimRight(p.Path, "/") == defaultMCPPath { // single-project mode
+			c.Next = "run: lens migrate"
+		}
 	default:
 		c.Result, c.Detail = CheckPass, fmt.Sprintf("%s: HTTP %d", u, status)
 	}
@@ -320,9 +323,8 @@ func toSet(names []string) map[string]bool {
 	return s
 }
 
-// jsonServerURL reads mcpServers.projectlens.url from a JSON file. ok is false
-// when the file is missing, unparseable, or has no such entry; present reports
-// whether the entry exists.
+// jsonServerURL reads mcpServers.projectlens.url from a JSON file. present is
+// false when the file is missing, unparseable, or has no such entry.
 func jsonServerURL(path string) (u string, present bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {

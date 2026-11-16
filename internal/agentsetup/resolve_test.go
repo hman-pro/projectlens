@@ -251,3 +251,44 @@ func TestResolveAssets(t *testing.T) {
 		t.Fatalf("none: %v", err)
 	}
 }
+
+func TestResolveURL_RejectsBadFlagsAndEnv(t *testing.T) {
+	repo := newRepo(t)
+	tgt := mustTarget(t, repo)
+	noReg := envFor(t.TempDir(), "", nil)
+	for _, u := range []string{
+		`http://x/"y`, `http://x/\y`, "http://x/\ny", "http://x/\x7fy", "ftp://x/mcp", "x/mcp",
+		"http:///mcp", "http://%zz/mcp", "localhost:8484/mcp",
+	} {
+		if _, err := ResolveURL(noReg, ResolveOpts{URL: u}, tgt); !errors.Is(err, ErrInvalidFlag) {
+			t.Errorf("--url %q: got %v, want ErrInvalidFlag", u, err)
+		}
+	}
+	for _, p := range []int{-1, 65536} {
+		if _, err := ResolveURL(noReg, ResolveOpts{Port: p}, tgt); !errors.Is(err, ErrInvalidFlag) {
+			t.Errorf("--port %d: got %v, want ErrInvalidFlag", p, err)
+		}
+	}
+	for _, u := range []string{"http://localhost:8484/mcp", "https://lens.example.com:9000/shop/mcp"} {
+		if got, err := ResolveURL(noReg, ResolveOpts{URL: u}, tgt); err != nil || got != u {
+			t.Errorf("--url %q: %q %v", u, got, err)
+		}
+	}
+
+	// An invalid PROJECTLENS_MCP_PORT is reported, and is not a flag error.
+	for _, v := range []string{"abc", "0", "-5", "70000"} {
+		_, err := ResolveURL(envFor(t.TempDir(), "", map[string]string{"PROJECTLENS_MCP_PORT": v}), ResolveOpts{}, tgt)
+		if err == nil || err.Error() != `invalid PROJECTLENS_MCP_PORT "`+v+`"` {
+			t.Errorf("PROJECTLENS_MCP_PORT=%s: %v", v, err)
+		}
+	}
+
+	// Several registered projects for one repository: the caller must choose.
+	cwd := t.TempDir()
+	reg := writeRegistry(t, cwd, regYAML([3]string{"shop", "shop", repo}, [3]string{"shop2", "shop2", repo}))
+	_, err := ResolveURL(envFor(cwd, "", nil), ResolveOpts{}, tgt)
+	want := "registry " + reg + " has several projects for " + repo + " (shop, shop2): pass --project <slug> or --url <url>"
+	if err == nil || err.Error() != want {
+		t.Fatalf("several matches:\n got %v\nwant %q", err, want)
+	}
+}

@@ -400,3 +400,12 @@ func TestEdit_PreservesFileModeAndCreates0644(t *testing.T) {
 		t.Errorf("new file mode = %v", info.Mode().Perm())
 	}
 }
+
+func TestHooks_NullHooksErrorText(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.local.json")
+	write(t, p, `{"hooks": null}`)
+	_, err := ReadHooks(p)
+	if !errors.Is(err, ErrInvalidJSON) || strings.Contains(err.Error(), "<nil>") {
+		t.Fatalf("got %v", err)
+	}
+}

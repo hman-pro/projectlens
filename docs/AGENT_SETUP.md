@@ -103,7 +103,10 @@ ones are updated.
 
 All worktrees of a repository share one `.git/info/exclude`. Each worktree
 gets its own marked block, and install only wires the worktree you run it in.
-Run `lens agent install` in every worktree you use.
+Run `lens agent install` in every worktree you use. The exclude patterns
+still apply to every worktree of the repository, so an untracked file with
+the same name in another worktree (for example its own `.mcp.json`) is
+hidden from `git status` there too.
 
 ### Claude Code
 
@@ -310,9 +313,17 @@ file that install created and that is empty after removal is deleted.
 ## Limitations
 
 - If `.projectlens/agent-manifest.json` is deleted, the next install
-  recovers ownership from the marked block in `.git/info/exclude`. Uninstall
+  recovers ownership from the marked block in `.git/info/exclude`; until
+  then, `status`, `doctor`, and `uninstall` list the paths the block still
+  hides and print the `lens agent install <agent>` command to run. Uninstall
   after that may leave empty parent directories (`.claude/`, `.agents/`,
   `.codex/`).
+- If you add your own content to a config file install created (Claude Code
+  adds `permissions` to `.claude/settings.local.json` whenever you choose
+  "always allow"), uninstall removes only the lens entries and keeps the
+  file. It stays excluded from git, and `.projectlens/` stays, until you
+  delete the file; then `lens agent uninstall all` removes the rest.
+  `lens agent status` lists such files.
 - If you commit a file install created, the manifest and exclude entry stay
   until you delete that file.
 - If a directory of yours is named `.<skill>.lens-tmp` or

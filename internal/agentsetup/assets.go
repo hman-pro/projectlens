@@ -71,13 +71,25 @@ func MCPHash(url string) string { return HashString("mcp\n" + url) }
 // ErrSymlinkInSkill is wrapped by HashDir when it meets a symlink.
 var ErrSymlinkInSkill = errors.New("symlink not allowed")
 
+// finderMetadata is the file Finder writes into any directory it opens. It is
+// neither hashed nor copied, so viewing a skill never makes it modified.
+const finderMetadata = ".DS_Store"
+
+func isFinderMetadata(d fs.DirEntry) bool {
+	return d.Name() == finderMetadata && d.Type().IsRegular()
+}
+
 // HashDir hashes every regular file under dir (path and content), in sorted
-// slash-separated relative path order. Symlinks are an error.
+// slash-separated relative path order, ignoring .DS_Store files. Symlinks are
+// an error.
 func HashDir(dir string) (string, error) {
 	var rels []string
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if isFinderMetadata(d) {
+			return nil
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
 			return fmt.Errorf("%w: %s", ErrSymlinkInSkill, p)
@@ -107,7 +119,8 @@ func HashDir(dir string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// CopyDir copies src to dst preserving structure and file modes. dst must not exist.
+// CopyDir copies src to dst preserving structure and file modes, without
+// .DS_Store files. dst must not exist.
 func CopyDir(src, dst string) error {
 	if _, err := os.Lstat(dst); err == nil {
 		return fmt.Errorf("destination already exists: %s", dst)
@@ -117,6 +130,9 @@ func CopyDir(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if isFinderMetadata(d) {
+			return nil
 		}
 		rel, err := filepath.Rel(src, p)
 		if err != nil {

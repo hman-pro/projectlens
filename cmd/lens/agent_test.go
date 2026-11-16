@@ -566,3 +566,68 @@ func TestAgentCmd_ManifestDeletedPointsToRecovery(t *testing.T) {
 		t.Fatalf("status --json: err=%v stdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
 }
+
+func TestAgentCmd_BadURLOrPortIsUsageErrorBeforeWriting(t *testing.T) {
+	root := agentFixture(t)
+	excl := readExclude(t, root)
+	for _, args := range [][]string{
+		{"install", "codex", "--url", `http://x/"y`},
+		{"install", "claude", "--url", "ftp://x/mcp"},
+		{"install", "claude", "--port", "-1"},
+		{"install", "claude", "--port", "65536"},
+	} {
+		_, _, err := runAgent(t, args...)
+		if exitCode(t, err) != 2 {
+			t.Errorf("%v: %v", args, err)
+		}
+	}
+	for _, p := range []string{".projectlens", ".codex", ".claude", ".mcp.json"} {
+		if _, err := os.Lstat(filepath.Join(root, p)); !os.IsNotExist(err) {
+			t.Errorf("%s written: %v", p, err)
+		}
+	}
+	if readExclude(t, root) != excl {
+		t.Error("exclude file changed")
+	}
+}
+
+// The restart-and-approve lines print only when the MCP entry is in place.
+func TestAgentCmd_NextLinesWhenMCPManual(t *testing.T) {
+	root := agentFixture(t)
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte("{\"mcpServers\":{}}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, root, "add", ".mcp.json")
+	gitCmd(t, root, "commit", "-q", "-m", "mcp")
+	out, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "restart Claude Code") || !strings.Contains(out, "Next: resolve the items above, then re-run: lens agent install claude") {
+		t.Fatalf("manual MCP entry:\n%s", out)
+	}
+}
+
+func TestAgentCmd_NextLinesWhenMCPInPlace(t *testing.T) {
+	agentFixture(t)
+	for _, run := range []string{"written", "current"} {
+		out, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "Next: restart Claude Code in this repo") || strings.Contains(out, "resolve the items above") {
+			t.Fatalf("%s MCP entry:\n%s", run, out)
+		}
+	}
+}
+
+func TestAgentCmd_UninstallNamesAgentNotInstalled(t *testing.T) {
+	agentFixture(t)
+	if _, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runAgent(t, "uninstall", "codex")
+	if err != nil || strings.TrimSpace(out) != "codex is not installed" {
+		t.Fatalf("err=%v out:\n%s", err, out)
+	}
+}

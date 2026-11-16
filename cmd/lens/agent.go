@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -270,6 +271,9 @@ func newAgentInstallCmd() *cobra.Command {
 				return err
 			}
 			url, err := agentsetup.ResolveURL(env, o, t)
+			if errors.Is(err, agentsetup.ErrInvalidFlag) {
+				return usageErr(err)
+			}
 			if err != nil {
 				return fmt.Errorf("resolve url: %w", err)
 			}
@@ -289,11 +293,17 @@ func newAgentInstallCmd() *cobra.Command {
 			dryRunHeader(w, dry)
 			fmt.Fprintf(w, "Target: %s   URL: %s\n\n", t.Root, url)
 			rows := make([]row, 0, len(res.Items))
-			changed := false
+			changed, mcpInPlace := false, false
 			for _, it := range res.Items {
 				switch it.Action {
 				case agentsetup.ActionWritten, agentsetup.ActionUpdated, agentsetup.ActionAdopted:
 					changed = true
+				}
+				if it.Kind == agentsetup.KindMCP {
+					switch it.Action {
+					case agentsetup.ActionWritten, agentsetup.ActionUpdated, agentsetup.ActionAdopted, agentsetup.ActionCurrent:
+						mcpInPlace = true
+					}
 				}
 				rows = append(rows, row{action: string(it.Action), item: it.Item, detail: itemDetail(it.Item, it.Detail), snippet: it.Snippet})
 			}
@@ -309,13 +319,19 @@ func newAgentInstallCmd() *cobra.Command {
 				fmt.Fprintln(w, "\nNote: this is a linked worktree; the exclude entries above apply to every worktree of this repository.")
 			}
 			fmt.Fprintln(w)
-			if a == agentsetup.AgentCodex {
+			// The agent can load the server only once its MCP entry is in place.
+			switch {
+			case !mcpInPlace:
+				fmt.Fprintf(w, "Next: resolve the items above, then re-run: lens agent install %s\n", a)
+			case a == agentsetup.AgentCodex:
 				fmt.Fprintln(w, "Next: open Codex in this repo, trust the project, then run: lens agent doctor codex")
-				fmt.Fprintln(w, "\nCodex has no hooks. For always-on guidance, paste this into AGENTS.md:")
-				fmt.Fprintln(w, strings.TrimRight(string(codexSnippet), "\n"))
-			} else {
+			default:
 				fmt.Fprintln(w, "Next: restart Claude Code in this repo and approve the \"projectlens\" server.")
 				fmt.Fprintln(w, "      Then run: lens agent doctor claude")
+			}
+			if a == agentsetup.AgentCodex {
+				fmt.Fprintln(w, "\nCodex has no hooks. For always-on guidance, paste this into AGENTS.md:")
+				fmt.Fprintln(w, strings.TrimRight(string(codexSnippet), "\n"))
 			}
 			return nil
 		},
@@ -357,7 +373,11 @@ func newAgentUninstallCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			dryRunHeader(w, dry)
 			if res.Nothing {
-				printNotInstalled(w, t, "nothing installed", res.Unmanaged, res.Recoverable)
+				lead := "nothing installed"
+				if len(agents) == 1 {
+					lead = string(agents[0]) + " is not installed"
+				}
+				printNotInstalled(w, t, lead, res.Unmanaged, res.Recoverable)
 				return nil
 			}
 			fmt.Fprintf(w, "Target: %s\n\n", t.Root)

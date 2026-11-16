@@ -376,3 +376,12 @@ func TestDoctor_NoDuplicateHooks(t *testing.T) {
 		t.Fatal("no-duplicate-hooks is Claude only")
 	}
 }
+
+func TestDoctor_SchemaNotMigratedSingleProject(t *testing.T) {
+	e := doctorSetup(t, AgentClaude, "http://localhost:8080/mcp")
+	cs := e.run(t, []Agent{AgentClaude}, DoctorOpts{}, DoctorDeps{HTTPGet: stubGet(503),
+		ListTools: func(context.Context, string) ([]string, error) { return nil, nil }})
+	if r := checkNamed(t, cs, "server-reachable", ""); r.Result != "fail" || r.Next != "run: lens migrate" {
+		t.Errorf("got %+v", r)
+	}
+}

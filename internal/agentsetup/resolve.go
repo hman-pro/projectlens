@@ -3,6 +3,7 @@ package agentsetup
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +13,10 @@ import (
 )
 
 const defaultMCPPort = 8484
+
+// ErrInvalidFlag reports a --url or --port value that cannot be written into
+// agent config.
+var ErrInvalidFlag = errors.New("invalid flag")
 
 // ErrRelativeRepoPath reports a relative repo_path that cannot be anchored.
 var ErrRelativeRepoPath = errors.New("relative repo_path")
@@ -163,6 +168,9 @@ func ResolveTarget(env Env, o ResolveOpts) (Target, error) {
 }
 
 func (o ResolveOpts) port(env Env) (int, error) {
+	if o.Port < 0 || o.Port > 65535 {
+		return 0, fmt.Errorf("%w: --port %d is not a port number (1-65535)", ErrInvalidFlag, o.Port)
+	}
 	if o.Port != 0 {
 		return o.Port, nil
 	}
@@ -178,9 +186,40 @@ func (o ResolveOpts) port(env Env) (int, error) {
 	return defaultMCPPort, nil
 }
 
-// ResolveURL decides the MCP URL written into agent config.
+// checkURL accepts an http or https URL with a host that can be written into a
+// JSON string or a TOML basic string as is.
+func checkURL(s string) error {
+	bad := func(why string) error {
+		return fmt.Errorf("%w: --url %q %s", ErrInvalidFlag, s, why)
+	}
+	if strings.ContainsAny(s, `"\`) {
+		return bad(`contains a quote or backslash`)
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return bad("contains a control character")
+		}
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return bad("is not a URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return bad("must start with http:// or https://")
+	}
+	if u.Host == "" {
+		return bad("has no host")
+	}
+	return nil
+}
+
+// ResolveURL decides the MCP URL written into agent config. A bad --url or
+// --port is an ErrInvalidFlag error.
 func ResolveURL(env Env, o ResolveOpts, t Target) (string, error) {
 	if o.URL != "" {
+		if err := checkURL(o.URL); err != nil {
+			return "", err
+		}
 		return o.URL, nil
 	}
 	port, err := o.port(env)

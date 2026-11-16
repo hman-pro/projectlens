@@ -344,8 +344,12 @@ func TestManifest_LoadRejectsUnsafePaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			write(t, tg.Abs(ManifestPath), string(b))
-			if _, err := LoadManifest(tg); !errors.Is(err, ErrInvalidManifest) || !strings.Contains(err.Error(), ManifestPath) {
+			_, err = LoadManifest(tg)
+			if !errors.Is(err, ErrInvalidManifest) || !strings.Contains(err.Error(), ManifestPath) {
 				t.Fatalf("LoadManifest = %v, want ErrInvalidManifest naming the file", err)
+			}
+			if !strings.HasSuffix(err.Error(), "; fix or delete .projectlens/agent-manifest.json and re-run: lens agent install <agent>") {
+				t.Fatalf("no recovery hint: %v", err)
 			}
 		})
 	}

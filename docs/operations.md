@@ -182,8 +182,8 @@ Run from inside the target repository. The shared flags `--project` and
 | Flag | Commands | Purpose |
 |---|---|---|
 | `--dry-run` | `install`, `uninstall` | Show what would change; write nothing. |
-| `--force` | `install`, `uninstall` | Overwrite or remove items you changed or that lens does not manage. Never writes a tracked file or through a symlink. |
-| `--url` | `install`, `doctor` | MCP server URL. Default for `install`: derived from the project registry and port. For `doctor`: check this URL instead of the installed one. |
+| `--force` | `install`, `uninstall` | `install`: overwrite items you changed, and take over items lens does not manage. `uninstall`: remove recorded items even if you changed them; it never touches anything lens did not record. Neither writes a tracked file or through a symlink. |
+| `--url` | `install`, `doctor` | MCP server URL (`http` or `https`, with a host). Default for `install`: derived from the project registry and port. For `doctor`: check this URL instead of the installed one. |
 | `--port` | `install` | MCP server port (default `$PROJECTLENS_MCP_PORT` or 8484). |
 | `--assets` | `install`, `status`, `doctor` | Path to the ProjectLens `agent/` directory. Default: the checkout the binary was built from. |
 | `--json` | `status`, `doctor` | Print machine-readable output. |

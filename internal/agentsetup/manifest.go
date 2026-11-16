@@ -12,6 +12,10 @@ import (
 
 const manifestVersion = 1
 
+// manifestRecovery ends every error about a manifest that cannot be used. With
+// the manifest gone, install recovers ownership from the exclude block.
+const manifestRecovery = "; fix or delete " + ManifestPath + " and re-run: lens agent install <agent>"
+
 // ErrManifestTracked reports that git tracks the manifest, so lens must not write it.
 var ErrManifestTracked = errors.New(ManifestPath + " is tracked by git")
 
@@ -64,16 +68,16 @@ func LoadManifest(t Target) (*Manifest, error) {
 	}
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parse manifest %s: %w", ManifestPath, err)
+		return nil, fmt.Errorf("parse manifest %s: %w%s", ManifestPath, err, manifestRecovery)
 	}
 	if m.Version != manifestVersion {
-		return nil, fmt.Errorf("parse manifest %s: unsupported version %d", ManifestPath, m.Version)
+		return nil, fmt.Errorf("parse manifest %s: unsupported version %d%s", ManifestPath, m.Version, manifestRecovery)
 	}
 	if m.Agents == nil {
 		m.Agents = map[Agent]*AgentRecord{}
 	}
 	if err := m.validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w: %v", ManifestPath, ErrInvalidManifest, err)
+		return nil, fmt.Errorf("%s: %w: %v%s", ManifestPath, ErrInvalidManifest, err, manifestRecovery)
 	}
 	return &m, nil
 }
