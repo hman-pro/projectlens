@@ -46,6 +46,13 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Wire ProjectLens into an agent (Claude Code, Codex) for the current repository",
 	}
+	root.Args = func(_ *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			return usageErr(fmt.Errorf("unknown command %q for \"lens agent\" (try: install, uninstall, status, doctor)", args[0]))
+		}
+		return nil
+	}
+	root.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageErr(err) })
 	root.AddCommand(
 		newAgentInstallCmd(),
@@ -53,7 +60,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentStatusCmd(),
 		newAgentDoctorCmd(),
 	)
-	return root
+	return quiet(root)
 }
 
 func quiet(c *cobra.Command) *cobra.Command {
@@ -136,19 +143,20 @@ func printRows(w io.Writer, rows []row, actionWidth int) {
 		idx   int
 		count int
 	}
-	groups := map[string]*hookGroup{}
+	groups := map[[2]string]*hookGroup{}
 	var lines []row
 	var counts []int
 	for _, r := range rows {
 		if r.item.Kind == agentsetup.KindHook {
-			if g, ok := groups[r.action]; ok {
+			key := [2]string{r.action, r.detail}
+			if g, ok := groups[key]; ok {
 				counts[g.idx]++
 				if r.snippet != "" && !strings.Contains(lines[g.idx].snippet, r.snippet) {
 					lines[g.idx].snippet += "\n" + r.snippet
 				}
 				continue
 			}
-			groups[r.action] = &hookGroup{idx: len(lines)}
+			groups[key] = &hookGroup{idx: len(lines)}
 			lines = append(lines, r)
 			counts = append(counts, 1)
 			continue
@@ -165,6 +173,9 @@ func printRows(w io.Writer, rows []row, actionWidth int) {
 				noun = "hook"
 			}
 			detail = fmt.Sprintf("%d %s", n, noun)
+			if r.detail != "" {
+				detail += "; " + r.detail
+			}
 		}
 		printRow(w, r.action, r.path(), detail, actionWidth)
 		if r.snippet != "" {
@@ -262,6 +273,13 @@ func newAgentInstallCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve url: %w", err)
 			}
+			var codexSnippet []byte
+			if a == agentsetup.AgentCodex {
+				codexSnippet, err = os.ReadFile(filepath.Join(assets, "codex", "AGENTS.md.snippet"))
+				if err != nil {
+					return fmt.Errorf("read codex AGENTS.md snippet: %w", err)
+				}
+			}
 			res, err := agentsetup.Install(t, assets, agentsetup.InstallOpts{Agent: a, URL: url, DryRun: dry, Force: force})
 			if err != nil {
 				return fmt.Errorf("install %s: %w", a, err)
@@ -293,12 +311,8 @@ func newAgentInstallCmd() *cobra.Command {
 			fmt.Fprintln(w)
 			if a == agentsetup.AgentCodex {
 				fmt.Fprintln(w, "Next: open Codex in this repo, trust the project, then run: lens agent doctor codex")
-				snippet, rerr := os.ReadFile(filepath.Join(assets, "codex", "AGENTS.md.snippet"))
-				if rerr != nil {
-					return fmt.Errorf("read codex AGENTS.md snippet: %w", rerr)
-				}
 				fmt.Fprintln(w, "\nCodex has no hooks. For always-on guidance, paste this into AGENTS.md:")
-				fmt.Fprintln(w, strings.TrimRight(string(snippet), "\n"))
+				fmt.Fprintln(w, strings.TrimRight(string(codexSnippet), "\n"))
 			} else {
 				fmt.Fprintln(w, "Next: restart Claude Code in this repo and approve the \"projectlens\" server.")
 				fmt.Fprintln(w, "      Then run: lens agent doctor claude")

@@ -54,6 +54,7 @@ func agentFixture(t *testing.T) string {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
+	t.Setenv("HOME", t.TempDir())
 	t.Chdir(repo)
 	resolved, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -129,8 +130,29 @@ func TestAgentCmd_InstallThenStatusExits0(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "current") || strings.Contains(out, "stale") {
+	if strings.Contains(out, "stale") {
 		t.Fatalf("status output:\n%s", out)
+	}
+	skills, err := os.ReadDir(filepath.Join(bakedCheckout, "agent", "skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := []string{
+		"  current         .mcp.json                          (mcpServers.projectlens)",
+		"  current         .claude/settings.local.json        (4 hooks)",
+	}
+	for _, sk := range skills {
+		if sk.IsDir() {
+			rows = append(rows, "  current         .claude/skills/"+sk.Name()+"/")
+		}
+	}
+	for _, want := range rows {
+		if !strings.Contains(out, want+"\n") {
+			t.Errorf("status missing row %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "\n  "); n != len(rows) {
+		t.Errorf("status has %d rows, want %d:\n%s", n, len(rows), out)
 	}
 }
 
@@ -189,6 +211,12 @@ func TestAgentCmd_StatusListsUnmanagedCreatedPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _, _ := runAgent(t, "status")
+	tail := out[strings.Index(out, "Excluded from git"):]
+	for _, bad := range []string{".mcp.json", "settings.local.json", ".claude/skills/use-projectlens"} {
+		if strings.Contains(tail, bad) {
+			t.Errorf("managed path %q listed as unmanaged:\n%s", bad, tail)
+		}
+	}
 	for _, want := range []string{
 		"Excluded from git but not managed (left by an earlier install):",
 		".claude/skills/leftover",
@@ -315,5 +343,106 @@ func TestAgentCmd_DoctorJSONFailsWhenServerDown(t *testing.T) {
 	var checks []map[string]any
 	if err := json.Unmarshal([]byte(out), &checks); err != nil || len(checks) == 0 {
 		t.Fatalf("stdout is not a JSON array of checks: %v\n%s", err, out)
+	}
+}
+
+func TestAgentCmd_UnknownSubcommandExits2(t *testing.T) {
+	agentFixture(t)
+	_, _, err := runAgent(t, "bogus")
+	if exitCode(t, err) != 2 || !strings.Contains(err.Error(), "bogus") {
+		t.Fatalf("got %v", err)
+	}
+	_, _, err = runAgent(t, "bogus", "claude")
+	if exitCode(t, err) != 2 {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAgentCmd_BareAgentPrintsHelpExits0(t *testing.T) {
+	agentFixture(t)
+	out, _, err := runAgent(t)
+	if err != nil || !strings.Contains(out, "install") {
+		t.Fatalf("err=%v out:\n%s", err, out)
+	}
+}
+
+func TestPrintRows_HooksGroupByActionAndDetail(t *testing.T) {
+	hook := func(id string) agentsetup.Item {
+		return agentsetup.Item{Agent: agentsetup.AgentClaude, Kind: agentsetup.KindHook, ID: id, Path: ".claude/settings.local.json"}
+	}
+	rows := []row{
+		{action: "current", item: hook("a")},
+		{action: "current", item: hook("b")},
+		{action: "skipped", item: hook("c"), detail: "defined outside the managed block"},
+		{action: "current", item: hook("d")},
+	}
+	var buf bytes.Buffer
+	printRows(&buf, rows, 9)
+	out := buf.String()
+	if !strings.Contains(out, "  current   .claude/settings.local.json        (3 hooks)\n") ||
+		!strings.Contains(out, "  skipped   .claude/settings.local.json        (1 hook; defined outside the managed block)\n") ||
+		strings.Count(out, "\n") != 2 {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+func TestAgentCmd_ManualItemPrintsSnippet(t *testing.T) {
+	root := agentFixture(t)
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte("{\"mcpServers\":{}}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", ".mcp.json"}, {"commit", "-q", "-m", "mcp"}} {
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	out, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "  manual    .mcp.json") {
+			if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "      ") || strings.TrimSpace(lines[i+1]) == "" {
+				t.Fatalf("no indented snippet beneath manual row:\n%s", out)
+			}
+			return
+		}
+	}
+	t.Fatalf("no manual .mcp.json row:\n%s", out)
+}
+
+func TestAgentCmd_WorktreeNotice(t *testing.T) {
+	root := agentFixture(t)
+	wt := filepath.Join(t.TempDir(), "wt")
+	if out, err := exec.Command("git", "-C", root, "worktree", "add", "-q", "-b", "wt", wt).CombinedOutput(); err != nil {
+		t.Fatalf("worktree add: %v\n%s", err, out)
+	}
+	t.Chdir(wt)
+	out, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Note: this is a linked worktree; the exclude entries above apply to every worktree of this repository."
+	if !strings.Contains(out, want) {
+		t.Fatalf("missing worktree notice:\n%s", out)
+	}
+}
+
+func TestAgentCmd_CodexMissingSnippetFailsBeforeWriting(t *testing.T) {
+	root := agentFixture(t)
+	assets := filepath.Join(t.TempDir(), "agent")
+	if err := agentsetup.CopyDir(filepath.Join(bakedCheckout, "agent"), assets); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(assets, "codex", "AGENTS.md.snippet")); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runAgent(t, "install", "codex", "--url", "http://localhost:1/mcp", "--assets", assets)
+	if err == nil || !strings.Contains(err.Error(), "AGENTS.md snippet") {
+		t.Fatalf("got %v", err)
+	}
+	if _, serr := os.Stat(filepath.Join(root, ".codex")); !os.IsNotExist(serr) {
+		t.Fatalf("install wrote files before failing: %v", serr)
 	}
 }
