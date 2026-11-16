@@ -325,6 +325,16 @@ func TestManifest_LoadRejectsUnsafePaths(t *testing.T) {
 		"CreatedPaths .git":             created([]string{".git"}, nil),
 		"CreatedDirs ../x":              created([]string{".mcp.json"}, []string{"../x"}),
 		"CreatedDirs empty":             created([]string{".mcp.json"}, []string{""}),
+		"CreatedPaths not a placement":  created([]string{"src"}, nil),
+		"CreatedPaths nested in skill":  created([]string{".claude/skills/alpha/SKILL.md"}, nil),
+		"CreatedPaths skills dir":       created([]string{".claude/skills"}, nil),
+		"CreatedPaths skill sibling":    created([]string{".claude/skills/.alpha.lens-tmp"}, nil),
+		"CreatedPaths manifest":         created([]string{ManifestPath}, nil),
+		"CreatedDirs not an ancestor":   created([]string{".mcp.json"}, []string{"emptydir"}),
+		"CreatedDirs nested":            created([]string{".mcp.json"}, []string{"emptydir/sub"}),
+		"CreatedDirs a skill":           created([]string{".mcp.json"}, []string{".claude/skills/alpha"}),
+		"CreatedDirs a file":            created([]string{".mcp.json"}, []string{".mcp.json"}),
+		"CreatedDirs .projectlens":      created([]string{".mcp.json"}, []string{".projectlens"}),
 	}
 	for name, m := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -352,7 +362,9 @@ func TestManifest_LoadRejectsUnsafePaths(t *testing.T) {
 			{Kind: KindMCP, ID: "projectlens", Path: ".codex/config.toml"},
 			{Kind: KindSkill, ID: "alpha", Path: ".agents/skills/alpha"},
 		}},
-	}, CreatedPaths: []string{".mcp.json", ".agents/skills/alpha"}, CreatedDirs: []string{".agents", ".agents/skills"}}
+	}, CreatedPaths: []string{
+		".mcp.json", ".claude/settings.local.json", ".claude/skills/alpha", ".codex/config.toml", ".agents/skills/alpha",
+	}, CreatedDirs: []string{".agents", ".agents/skills", ".claude", ".claude/skills", ".codex"}}
 	b, err := json.Marshal(good)
 	if err != nil {
 		t.Fatal(err)

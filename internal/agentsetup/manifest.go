@@ -103,7 +103,46 @@ func (m *Manifest) validate() error {
 			}
 		}
 	}
+	// CreatedPaths entries become exclude patterns and CreatedDirs entries are
+	// deleted when empty, so each must be what install records: a placement
+	// path (never a skill sibling), or a parent directory of one.
+	for _, p := range m.CreatedPaths {
+		if !placementShaped(p) || isSkillSibling(p) {
+			return fmt.Errorf("created path %q is not a path install writes", p)
+		}
+	}
+	parents := placementParents()
+	for _, d := range m.CreatedDirs {
+		if !parents[d] {
+			return fmt.Errorf("created dir %q is not a parent directory install creates", d)
+		}
+	}
 	return nil
+}
+
+// placementParents returns every proper ancestor directory of a path install
+// writes for a known agent: the parents of its MCP and hooks files, and its
+// skills directory with that directory's parents. These are the only
+// directories install records in CreatedDirs (see installer.missingParents).
+func placementParents() map[string]bool {
+	out := map[string]bool{}
+	add := func(p string) {
+		for d := path.Dir(p); d != "." && d != "/"; d = path.Dir(d) {
+			out[d] = true
+		}
+	}
+	for _, a := range knownAgents() {
+		pl, err := PlacementFor(a, ScopePersonal)
+		if err != nil {
+			continue
+		}
+		add(pl.MCPFile)
+		if pl.HooksFile != "" {
+			add(pl.HooksFile)
+		}
+		add(pl.SkillsDir + "/x") // the skills dir itself and its parents
+	}
+	return out
 }
 
 // validRecordPath requires the path the placement table gives for the record's kind.

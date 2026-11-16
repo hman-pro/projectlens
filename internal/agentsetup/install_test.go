@@ -1504,6 +1504,50 @@ func TestInstall_TamperedManifestNeverDeletesOutside(t *testing.T) {
 			}
 		})
 	}
+
+	// CreatedPaths and CreatedDirs entries must be shaped like what install
+	// records: a placement path, or a proper ancestor of one. Otherwise an entry
+	// would hide a developer's path from git or delete their empty directories.
+	write(t, filepath.Join(root, "src", "keep.go"), "package src\n")
+	git(t, root, "add", "src")
+	git(t, root, "commit", "-q", "-m", "src")
+	for name, edit := range map[string]func(m *Manifest){
+		"created path src":     func(m *Manifest) { m.CreatedPaths = append(m.CreatedPaths, "src") },
+		"created dir emptydir": func(m *Manifest) { m.CreatedDirs = append(m.CreatedDirs, "emptydir/sub", "emptydir") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Join(root, "emptydir", "sub"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			m := loadManifest(t, tg)
+			edit(m)
+			b, err := json.MarshalIndent(m, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := readFile(t, tg.Abs(ManifestPath))
+			write(t, tg.Abs(ManifestPath), string(b))
+			t.Cleanup(func() { write(t, tg.Abs(ManifestPath), original) })
+
+			snap, excl := snapshot(t, root), excludeBytes(t, tg)
+			if _, err := Install(tg, assets, claudeOpts()); !errors.Is(err, ErrInvalidManifest) {
+				t.Fatalf("install: want ErrInvalidManifest, got %v", err)
+			}
+			if _, err := Uninstall(tg, uninstallOf(AgentClaude, AgentCodex)); !errors.Is(err, ErrInvalidManifest) {
+				t.Fatalf("uninstall: want ErrInvalidManifest, got %v", err)
+			}
+			if !reflect.DeepEqual(snapshot(t, root), snap) || excludeBytes(t, tg) != excl {
+				t.Fatal("work tree or exclude file changed")
+			}
+			write(t, filepath.Join(root, "src", "new.go"), "package src\n")
+			if p := porcelain(t, root); !strings.Contains(p, "src/new.go") {
+				t.Fatalf("src/new.go hidden from git status: %q", p)
+			}
+			if err := os.Remove(filepath.Join(root, "src", "new.go")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func TestInstall_InterruptedForcedOrphanRemoval(t *testing.T) {
