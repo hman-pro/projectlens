@@ -71,16 +71,34 @@ func LoadManifest(t Target) (*Manifest, error) {
 	return &m, nil
 }
 
-// existingPaths returns the sorted, de-duplicated entries of paths that exist on disk.
-func existingPaths(t Target, paths []string) []string {
+// existingPaths returns the sorted, de-duplicated entries of paths that exist on
+// disk or for which keep reports true.
+func existingPaths(t Target, paths []string, keep func(string) bool) []string {
 	out := []string{}
 	for _, p := range paths {
-		if t.Exists(p) {
+		if t.Exists(p) || keep(p) {
 			out = append(out, p)
 		}
 	}
 	sort.Strings(out)
 	return compactStrings(out)
+}
+
+// pendingWritePaths returns the paths of every record, of any agent, with a
+// journaled write.
+func (m *Manifest) pendingWritePaths() []string {
+	var out []string
+	for _, ar := range m.Agents {
+		if ar == nil {
+			continue
+		}
+		for _, r := range ar.Items {
+			if r.Pending != nil && r.Pending.Op == "write" {
+				out = append(out, r.Path)
+			}
+		}
+	}
+	return out
 }
 
 func compactStrings(sorted []string) []string {
@@ -93,9 +111,35 @@ func compactStrings(sorted []string) []string {
 	return out
 }
 
+// livePaths returns the CreatedPaths and CreatedDirs entries Save keeps: those
+// that exist, plus those a pending write may be about to create.
+func (m *Manifest) livePaths(t Target) (paths, dirs []string) {
+	pending := m.pendingWritePaths()
+	paths = existingPaths(t, m.CreatedPaths, func(p string) bool {
+		for _, w := range pending {
+			if w == p {
+				return true
+			}
+		}
+		return false
+	})
+	dirs = existingPaths(t, m.CreatedDirs, func(d string) bool {
+		for _, w := range pending {
+			if strings.HasPrefix(w, d+"/") {
+				return true
+			}
+		}
+		return false
+	})
+	return paths, dirs
+}
+
 // Save prunes CreatedPaths/CreatedDirs entries that no longer exist on disk, then
-// writes the manifest. When no agent and no CreatedPaths entry remain, it deletes
-// the manifest file and .projectlens/ if that is left empty.
+// writes the manifest. A pending write may be about to create a path, so while a
+// record (of any agent) has Pending{Op: "write"}, an absent CreatedPaths entry
+// equal to its Path, and an absent CreatedDirs entry that is an ancestor of its
+// Path, are kept. When no agent and no CreatedPaths entry remain, it deletes the
+// manifest file and .projectlens/ if that is left empty.
 func (m *Manifest) Save(t Target) error {
 	if err := CheckManifestWritable(t); err != nil {
 		return err
@@ -104,8 +148,7 @@ func (m *Manifest) Save(t Target) error {
 	if m.Agents == nil {
 		m.Agents = map[Agent]*AgentRecord{}
 	}
-	m.CreatedPaths = existingPaths(t, m.CreatedPaths)
-	m.CreatedDirs = existingPaths(t, m.CreatedDirs)
+	m.CreatedPaths, m.CreatedDirs = m.livePaths(t)
 
 	if len(m.Agents) == 0 && len(m.CreatedPaths) == 0 {
 		return removeManifest(t)

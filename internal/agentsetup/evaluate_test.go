@@ -15,46 +15,6 @@ const (
 	evalURLOther = "http://localhost:9999/mcp"
 )
 
-// evalFixture describes a tiny asset dir: skills alpha and beta, and a snippet
-// with two hooks, "start" (SessionStart) and "edit" (PreToolUse).
-type evalFixture struct {
-	alpha       string // content of skills/alpha/SKILL.md
-	startCmd    string // command of the "start" hook
-	editMatcher string // matcher of the "edit" hook's group
-}
-
-func defaultFixture() evalFixture {
-	return evalFixture{alpha: "alpha v1", startCmd: ": projectlens-hook=start; echo start", editMatcher: "Edit"}
-}
-
-func (f evalFixture) dir(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
-	write(t, filepath.Join(root, "skills", "alpha", "SKILL.md"), f.alpha)
-	write(t, filepath.Join(root, "skills", "beta", "SKILL.md"), "beta v1")
-	snippet := map[string]any{"hooks": map[string]any{
-		"SessionStart": []any{map[string]any{"matcher": "", "hooks": []any{
-			map[string]any{"type": "command", "command": f.startCmd}}}},
-		"PreToolUse": []any{map[string]any{"matcher": f.editMatcher, "hooks": []any{
-			map[string]any{"type": "command", "command": ": projectlens-hook=edit; echo edit"}}}},
-	}}
-	b, err := json.Marshal(snippet)
-	if err != nil {
-		t.Fatal(err)
-	}
-	write(t, filepath.Join(root, "claude", "settings-snippet.json"), string(b))
-	return root
-}
-
-func (f evalFixture) canon(t *testing.T, a Agent, url string) []Canon {
-	t.Helper()
-	cs, err := LoadCanonical(f.dir(t), a, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return cs
-}
-
 func findCanon(t *testing.T, cs []Canon, kind Kind, id string) Canon {
 	t.Helper()
 	for _, c := range cs {

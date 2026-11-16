@@ -149,6 +149,51 @@ func TestManifest_SavePrunesAndRetains(t *testing.T) {
 	if tg.Exists(ManifestPath) || tg.Exists(".projectlens") {
 		t.Fatal("manifest and .projectlens/ must be removed once nothing is left")
 	}
+
+	// A pending write may be about to create a path: its entry, and the entries
+	// of the parent directories it will create, survive while it is journaled.
+	pendingSkill := func(p *Pending) *Manifest {
+		return &Manifest{
+			Version: 1,
+			Agents: map[Agent]*AgentRecord{AgentCodex: {URL: evalURL, Items: []Record{
+				{Kind: KindSkill, ID: "alpha", Path: ".agents/skills/alpha", Pending: p},
+			}}},
+			CreatedPaths: []string{".agents/skills/alpha", ".gone"},
+			CreatedDirs:  []string{".agents", ".agents/skills", ".other"},
+		}
+	}
+	m = pendingSkill(&Pending{Op: "write", Hash: "h"})
+	if err := m.Save(tg); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadManifest(tg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.CreatedPaths, []string{".agents/skills/alpha"}) ||
+		!reflect.DeepEqual(got.CreatedDirs, []string{".agents", ".agents/skills"}) {
+		t.Fatalf("pending write: CreatedPaths = %v, CreatedDirs = %v", got.CreatedPaths, got.CreatedDirs)
+	}
+
+	// Once the journal is cleared, or the record dropped, absent entries are pruned.
+	for name, m := range map[string]*Manifest{
+		"pending cleared": pendingSkill(nil),
+		"pending remove":  pendingSkill(&Pending{Op: "remove"}),
+		"record dropped": func() *Manifest {
+			m := pendingSkill(nil)
+			m.Agents[AgentCodex].Items = nil
+			m.Agents[AgentClaude] = &AgentRecord{URL: evalURL, Items: []Record{{Kind: KindMCP, ID: "projectlens", Path: ".mcp.json", Hash: "h"}}}
+			delete(m.Agents, AgentCodex)
+			return m
+		}(),
+	} {
+		if err := m.Save(tg); err != nil {
+			t.Fatal(err)
+		}
+		if len(m.CreatedPaths) != 0 || len(m.CreatedDirs) != 0 {
+			t.Errorf("%s: CreatedPaths = %v, CreatedDirs = %v", name, m.CreatedPaths, m.CreatedDirs)
+		}
+	}
 }
 
 func TestManifest_SaveRefusesUnwritableManifest(t *testing.T) {
