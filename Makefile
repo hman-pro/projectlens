@@ -38,7 +38,7 @@ build: build-lens build-lens-mcp build-lens-tui ## Build all binaries into ./bin
 
 build-lens: ## Build the CLI (./bin/lens)
 	@mkdir -p $(BIN_DIR)
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(CLI) ./cmd/lens/
+	go build $(GOFLAGS) -ldflags '-X main.bakedCheckout=$(CURDIR) $(LDFLAGS)' -o $(CLI) ./cmd/lens/
 
 build-lens-mcp: ## Build the MCP server (./bin/lens-mcp)
 	@mkdir -p $(BIN_DIR)
@@ -49,7 +49,7 @@ build-lens-tui: ## Build the TUI (./bin/lens-tui)
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(TUI) ./cmd/lens-tui/
 
 install: ## go install all commands into $$GOBIN
-	go install $(GOFLAGS) -ldflags '$(LDFLAGS)' ./cmd/...
+	go install $(GOFLAGS) -ldflags '-X main.bakedCheckout=$(CURDIR) $(LDFLAGS)' ./cmd/...
 
 clean: ## Remove ./bin and Go test caches
 	rm -rf $(BIN_DIR)

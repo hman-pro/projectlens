@@ -1,0 +1,319 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/hman-pro/projectlens/internal/agentsetup"
+	"github.com/spf13/cobra"
+)
+
+// agentRepoRoot returns the projectlens checkout (the directory with go.mod).
+func agentRepoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found")
+		}
+		dir = parent
+	}
+}
+
+// agentFixture points bakedCheckout at the checkout, then moves into a fresh
+// git repository. It returns the repo root.
+func agentFixture(t *testing.T) string {
+	t.Helper()
+	checkout := agentRepoRoot(t)
+	old := bakedCheckout
+	bakedCheckout = checkout
+	t.Cleanup(func() { bakedCheckout = old })
+
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.name", "Test"},
+		{"config", "user.email", "t@example.com"},
+		{"config", "core.excludesFile", os.DevNull},
+		{"commit", "-q", "--allow-empty", "-m", "init"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	t.Chdir(repo)
+	resolved, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
+// runAgent runs `lens agent <args>` under a root carrying the real
+// persistent flags and returns stdout, stderr, and the error.
+func runAgent(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
+	root := &cobra.Command{Use: "lens"}
+	root.PersistentFlags().String("config", "configs/index.yaml", "")
+	root.PersistentFlags().String("db", "", "")
+	root.PersistentFlags().String("repo", "", "")
+	root.PersistentFlags().String("project", "", "")
+	root.PersistentFlags().String("projects", "configs/projects.yaml", "")
+	root.AddCommand(newAgentCmd())
+	var out, errb bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs(append([]string{"agent"}, args...))
+	err := root.Execute()
+	return out.String(), errb.String(), err
+}
+
+func exitCode(t *testing.T, err error) int {
+	t.Helper()
+	var ee *exitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("want *exitError, got %v", err)
+	}
+	return ee.code
+}
+
+func TestAgentCmd_UnsupportedAgentExits2(t *testing.T) {
+	agentFixture(t)
+	_, _, err := runAgent(t, "install", "cursor")
+	if exitCode(t, err) != 2 || !strings.Contains(err.Error(), "supported: claude, codex") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAgentCmd_InstallMissingArgExits2(t *testing.T) {
+	agentFixture(t)
+	_, _, err := runAgent(t, "install")
+	if exitCode(t, err) != 2 {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAgentCmd_InstallThenStatusExits0(t *testing.T) {
+	root := agentFixture(t)
+	out, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp")
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"Target: " + root + "   URL: http://localhost:1/mcp",
+		"  written   .mcp.json                          (mcpServers.projectlens)",
+		"  written   .claude/skills/use-projectlens/",
+		"  written   .claude/settings.local.json        (4 hooks)",
+		"  written   .git/info/exclude",
+		"Next: restart Claude Code in this repo and approve the \"projectlens\" server.",
+		"      Then run: lens agent doctor claude",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("install output missing %q:\n%s", want, out)
+		}
+	}
+	out, _, err = runAgent(t, "status")
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "current") || strings.Contains(out, "stale") {
+		t.Fatalf("status output:\n%s", out)
+	}
+}
+
+func TestAgentCmd_StatusNothingInstalledExits1(t *testing.T) {
+	agentFixture(t)
+	out, _, err := runAgent(t, "status")
+	if exitCode(t, err) != 1 {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.Contains(out, "nothing installed") || !strings.Contains(out, "lens agent install") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+func TestAgentCmd_StatusStaleExits1(t *testing.T) {
+	agentFixture(t)
+	assets := filepath.Join(t.TempDir(), "agent")
+	if err := agentsetup.CopyDir(filepath.Join(bakedCheckout, "agent"), assets); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp", "--assets", assets); err != nil {
+		t.Fatal(err)
+	}
+	skill := filepath.Join(assets, "skills", "use-projectlens", "SKILL.md")
+	f, err := os.OpenFile(skill, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("\nnewer\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	out, _, err := runAgent(t, "status", "--assets", assets)
+	if exitCode(t, err) != 1 || !strings.Contains(out, "stale") {
+		t.Fatalf("err=%v out:\n%s", err, out)
+	}
+}
+
+func TestAgentCmd_StatusListsUnmanagedCreatedPaths(t *testing.T) {
+	root := agentFixture(t)
+	if _, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	mp := filepath.Join(root, agentsetup.ManifestPath)
+	data, err := os.ReadFile(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["created_paths"] = append(m["created_paths"].([]any), ".claude/skills/leftover")
+	data, _ = json.Marshal(m)
+	if err := os.WriteFile(mp, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := runAgent(t, "status")
+	for _, want := range []string{
+		"Excluded from git but not managed (left by an earlier install):",
+		".claude/skills/leftover",
+		"Re-own with: lens agent install <agent>, or delete the path.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAgentCmd_StatusJSON(t *testing.T) {
+	agentFixture(t)
+	if _, _, err := runAgent(t, "install", "claude", "--url", "http://localhost:1/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runAgent(t, "status", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		t.Fatalf("stdout is not a JSON array: %v\n%s", err, out)
+	}
+	if len(items) == 0 {
+		t.Fatal("no items")
+	}
+	for _, it := range items {
+		if _, ok := it["State"]; !ok {
+			t.Fatalf("element without State: %v", it)
+		}
+	}
+}
+
+func TestAgentCmd_DryRunOutput(t *testing.T) {
+	root := agentFixture(t)
+	out, _, err := runAgent(t, "install", "claude", "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "Dry run. Nothing was written.") {
+		t.Fatalf("output:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf(".mcp.json exists after dry run: %v", err)
+	}
+}
+
+func TestAgentCmd_UninstallAll(t *testing.T) {
+	agentFixture(t)
+	for _, a := range []string{"claude", "codex"} {
+		if _, _, err := runAgent(t, "install", a, "--url", "http://localhost:1/mcp"); err != nil {
+			t.Fatalf("install %s: %v", a, err)
+		}
+	}
+	if out, _, err := runAgent(t, "uninstall", "all"); err != nil {
+		t.Fatalf("uninstall: %v\n%s", err, out)
+	}
+	out, _, err := runAgent(t, "status")
+	if exitCode(t, err) != 1 || !strings.Contains(out, "nothing installed") {
+		t.Fatalf("err=%v out:\n%s", err, out)
+	}
+}
+
+func TestAgentCmd_UninstallNothingExits0(t *testing.T) {
+	agentFixture(t)
+	out, _, err := runAgent(t, "uninstall", "all")
+	if err != nil || !strings.Contains(out, "nothing installed") {
+		t.Fatalf("err=%v out:\n%s", err, out)
+	}
+}
+
+func TestAgentCmd_InstallCodexPrintsSnippet(t *testing.T) {
+	agentFixture(t)
+	out, _, err := runAgent(t, "install", "codex", "--url", "http://localhost:1/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Next: open Codex in this repo, trust the project, then run: lens agent doctor codex",
+		"Codex has no hooks. For always-on guidance, paste this into AGENTS.md:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	snippet, err := os.ReadFile(filepath.Join(bakedCheckout, "agent", "codex", "AGENTS.md.snippet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(out, strings.TrimRight(string(snippet), "\n")+"\n") {
+		t.Errorf("output does not end with the snippet:\n%s", out)
+	}
+}
+
+func TestAgentCmd_DoesNotNeedIndexConfig(t *testing.T) {
+	agentFixture(t)
+	if _, err := os.Stat("configs"); !os.IsNotExist(err) {
+		t.Fatal("fixture repo has configs/")
+	}
+	out, _, err := runAgent(t, "--config", "/nonexistent/index.yaml", "install", "claude", "--url", "http://localhost:1/mcp")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+func TestAgentCmd_DoctorNothingInstalledExits1(t *testing.T) {
+	agentFixture(t)
+	out, _, err := runAgent(t, "doctor")
+	if exitCode(t, err) != 1 || !strings.Contains(out, "nothing installed") {
+		t.Fatalf("err=%v out:\n%s", err, out)
+	}
+}
+
+func TestAgentCmd_DoctorJSONFailsWhenServerDown(t *testing.T) {
+	agentFixture(t)
+	if _, _, err := runAgent(t, "install", "claude", "--url", "http://127.0.0.1:1/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runAgent(t, "doctor", "claude", "--json")
+	if exitCode(t, err) != 1 {
+		t.Fatalf("err=%v out:\n%s", err, out)
+	}
+	var checks []map[string]any
+	if err := json.Unmarshal([]byte(out), &checks); err != nil || len(checks) == 0 {
+		t.Fatalf("stdout is not a JSON array of checks: %v\n%s", err, out)
+	}
+}

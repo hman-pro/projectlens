@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,6 +60,7 @@ func main() {
 		newUnlockCmd(),
 		newMigrateCmd(),
 		newProjectsCmd(),
+		newAgentCmd(),
 	)
 
 	if os.Getenv("PROJECTLENS_DEBUG_HOLD_LOCK") == "1" {
@@ -66,8 +68,15 @@ func main() {
 	}
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		if msg := err.Error(); msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+		}
+		code := 1
+		var ee *exitError
+		if errors.As(err, &ee) {
+			code = ee.code
+		}
+		os.Exit(code)
 	}
 }
 
