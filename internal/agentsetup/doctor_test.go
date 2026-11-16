@@ -90,7 +90,7 @@ func TestDoctor_Healthy(t *testing.T) {
 	url := newMCPServer(t, "a", "b")
 	e := doctorSetup(t, AgentClaude, url)
 	cs := e.run(t, []Agent{AgentClaude}, DoctorOpts{}, DoctorDeps{ExpectedTools: []string{"a", "b"}})
-	wantOrder := []string{"assets-found", "items-current", "server-reachable", "tools-match", "installed-url-matches", "not-shadowed", "agent-will-load", "lens-on-path"}
+	wantOrder := []string{"assets-found", "items-current", "server-reachable", "tools-match", "installed-url-matches", "not-shadowed", "no-duplicate-hooks", "agent-will-load", "lens-on-path"}
 	if len(cs) != len(wantOrder) {
 		t.Fatalf("got %d checks, want %d: %+v", len(cs), len(wantOrder), cs)
 	}
@@ -322,5 +322,57 @@ func TestDoctor_EveryFailureHasNext(t *testing.T) {
 	}
 	if !sawFail {
 		t.Fatal("no failing fixtures")
+	}
+}
+
+// Hooks left in .claude/settings.json by the old manual instructions fire twice
+// beside the installed ones: doctor names them and never edits the file.
+func TestDoctor_NoDuplicateHooks(t *testing.T) {
+	noNetwork := DoctorDeps{HTTPGet: stubGet(200), ListTools: func(context.Context, string) ([]string, error) { return nil, nil }}
+	e := doctorSetup(t, AgentClaude, "http://localhost:8080/mcp")
+	settings := e.tg.Abs(".claude/settings.json")
+	run := func(t *testing.T) Check {
+		t.Helper()
+		cs := e.run(t, []Agent{AgentClaude}, DoctorOpts{}, noNetwork)
+		return checkNamed(t, cs, "no-duplicate-hooks", AgentClaude)
+	}
+
+	if c := run(t); c.Result != CheckPass {
+		t.Fatalf("no settings.json: %+v", c)
+	}
+	for name, content := range map[string]string{
+		"not JSON":        "{",
+		"no hooks":        `{"permissions":{"allow":[]}}`,
+		"other hooks":     `{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"echo mine"}]}]}}`,
+		"hooks not a map": `{"hooks":[1]}`,
+	} {
+		write(t, settings, content)
+		if c := run(t); c.Result != CheckPass {
+			t.Errorf("%s: %+v", name, c)
+		}
+	}
+
+	// The old unprefixed text and a prefixed copy both match.
+	old := `{"permissions":{},"hooks":{
+		"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"echo start"}]}],
+		"PreToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"echo mine"},{"type":"command","command":": projectlens-hook=edit; echo edit"}]}]}}`
+	write(t, settings, old)
+	c := run(t)
+	if c.Result != CheckFail || !strings.Contains(c.Detail, "SessionStart start") || !strings.Contains(c.Detail, "PreToolUse edit") ||
+		strings.Contains(c.Detail, "mine") ||
+		c.Next != "delete the ProjectLens hook entries from .claude/settings.json (they are installed in .claude/settings.local.json)" {
+		t.Fatalf("old hooks: %+v", c)
+	}
+	if got := readFile(t, settings); got != old {
+		t.Fatalf("settings.json changed: %q", got)
+	}
+
+	cs := e.run(t, []Agent{AgentClaude}, DoctorOpts{AssetsErr: errors.New("x")}, noNetwork)
+	if c := checkNamed(t, cs, "no-duplicate-hooks", AgentClaude); c.Result != CheckSkipped {
+		t.Fatalf("assets missing: %+v", c)
+	}
+	codex := doctorSetup(t, AgentCodex, "http://localhost:8080/mcp")
+	if cs := codex.run(t, []Agent{AgentCodex}, DoctorOpts{}, noNetwork); hasCheck(cs, "no-duplicate-hooks") {
+		t.Fatal("no-duplicate-hooks is Claude only")
 	}
 }

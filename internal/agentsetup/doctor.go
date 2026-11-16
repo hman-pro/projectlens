@@ -39,12 +39,15 @@ const (
 	checkToolsMatch       = "tools-match"
 	checkInstalledURL     = "installed-url-matches"
 	checkNotShadowed      = "not-shadowed"
+	checkNoDuplicateHooks = "no-duplicate-hooks"
 	checkAgentWillLoad    = "agent-will-load"
 	checkLensOnPath       = "lens-on-path"
 	nextAssets            = "pass --assets <path-to-projectlens>/agent"
 	nextStartServer       = "start the server: make mcp (or make docker-up)"
 	nextToolsMismatch     = "rebuild and restart the server, or check the URL points at ProjectLens"
 	defaultMCPPath        = "/mcp"
+	nextDuplicateHooks    = "delete the ProjectLens hook entries from " + claudeSharedSettings + " (they are installed in .claude/settings.local.json)"
+	claudeSharedSettings  = ".claude/settings.json"
 	codexTrustedLevel     = "trusted"
 	codexProjectsTableKey = "projects"
 )
@@ -179,6 +182,11 @@ func Doctor(ctx context.Context, env Env, t Target, m *Manifest, o DoctorOpts, d
 		}
 		for _, a := range o.Agents {
 			out = append(out, notShadowed(env, a, recorded(a)))
+		}
+		for _, a := range o.Agents {
+			if a == AgentClaude {
+				out = append(out, noDuplicateHooks(t, o))
+			}
 		}
 		for _, a := range o.Agents {
 			out = append(out, agentWillLoad(env, t, a))
@@ -408,6 +416,70 @@ func notShadowed(env Env, a Agent, want string) Check {
 	}
 	c.Result = CheckPass
 	return c
+}
+
+// noDuplicateHooks reports ProjectLens hooks in .claude/settings.json, as the old
+// manual instructions placed them: beside the installed ones in
+// settings.local.json they would fire twice. A command matches a canonical one
+// once the ID marker is stripped from both, so the old unprefixed text and a
+// prefixed copy both count. It only reads; a missing or unparseable file passes.
+func noDuplicateHooks(t Target, o DoctorOpts) Check {
+	c := Check{Name: checkNoDuplicateHooks, Agent: AgentClaude}
+	if o.AssetsErr != nil || o.AssetsDir == "" {
+		c.Result, c.Detail = CheckSkipped, "assets not found"
+		return c
+	}
+	hooks, err := loadClaudeHooks(filepath.Join(o.AssetsDir, "claude", "settings-snippet.json"))
+	if err != nil {
+		c.Result, c.Detail = CheckSkipped, err.Error()
+		return c
+	}
+	canon := make(map[string]string, len(hooks))
+	for _, h := range hooks {
+		canon[stripHookID(h.Command)] = h.ID
+	}
+	file := t.Abs(claudeSharedSettings)
+	_, events, _, err := loadHooksDoc(file)
+	if err != nil {
+		c.Result, c.Detail = CheckPass, claudeSharedSettings+" not readable as settings; not checked"
+		return c
+	}
+	names := make([]string, 0, len(events))
+	for ev := range events {
+		names = append(names, ev)
+	}
+	sort.Strings(names)
+	var found []string
+	for _, ev := range names {
+		for _, g := range events[ev] {
+			entries, err := groupEntries(file, g)
+			if err != nil {
+				continue
+			}
+			for _, raw := range entries {
+				_, v := entryID(raw)
+				if id, ok := canon[stripHookID(v.Command)]; ok && v.Command != "" {
+					found = append(found, ev+" "+id)
+				}
+			}
+		}
+	}
+	if len(found) == 0 {
+		c.Result = CheckPass
+		return c
+	}
+	c.Result = CheckFail
+	c.Detail = claudeSharedSettings + " also has ProjectLens hooks (they would fire twice): " + strings.Join(found, ", ")
+	c.Next = nextDuplicateHooks
+	return c
+}
+
+// stripHookID removes a leading ": projectlens-hook=<id>; " marker.
+func stripHookID(command string) string {
+	if loc := hookIDRe.FindStringIndex(command); loc != nil {
+		return command[loc[1]:]
+	}
+	return command
 }
 
 func agentWillLoad(env Env, t Target, a Agent) Check {

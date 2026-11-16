@@ -285,7 +285,10 @@ lens agent doctor [claude|codex]   # add --json, or --url to check another URL
 `doctor` checks, in order: the canonical assets are found, the installed
 items are current, the server answers at the configured URL, the server's
 tool list matches, the installed URL matches the expected one, no
-user-level config shadows the project entry, the agent will load the entry
+user-level config shadows the project entry, no ProjectLens hook is also
+in `.claude/settings.json` (Claude Code only: the old manual setup put them
+there, and they would fire twice; doctor names them and you delete them),
+the agent will load the entry
 (Claude Code approval, Codex trust), and `lens` is on your `PATH`. A
 failure prints one next action. A check that cannot be read reliably (the
 approval and trust steps) prints a manual instruction.
