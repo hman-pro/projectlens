@@ -1783,6 +1783,31 @@ func TestInstall_OrphanBlockedAndManual(t *testing.T) {
 		}
 	})
 
+	// A tracked orphan whose entry is already gone (here an unstaged deletion):
+	// the record is dropped and nothing is written.
+	t.Run("tracked and absent", func(t *testing.T) {
+		root := newRepo(t)
+		tg := mustTarget(t, root)
+		runInstall(t, tg, defaultFixture().dir(t), claudeOpts())
+		git(t, root, "add", "-f", "--", ".claude/skills/beta/SKILL.md")
+		git(t, root, "commit", "-q", "-m", "tracked")
+		if err := os.RemoveAll(tg.Abs(".claude/skills/beta")); err != nil {
+			t.Fatal(err)
+		}
+		before := porcelain(t, root)
+		res := runInstall(t, tg, noBeta.dir(t), claudeOpts())
+		r := resultFor(t, res, KindSkill, "beta")
+		if r.Action != ActionRemoved || !r.Tracked || r.Snippet != "" {
+			t.Fatalf("beta %+v", r)
+		}
+		if _, ok := loadManifest(t, tg).Record(AgentClaude, KindSkill, "beta"); ok {
+			t.Fatal("record kept")
+		}
+		if tg.Exists(".claude/skills/beta") || porcelain(t, root) != before {
+			t.Fatalf("something written: %q", porcelain(t, root))
+		}
+	})
+
 	t.Run("manual", func(t *testing.T) {
 		for _, force := range []bool{false, true} {
 			root := newRepo(t)
@@ -1805,4 +1830,41 @@ func TestInstall_OrphanBlockedAndManual(t *testing.T) {
 			}
 		}
 	})
+}
+
+// After manifest loss, a lens sibling left by a crash beside another agent's
+// skill is still in the block: it is cleaned before any save drops its pattern.
+func TestInstall_ManifestLossSiblingLeftoverCleaned(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	assets := defaultFixture().dir(t)
+	o := claudeOpts()
+	o.failAt = 3 // claude alpha's odd step: its siblings are listed in the block
+	if _, err := Install(tg, assets, o); err == nil {
+		t.Fatal("no error")
+	}
+	leftovers := []string{".claude/skills/.alpha.lens-tmp", ".claude/skills/.alpha.lens-old"}
+	for _, l := range leftovers {
+		write(t, tg.Abs(l+"/partial"), "partial")
+	}
+	deleteManifest(t, tg)
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("setup porcelain %q", p)
+	}
+
+	co := codexOpts()
+	co.onSave = func(stage string) {
+		if p := porcelain(t, root); p != "" {
+			t.Errorf("%s: porcelain %q", stage, p)
+		}
+	}
+	runInstall(t, tg, assets, co)
+	for _, l := range leftovers {
+		if tg.Exists(l) {
+			t.Errorf("%s kept", l)
+		}
+	}
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("porcelain %q", p)
+	}
 }

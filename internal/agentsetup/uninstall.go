@@ -11,6 +11,8 @@ type UninstallOpts struct {
 	// failAt interrupts the run for tests (0 = never), with the same two steps
 	// per journaled removal as InstallOpts.failAt.
 	failAt int
+	// onSave, when set, is called inside every journal save (tests only).
+	onSave func(stage string)
 }
 
 // UninstallResult reports an uninstall run.
@@ -73,7 +75,7 @@ func Uninstall(t Target, o UninstallOpts) (UninstallResult, error) {
 
 	j := &journal{
 		t: t, m: m, name: "uninstall", failAt: o.failAt,
-		skills: skillPaths(nil, m), own: own, dirsBeforeDelete: true,
+		skills: skillPaths(nil, m), own: own, dirsBeforeDelete: true, onSave: o.onSave,
 	}
 	if err := j.cleanSiblings(); err != nil {
 		return UninstallResult{}, err
@@ -108,9 +110,12 @@ func planRemoval(t Target, a Agent, rec Record, own map[string]bool, force bool)
 	}
 
 	// A symlink anywhere in the path, the path itself included: never removed through.
+	fail := func(err error) (uninstallOp, error) {
+		return uninstallOp{}, fmt.Errorf("uninstall %s %s: %w", it.Kind, it.ID, err)
+	}
 	detail, snippet, err := symlinkBlock(t, it.Path)
 	if err != nil {
-		return uninstallOp{}, err
+		return fail(err)
 	}
 	if detail != "" {
 		op.State, op.Detail, op.Action, op.Snippet = StateBlocked, detail, ActionBlocked, snippet
@@ -119,26 +124,19 @@ func planRemoval(t Target, a Agent, rec Record, own map[string]bool, force bool)
 
 	disk, err := installedHash(t, it)
 	if err != nil {
-		return uninstallOp{}, err
+		return fail(err)
 	}
 	if op.Tracked, err = t.IsTracked(it.Path); err != nil {
-		return uninstallOp{}, err
+		return fail(err)
 	}
 
-	// A write that finished before its journal was cleared counts as recorded;
-	// a journaled removal recorded the content it decided to remove.
-	recorded := rec.Hash
-	if rec.Pending != nil && rec.Pending.Op == "write" && disk.hash == rec.Pending.Hash {
-		recorded = rec.Pending.Hash
-	}
-	pendingRemove := rec.Pending != nil && rec.Pending.Op == "remove" && disk.hash == rec.Hash
 	switch {
 	case !disk.present || disk.foreign: // a foreign Codex definition means the managed block is gone
 		op.State = StateMissing
 		if disk.foreign {
 			op.Detail = detailForeign
 		}
-	case (disk.hash == recorded && !disk.dup) || pendingRemove:
+	case matchesRecord(rec, disk):
 		op.State = StateCurrent
 	default:
 		op.State, op.Detail = StateModified, disk.detail
@@ -155,13 +153,8 @@ func planRemoval(t Target, a Agent, rec Record, own map[string]bool, force bool)
 		op.Action, op.Snippet = ActionManual, removeByHandSnippet(it)
 	case op.State == StateModified && !force:
 		op.Action = ActionSkipped
+	case blockForeignSibling(t, own, it, &op.ItemResult):
 	default:
-		if it.Kind == KindSkill {
-			if sib := foreignSibling(t, own, it.Path); sib != "" {
-				op.Detail, op.Action, op.Snippet = foreignSiblingDetail(sib), ActionBlocked, foreignSiblingSnippet(sib, it.Path)
-				return op, nil
-			}
-		}
 		op.Action, op.kind, op.disk = ActionRemoved, opRemove, disk
 	}
 	return op, nil

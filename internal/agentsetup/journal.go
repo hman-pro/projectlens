@@ -25,6 +25,10 @@ type journal struct {
 	// dirsBeforeDelete removes the empty CreatedDirs entries before a save that
 	// deletes the manifest, so a crash cannot leave them with nothing recording them.
 	dirsBeforeDelete bool
+
+	// onSave is a test seam called inside save: after the widening block write
+	// ("block widened") and after the manifest is written or deleted ("manifest saved").
+	onSave func(stage string)
 }
 
 // step counts one journal step and fails the run when it reaches failAt.
@@ -34,6 +38,12 @@ func (j *journal) step() error {
 		return fmt.Errorf("%s interrupted at step %d", j.name, j.steps)
 	}
 	return nil
+}
+
+func (j *journal) hook(stage string) {
+	if j.onSave != nil {
+		j.onSave(stage)
+	}
 }
 
 // putRecord replaces the record of the same item, or appends it.
@@ -66,9 +76,10 @@ func (j *journal) dropRecord(a Agent, kind Kind, id string) {
 	ar.Items = kept
 }
 
-// save writes the exclude block (with extra, for a skill sibling in use), the
-// manifest, then the block again from what Save kept. The block is written
-// first so the manifest and any new path are never visible to git. An agent
+// save widens the exclude block (with extra, for a skill sibling in use),
+// writes or deletes the manifest, then sets the block from what Save kept. The
+// block is widened first so the manifest and any new path are never visible to
+// git, and narrowed last so nothing still on disk becomes visible. An agent
 // with no records left is deleted from the manifest.
 func (j *journal) save(extra []string) error {
 	for a, ar := range j.m.Agents {
@@ -83,12 +94,23 @@ func (j *journal) save(extra []string) error {
 			return err
 		}
 	}
-	if err := j.t.SetExcludeBlock(excludePatterns(j.t, live, j.skills, willExist, extra)); err != nil {
+	// The first write only widens the block: it keeps every pattern already
+	// there and adds what is about to exist. Only the write after Save narrows
+	// it, once the manifest and every dropped path are really gone.
+	cur, err := j.t.ExcludeBlock()
+	if err != nil {
 		return fmt.Errorf("update exclude block: %w", err)
 	}
+	pre := append(excludePatterns(j.t, live, j.skills, willExist || j.t.Exists(ManifestPath), extra), cur...)
+	sort.Strings(pre)
+	if err := j.t.SetExcludeBlock(compactStrings(pre)); err != nil {
+		return fmt.Errorf("update exclude block: %w", err)
+	}
+	j.hook("block widened")
 	if err := j.m.Save(j.t); err != nil {
 		return fmt.Errorf("save manifest: %w", err)
 	}
+	j.hook("manifest saved")
 	if !j.t.Exists(ManifestPath) {
 		extra = nil
 	}
@@ -207,7 +229,7 @@ func (j *journal) removeSkillSibling(rel string, strict bool) error {
 	}
 	tracked, err := j.t.IsTracked(rel)
 	if err != nil {
-		return err
+		return fmt.Errorf("remove %s: %w", rel, err)
 	}
 	if tracked {
 		return refuse(errors.New("path is tracked by git"))
@@ -231,16 +253,17 @@ func (j *journal) removeSkillSiblings(skill string, strict bool) error {
 	return nil
 }
 
-// cleanSiblings removes the leftovers of a crash beside every known skill: once
-// the block is rewritten they would no longer be excluded.
+// cleanSiblings removes the leftovers of a crash: every sibling listed in the
+// block when the run started, beside any agent's skill, recorded or not (after
+// manifest loss). Once the block is rewritten they would no longer be excluded.
 func (j *journal) cleanSiblings() error {
-	skills := make([]string, 0, len(j.skills))
-	for p := range j.skills {
-		skills = append(skills, p)
+	sibs := make([]string, 0, len(j.own))
+	for p := range j.own {
+		sibs = append(sibs, p)
 	}
-	sort.Strings(skills)
-	for _, p := range skills {
-		if err := j.removeSkillSiblings(p, false); err != nil {
+	sort.Strings(sibs)
+	for _, p := range sibs {
+		if err := j.removeSkillSibling(p, false); err != nil {
 			return err
 		}
 	}
@@ -259,15 +282,30 @@ func (j *journal) removeEmptyDirs() error {
 		}
 		return dirs[a] < dirs[b]
 	})
+	// contained reports false for a path reached through a symlink; any other
+	// failure is an error.
+	contained := func(d string) (bool, error) {
+		err := j.t.CheckContained(d)
+		if errors.Is(err, ErrEscapesTarget) {
+			return false, nil
+		}
+		return err == nil, err
+	}
 	for _, d := range dirs {
-		if err := j.t.CheckContained(d); err != nil {
-			if errors.Is(err, ErrEscapesTarget) {
-				continue
+		if ok, err := contained(d); !ok {
+			if err != nil {
+				return fmt.Errorf("remove %s: %w", d, err)
 			}
-			return err
+			continue
 		}
 		fi, err := os.Lstat(j.t.Abs(d))
-		if err != nil || !fi.IsDir() {
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", d, err)
+		}
+		if !fi.IsDir() {
 			continue
 		}
 		entries, err := os.ReadDir(j.t.Abs(d))
@@ -277,7 +315,10 @@ func (j *journal) removeEmptyDirs() error {
 		if len(entries) > 0 {
 			continue
 		}
-		if err := j.t.CheckContained(d); err != nil {
+		if ok, err := contained(d); !ok {
+			if err != nil {
+				return fmt.Errorf("remove %s: %w", d, err)
+			}
 			continue
 		}
 		if err := os.Remove(j.t.Abs(d)); err != nil && !os.IsNotExist(err) {
@@ -363,8 +404,30 @@ func foreignSibling(t Target, own map[string]bool, skill string) string {
 	return ""
 }
 
-func foreignSiblingDetail(sib string) string { return "foreign sibling " + sib }
+// blockForeignSibling marks r blocked, and reports true, when it is a skill
+// whose temp or aside name is taken by something lens did not create.
+func blockForeignSibling(t Target, own map[string]bool, it Item, r *ItemResult) bool {
+	if it.Kind != KindSkill {
+		return false
+	}
+	sib := foreignSibling(t, own, it.Path)
+	if sib == "" {
+		return false
+	}
+	r.Action, r.Detail = ActionBlocked, "foreign sibling "+sib
+	r.Snippet = "move " + sib + " away; lens uses that name to replace or remove " + it.Path + ", then re-run"
+	return true
+}
 
-func foreignSiblingSnippet(sib, skill string) string {
-	return "move " + sib + " away; lens uses that name to replace or remove " + skill + ", then re-run"
+// matchesRecord reports whether disk holds what rec says lens last left there,
+// so an interrupted run is never taken for a local edit: the recorded hash, the
+// hash of a journaled write that finished, or, for a journaled removal (forced
+// or not), the content it decided to remove.
+func matchesRecord(rec Record, disk installed) bool {
+	recorded := rec.Hash
+	if rec.Pending != nil && rec.Pending.Op == "write" && disk.hash == rec.Pending.Hash {
+		recorded = rec.Pending.Hash
+	}
+	pendingRemove := rec.Pending != nil && rec.Pending.Op == "remove" && disk.hash == rec.Hash
+	return (disk.hash == recorded && !disk.dup) || pendingRemove
 }

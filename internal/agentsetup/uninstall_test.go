@@ -855,3 +855,29 @@ func TestSkillSibling_DevelopersOwnDirSurvives(t *testing.T) {
 		}
 	})
 }
+
+// The save sequence never exposes a path to git: the block is only widened
+// before the manifest is written or deleted, and narrowed only after.
+func TestJournal_SaveNeverExposesPaths(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	stages := 0
+	hook := func(stage string) {
+		stages++
+		if p := porcelain(t, root); p != "" {
+			t.Errorf("%s: porcelain %q", stage, p)
+		}
+	}
+	assets := defaultFixture().dir(t)
+	for _, o := range []InstallOpts{claudeOpts(), codexOpts()} {
+		o.onSave = hook
+		runInstall(t, tg, assets, o)
+	}
+	o := uninstallOf(AgentClaude, AgentCodex)
+	o.onSave = hook
+	runUninstall(t, tg, o)
+	if stages == 0 {
+		t.Fatal("hook never called")
+	}
+	wantGone(t, tg, ".projectlens")
+}

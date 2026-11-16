@@ -48,6 +48,8 @@ type InstallOpts struct {
 	// has two steps, counted across the run: 2k-1 is "journal saved, item not
 	// yet changed", 2k is "item changed, final save not yet done".
 	failAt int
+	// onSave, when set, is called inside every journal save (tests only).
+	onSave func(stage string)
 }
 
 // ItemResult is one item's state before install and what install did with it.
@@ -118,7 +120,7 @@ func Install(t Target, assetsDir string, o InstallOpts) (InstallResult, error) {
 		res.ExcludePaths = projectExclude(t, o.Agent, m, ops, skills)
 	} else {
 		r := &installer{
-			journal: &journal{t: t, m: m, name: "install", failAt: o.failAt, skills: skills, own: own},
+			journal: &journal{t: t, m: m, name: "install", failAt: o.failAt, skills: skills, own: own, onSave: o.onSave},
 			agent:   o.Agent, url: o.URL, force: o.Force,
 		}
 		if err := r.run(ops); err != nil {
@@ -191,11 +193,8 @@ func planCanonical(t Target, o InstallOpts, c Canon, st ItemStatus, m *Manifest,
 		return op, nil
 	}
 	write := func(a Action) (installOp, error) {
-		if c.Kind == KindSkill {
-			if sib := foreignSibling(t, own, c.Path); sib != "" {
-				op.Detail, op.Snippet = foreignSiblingDetail(sib), foreignSiblingSnippet(sib, c.Path)
-				return set(ActionBlocked, opNone)
-			}
+		if blockForeignSibling(t, own, c.Item, &op.ItemResult) {
+			return op, nil
 		}
 		disk, err := installedHash(t, c.Item)
 		if err != nil {
@@ -257,54 +256,43 @@ func planCanonical(t Target, o InstallOpts, c Canon, st ItemStatus, m *Manifest,
 // planOrphan decides what to do with a record whose item is no longer canonical.
 func planOrphan(t Target, o InstallOpts, st ItemStatus, m *Manifest, own map[string]bool) (installOp, error) {
 	op := installOp{ItemResult: ItemResult{ItemStatus: st}}
-	if err := checkLocal(st.Path); err != nil { // LoadManifest already refuses these
+	fail := func(err error) (installOp, error) {
 		return installOp{}, fmt.Errorf("orphan %s %s: %w", st.Kind, st.ID, err)
+	}
+	if err := checkLocal(st.Path); err != nil { // LoadManifest already refuses these
+		return fail(err)
 	}
 	detail, snippet, err := symlinkBlock(t, st.Path)
 	if err != nil {
-		return installOp{}, err
+		return fail(err)
 	}
 	if detail != "" {
 		op.Detail, op.Action, op.Snippet = detail, ActionBlocked, snippet
 		return op, nil
 	}
-	tracked, err := t.IsTracked(st.Path)
-	if err != nil {
-		return installOp{}, err
-	}
-	if tracked {
-		op.Tracked = true
-		op.Action = ActionManual
-		op.Snippet = removeByHandSnippet(st.Item)
-		return op, nil
-	}
 	disk, err := installedHash(t, st.Item)
 	if err != nil {
-		return installOp{}, err
+		return fail(err)
 	}
-	if !disk.present {
+	if op.Tracked, err = t.IsTracked(st.Path); err != nil {
+		return fail(err)
+	}
+	switch {
+	case !disk.present:
+		// Nothing of lens's is there: drop the record, even for a tracked path.
 		op.Action, op.kind = ActionRemoved, opDrop
-		return op, nil
-	}
-	op.disk = disk
-	rec, _ := m.Record(o.Agent, st.Kind, st.ID)
-	recorded := rec.Hash
-	if rec.Pending != nil && rec.Pending.Op == "write" && disk.hash == rec.Pending.Hash {
-		recorded = rec.Pending.Hash
-	}
-	// A journaled removal (forced or not) recorded the content it decided to remove.
-	pendingRemove := rec.Pending != nil && rec.Pending.Op == "remove" && disk.hash == rec.Hash
-	if (disk.hash == recorded && !disk.dup) || pendingRemove || o.Force {
-		if st.Kind == KindSkill {
-			if sib := foreignSibling(t, own, st.Path); sib != "" {
-				op.Detail, op.Action, op.Snippet = foreignSiblingDetail(sib), ActionBlocked, foreignSiblingSnippet(sib, st.Path)
-				return op, nil
-			}
+	case op.Tracked:
+		op.Action, op.Snippet = ActionManual, removeByHandSnippet(st.Item)
+	default:
+		rec, _ := m.Record(o.Agent, st.Kind, st.ID)
+		switch {
+		case !matchesRecord(rec, disk) && !o.Force:
+			op.Action = ActionSkipped
+		case blockForeignSibling(t, own, st.Item, &op.ItemResult):
+		default:
+			op.Action, op.kind, op.disk = ActionRemoved, opRemove, disk
 		}
-		op.Action, op.kind = ActionRemoved, opRemove
-		return op, nil
 	}
-	op.Action = ActionSkipped
 	return op, nil
 }
 
