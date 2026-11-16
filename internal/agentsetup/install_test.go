@@ -671,6 +671,7 @@ func TestInstall_InterruptedRunIsCompleted(t *testing.T) {
 			root := newRepo(t)
 			tg := mustTarget(t, root)
 			before := porcelain(t, root)
+			snap, excl := snapshot(t, root), excludeBytes(t, tg)
 			o := base
 			o.failAt = failAt
 			if _, err := Install(tg, assets, o); err == nil {
@@ -728,6 +729,14 @@ func TestInstall_InterruptedRunIsCompleted(t *testing.T) {
 					t.Errorf("%s failAt %d: journal left %+v", base.Agent, failAt, r)
 				}
 			}
+
+			runUninstall(t, tg, uninstallOf(base.Agent))
+			if got := snapshot(t, root); !reflect.DeepEqual(got, snap) {
+				t.Fatalf("%s failAt %d: after uninstall %v", base.Agent, failAt, got)
+			}
+			if excludeBytes(t, tg) != excl {
+				t.Fatalf("%s failAt %d: exclude file after uninstall %q", base.Agent, failAt, excludeBytes(t, tg))
+			}
 		}
 	}
 }
@@ -764,6 +773,18 @@ func TestInstall_ManifestDeletedRecoversFromExcludeBlock(t *testing.T) {
 	}
 	if got := excludeBlock(t, tg); !reflect.DeepEqual(got, block) {
 		t.Fatalf("block %v, want %v", got, block)
+	}
+
+	runUninstall(t, tg, uninstallOf(AgentClaude, AgentCodex))
+	// Known limitation: CreatedDirs is not recovered after manifest loss, so empty
+	// parent directories (.claude/skills, .agents/skills, .codex, ...) may remain.
+	wantGone(t, tg, ".mcp.json", ".claude/settings.local.json", ".claude/skills/alpha", ".claude/skills/beta",
+		".agents/skills/alpha", ".agents/skills/beta", ".codex/config.toml", ".projectlens")
+	if got := excludeBlock(t, tg); len(got) != 0 {
+		t.Fatalf("block after uninstall %v", got)
+	}
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("porcelain after uninstall %q", p)
 	}
 }
 
@@ -811,14 +832,46 @@ func TestInstall_MatchingPreexistingIsNotOwned(t *testing.T) {
 		}
 	}
 
+	alpha, mcp := findCanon(t, cs, KindSkill, "alpha"), findCanon(t, cs, KindMCP, "projectlens")
+	mcpPresent := func() bool {
+		t.Helper()
+		_, present, err := ReadMCPJSON(tg.Abs(".mcp.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return present
+	}
+
 	res := runInstall(t, tg, assets, claudeOpts())
 	check(t, res, ActionCurrent, false)
+
+	// Uninstall leaves what it does not own.
+	runUninstall(t, tg, uninstallOf(AgentClaude))
+	if h, err := HashDir(tg.Abs(alpha.Path)); err != nil || h != alpha.Hash {
+		t.Fatalf("unowned skill changed: %v", err)
+	}
+	if !mcpPresent() {
+		t.Fatal("unowned MCP entry removed")
+	}
+
 	res = runInstall(t, tg, assets, forced(claudeOpts()))
 	check(t, res, ActionAdopted, true)
 	for _, st := range evaluateSaved(t, tg, AgentClaude, cs) {
 		if st.State != StateCurrent || !st.Owned {
 			t.Errorf("after adoption: %+v", st)
 		}
+	}
+
+	// Adopted items are removed; the file install did not create stays.
+	runUninstall(t, tg, uninstallOf(AgentClaude))
+	if tg.Exists(alpha.Path) {
+		t.Fatal("adopted skill kept")
+	}
+	if mcpPresent() {
+		t.Fatal("adopted MCP entry kept")
+	}
+	if !tg.Exists(mcp.Path) {
+		t.Fatal(".mcp.json deleted although install did not create it")
 	}
 }
 
@@ -1075,14 +1128,16 @@ func TestInstall_SkillTempLeftoverIsHarmless(t *testing.T) {
 		t.Fatalf("ExcludePaths %v", res.ExcludePaths)
 	}
 
-	// A leftover next to a current skill is removed too.
+	// A sibling that was not in the exclude block when the run started is not
+	// lens's: it is left alone and stays visible.
 	write(t, tg.Abs(tmp+"/partial"), "partial")
+	before := porcelain(t, root)
 	runInstall(t, tg, assets, claudeOpts())
-	if tg.Exists(tmp) {
-		t.Fatal("leftover kept beside a current skill")
+	if !tg.Exists(tmp) || readFile(t, tg.Abs(tmp+"/partial")) != "partial" {
+		t.Fatal("unlisted sibling removed or changed")
 	}
-	if p := porcelain(t, root); p != "" {
-		t.Fatalf("porcelain %q", p)
+	if p := porcelain(t, root); p != before || !strings.Contains(p, tmp) {
+		t.Fatalf("porcelain %q, want %q", p, before)
 	}
 }
 
@@ -1162,6 +1217,39 @@ func TestInstall_ManifestDeleted_OtherAgentLeftUnrecorded(t *testing.T) {
 	}
 	if !reflect.DeepEqual(snapshot(t, tg.Abs(".agents")), codexSnap) || readFile(t, tg.Abs(".codex/config.toml")) != codexConfig {
 		t.Fatal("codex files changed")
+	}
+
+	// Uninstalling claude keeps the unrecorded codex paths owned and hidden.
+	runUninstall(t, tg, uninstallOf(AgentClaude))
+	m = loadManifest(t, tg)
+	if len(m.Agents) != 0 {
+		t.Fatalf("agent records left: %+v", m.Agents)
+	}
+	for _, p := range []string{".agents/skills/alpha", ".agents/skills/beta", ".codex/config.toml"} {
+		if !m.Created(p) {
+			t.Errorf("%s not in CreatedPaths %v", p, m.CreatedPaths)
+		}
+	}
+	if got := excludeBlock(t, tg); !reflect.DeepEqual(got, codexBlockPaths) {
+		t.Fatalf("block %v, want %v", got, codexBlockPaths)
+	}
+	if p := porcelain(t, root); strings.Contains(p, ".codex") || strings.Contains(p, ".agents") {
+		t.Fatalf("codex paths visible: %q", p)
+	}
+	if !reflect.DeepEqual(snapshot(t, tg.Abs(".agents")), codexSnap) || readFile(t, tg.Abs(".codex/config.toml")) != codexConfig {
+		t.Fatal("codex files changed by the claude uninstall")
+	}
+
+	runInstall(t, tg, assets, codexOpts())
+	for _, st := range evaluateSaved(t, tg, AgentCodex, defaultFixture().canon(t, AgentCodex, evalURL)) {
+		if st.State != StateCurrent || !st.Owned {
+			t.Errorf("codex after reinstall: %+v", st)
+		}
+	}
+	runUninstall(t, tg, uninstallOf(AgentCodex))
+	wantGone(t, tg, ".agents/skills/alpha", ".agents/skills/beta", ".codex/config.toml", ManifestPath)
+	if got := excludeBlock(t, tg); len(got) != 0 {
+		t.Fatalf("block after uninstall %v", got)
 	}
 }
 
@@ -1608,7 +1696,7 @@ func TestInstall_PlanMatchesStatusesByItem(t *testing.T) {
 	for i, j := 0, len(sts)-1; i < j; i, j = i+1, j-1 {
 		sts[i], sts[j] = sts[j], sts[i]
 	}
-	ops, err := planInstall(tg, claudeOpts(), cs, sts, m)
+	ops, err := planInstall(tg, claudeOpts(), cs, sts, m, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1618,7 +1706,7 @@ func TestInstall_PlanMatchesStatusesByItem(t *testing.T) {
 		}
 	}
 	stray := ItemStatus{Item: Item{Agent: AgentClaude, Kind: KindSkill, ID: "gamma", Path: ".claude/skills/gamma"}, State: StateMissing}
-	if _, err := planInstall(tg, claudeOpts(), cs, append(sts, stray), m); err == nil {
+	if _, err := planInstall(tg, claudeOpts(), cs, append(sts, stray), m, nil); err == nil {
 		t.Fatal("a non-orphan status without a canonical item must be an error")
 	}
 }

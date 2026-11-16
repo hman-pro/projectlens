@@ -8,7 +8,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -97,11 +96,15 @@ func Install(t Target, assetsDir string, o InstallOpts) (InstallResult, error) {
 	if err != nil {
 		return InstallResult{}, err
 	}
+	own, err := ownSiblings(t)
+	if err != nil {
+		return InstallResult{}, err
+	}
 	statuses, err := Evaluate(t, o.Agent, canon, m)
 	if err != nil {
 		return InstallResult{}, fmt.Errorf("evaluate %s: %w", o.Agent, err)
 	}
-	ops, err := planInstall(t, o, canon, statuses, m)
+	ops, err := planInstall(t, o, canon, statuses, m, own)
 	if err != nil {
 		return InstallResult{}, err
 	}
@@ -114,7 +117,10 @@ func Install(t Target, assetsDir string, o InstallOpts) (InstallResult, error) {
 	if o.DryRun {
 		res.ExcludePaths = projectExclude(t, o.Agent, m, ops, skills)
 	} else {
-		r := &installer{t: t, m: m, agent: o.Agent, url: o.URL, force: o.Force, failAt: o.failAt, skills: skills}
+		r := &installer{
+			journal: &journal{t: t, m: m, name: "install", failAt: o.failAt, skills: skills, own: own},
+			agent:   o.Agent, url: o.URL, force: o.Force,
+		}
 		if err := r.run(ops); err != nil {
 			return InstallResult{}, err
 		}
@@ -150,8 +156,9 @@ func loadInstallManifest(t Target) (*Manifest, error) {
 	return m, nil
 }
 
-// planInstall decides the action for every evaluated item. It reads only.
-func planInstall(t Target, o InstallOpts, canon []Canon, sts []ItemStatus, m *Manifest) ([]installOp, error) {
+// planInstall decides the action for every evaluated item. It reads only. own
+// holds the skill siblings lens created (see ownSiblings).
+func planInstall(t Target, o InstallOpts, canon []Canon, sts []ItemStatus, m *Manifest, own map[string]bool) ([]installOp, error) {
 	byItem := make(map[string]Canon, len(canon))
 	for _, c := range canon {
 		byItem[itemKeyOf(c.Kind, c.ID)] = c
@@ -163,9 +170,9 @@ func planInstall(t Target, o InstallOpts, canon []Canon, sts []ItemStatus, m *Ma
 		c, ok := byItem[itemKeyOf(st.Kind, st.ID)]
 		switch {
 		case ok && st.State != StateOrphaned && c.Item == st.Item:
-			op, err = planCanonical(t, o, c, st, m)
+			op, err = planCanonical(t, o, c, st, m, own)
 		case !ok && st.State == StateOrphaned:
-			op, err = planOrphan(t, o, st, m)
+			op, err = planOrphan(t, o, st, m, own)
 		default:
 			err = fmt.Errorf("plan %s %s: status %q does not match the canonical items", st.Kind, st.ID, st.State)
 		}
@@ -177,13 +184,19 @@ func planInstall(t Target, o InstallOpts, canon []Canon, sts []ItemStatus, m *Ma
 	return ops, nil
 }
 
-func planCanonical(t Target, o InstallOpts, c Canon, st ItemStatus, m *Manifest) (installOp, error) {
+func planCanonical(t Target, o InstallOpts, c Canon, st ItemStatus, m *Manifest, own map[string]bool) (installOp, error) {
 	op := installOp{ItemResult: ItemResult{ItemStatus: st}, canon: c}
 	set := func(a Action, k opKind) (installOp, error) {
 		op.Action, op.kind = a, k
 		return op, nil
 	}
 	write := func(a Action) (installOp, error) {
+		if c.Kind == KindSkill {
+			if sib := foreignSibling(t, own, c.Path); sib != "" {
+				op.Detail, op.Snippet = foreignSiblingDetail(sib), foreignSiblingSnippet(sib, c.Path)
+				return set(ActionBlocked, opNone)
+			}
+		}
 		disk, err := installedHash(t, c.Item)
 		if err != nil {
 			return installOp{}, err
@@ -242,21 +255,17 @@ func planCanonical(t Target, o InstallOpts, c Canon, st ItemStatus, m *Manifest)
 }
 
 // planOrphan decides what to do with a record whose item is no longer canonical.
-func planOrphan(t Target, o InstallOpts, st ItemStatus, m *Manifest) (installOp, error) {
+func planOrphan(t Target, o InstallOpts, st ItemStatus, m *Manifest, own map[string]bool) (installOp, error) {
 	op := installOp{ItemResult: ItemResult{ItemStatus: st}}
 	if err := checkLocal(st.Path); err != nil { // LoadManifest already refuses these
 		return installOp{}, fmt.Errorf("orphan %s %s: %w", st.Kind, st.ID, err)
 	}
-	if err := t.CheckContained(st.Path); err != nil {
-		if !errors.Is(err, ErrEscapesTarget) {
-			return installOp{}, err
-		}
-		comp := firstSymlink(t, st.Path)
-		op.Detail = "symlinked parent " + comp
-		if comp == st.Path {
-			op.Detail = detailSymlink
-		}
-		op.Action, op.Snippet = ActionBlocked, symlinkSnippet(comp)
+	detail, snippet, err := symlinkBlock(t, st.Path)
+	if err != nil {
+		return installOp{}, err
+	}
+	if detail != "" {
+		op.Detail, op.Action, op.Snippet = detail, ActionBlocked, snippet
 		return op, nil
 	}
 	tracked, err := t.IsTracked(st.Path)
@@ -266,7 +275,7 @@ func planOrphan(t Target, o InstallOpts, st ItemStatus, m *Manifest) (installOp,
 	if tracked {
 		op.Tracked = true
 		op.Action = ActionManual
-		op.Snippet = fmt.Sprintf("remove the projectlens %s %q from %s by hand", st.Kind, st.ID, st.Path)
+		op.Snippet = removeByHandSnippet(st.Item)
 		return op, nil
 	}
 	disk, err := installedHash(t, st.Item)
@@ -286,11 +295,40 @@ func planOrphan(t Target, o InstallOpts, st ItemStatus, m *Manifest) (installOp,
 	// A journaled removal (forced or not) recorded the content it decided to remove.
 	pendingRemove := rec.Pending != nil && rec.Pending.Op == "remove" && disk.hash == rec.Hash
 	if (disk.hash == recorded && !disk.dup) || pendingRemove || o.Force {
+		if st.Kind == KindSkill {
+			if sib := foreignSibling(t, own, st.Path); sib != "" {
+				op.Detail, op.Action, op.Snippet = foreignSiblingDetail(sib), ActionBlocked, foreignSiblingSnippet(sib, st.Path)
+				return op, nil
+			}
+		}
 		op.Action, op.kind = ActionRemoved, opRemove
 		return op, nil
 	}
 	op.Action = ActionSkipped
 	return op, nil
+}
+
+// symlinkBlock reports, as a detail and snippet, the first symlinked component
+// of p (p itself included); both are "" when there is none.
+func symlinkBlock(t Target, p string) (detail, snippet string, err error) {
+	err = t.CheckContained(p)
+	if err == nil {
+		return "", "", nil
+	}
+	if !errors.Is(err, ErrEscapesTarget) {
+		return "", "", err
+	}
+	comp := firstSymlink(t, p)
+	detail = "symlinked parent " + comp
+	if comp == p {
+		detail = detailSymlink
+	}
+	return detail, symlinkSnippet(comp), nil
+}
+
+// removeByHandSnippet is what a developer deletes by hand from a tracked path.
+func removeByHandSnippet(it Item) string {
+	return fmt.Sprintf("remove the projectlens %s %q from %s by hand", it.Kind, it.ID, it.Path)
 }
 
 func isForeignCodex(t Target, c Canon) (bool, error) {
@@ -368,29 +406,6 @@ func skillPaths(canon []Canon, m *Manifest) map[string]bool {
 	return out
 }
 
-// excludePatterns builds this work tree's exclude block: "/" + path for each
-// created path (directories get a trailing "/"), the manifest, and extra.
-func excludePatterns(t Target, created []string, skills map[string]bool, manifest bool, extra []string) []string {
-	var out []string
-	for _, p := range created {
-		dir := skills[p]
-		if fi, err := os.Lstat(t.Abs(p)); err == nil {
-			dir = fi.IsDir()
-		}
-		pattern := "/" + p
-		if dir {
-			pattern += "/"
-		}
-		out = append(out, pattern)
-	}
-	if manifest {
-		out = append(out, "/"+ManifestPath)
-	}
-	out = append(out, extra...)
-	sort.Strings(out)
-	return compactStrings(out)
-}
-
 // projectExclude computes, without writing, the exclude block a real run would leave.
 func projectExclude(t Target, a Agent, m *Manifest, ops []installOp, skills map[string]bool) []string {
 	created, _ := m.livePaths(t)
@@ -441,87 +456,19 @@ func projectExclude(t Target, a Agent, m *Manifest, ops []installOp, skills map[
 
 func itemKeyOf(k Kind, id string) string { return string(k) + "\x00" + id }
 
-func skillSibling(skill, suffix string) string {
-	return path.Join(path.Dir(skill), "."+path.Base(skill)+suffix)
-}
-
-func skillTempPath(skill string) string  { return skillSibling(skill, skillTempSuffix) }
-func skillAsidePath(skill string) string { return skillSibling(skill, skillAsideSuffix) }
-
-// skillSiblingPatterns are the exclude patterns for a skill's temp and aside
-// siblings, listed while a write or removal of that skill is journaled.
-func skillSiblingPatterns(skill string) []string {
-	return []string{"/" + skillTempPath(skill) + "/", "/" + skillAsidePath(skill) + "/"}
-}
-
-func isSkillSibling(p string) bool {
-	base := path.Base(p)
-	return strings.HasPrefix(base, ".") &&
-		(strings.HasSuffix(base, skillTempSuffix) || strings.HasSuffix(base, skillAsideSuffix))
-}
-
-// removeSkillSibling deletes a leftover temp or aside sibling. strict makes an
-// uncontained or tracked sibling an error; otherwise it is left alone.
-func removeSkillSibling(t Target, rel string, strict bool) error {
-	if !t.Exists(rel) {
-		return nil
-	}
-	if err := t.CheckContained(rel); err != nil {
-		if strict {
-			return fmt.Errorf("remove %s: %w", rel, err)
-		}
-		return nil
-	}
-	tracked, err := t.IsTracked(rel)
-	if err != nil {
-		return err
-	}
-	if tracked {
-		if strict {
-			return fmt.Errorf("remove %s: path is tracked by git", rel)
-		}
-		return nil
-	}
-	if err := os.RemoveAll(t.Abs(rel)); err != nil {
-		return fmt.Errorf("remove %s: %w", rel, err)
-	}
-	return nil
-}
-
-// removeSkillSiblings deletes both leftover siblings of a skill.
-func removeSkillSiblings(t Target, skill string, strict bool) error {
-	for _, rel := range []string{skillTempPath(skill), skillAsidePath(skill)} {
-		if err := removeSkillSibling(t, rel, strict); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// installer applies planned operations, journaling each change in the manifest.
+// installer applies planned operations for one agent, journaling each change.
 type installer struct {
-	t      Target
-	m      *Manifest
-	agent  Agent
-	url    string
-	force  bool
-	failAt int
-	steps  int
-	skills map[string]bool
+	*journal
+	agent Agent
+	url   string
+	force bool
 }
 
 func (r *installer) run(ops []installOp) error {
 	// Leftovers of a crash, for this agent's skills and every recorded skill of
 	// any agent: once the block is rewritten they would no longer be excluded.
-	skills := make([]string, 0, len(r.skills))
-	for p := range r.skills {
-		skills = append(skills, p)
-	}
-	sort.Strings(skills)
-	for _, p := range skills {
-		if err := removeSkillSiblings(r.t, p, false); err != nil {
-			return err
-		}
+	if err := r.cleanSiblings(); err != nil {
+		return err
 	}
 	for _, op := range ops {
 		var err error
@@ -533,7 +480,7 @@ func (r *installer) run(ops []installOp) error {
 		case opRemove:
 			err = r.remove(op)
 		case opDrop:
-			r.dropRecord(op.Kind, op.ID)
+			r.dropRecord(r.agent, op.Kind, op.ID)
 		}
 		if err != nil {
 			return err
@@ -542,67 +489,10 @@ func (r *installer) run(ops []installOp) error {
 	return r.save(nil)
 }
 
-// step counts one journal step and fails the run when it reaches failAt.
-func (r *installer) step() error {
-	r.steps++
-	if r.failAt != 0 && r.steps == r.failAt {
-		return fmt.Errorf("install interrupted at step %d", r.steps)
-	}
-	return nil
-}
-
+// setRecord stores rec for this agent and sets the agent's URL.
 func (r *installer) setRecord(rec Record) {
-	ar := r.m.Agents[r.agent]
-	if ar == nil {
-		ar = &AgentRecord{}
-		r.m.Agents[r.agent] = ar
-	}
-	ar.URL = r.url
-	for i := range ar.Items {
-		if ar.Items[i].Kind == rec.Kind && ar.Items[i].ID == rec.ID {
-			ar.Items[i] = rec
-			return
-		}
-	}
-	ar.Items = append(ar.Items, rec)
-}
-
-func (r *installer) dropRecord(kind Kind, id string) {
-	ar := r.m.Agents[r.agent]
-	if ar == nil {
-		return
-	}
-	kept := ar.Items[:0]
-	for _, rec := range ar.Items {
-		if rec.Kind != kind || rec.ID != id {
-			kept = append(kept, rec)
-		}
-	}
-	ar.Items = kept
-}
-
-// save writes the exclude block (with extra, for a temp path in use), the
-// manifest, then the block again from what Save kept. The block is written
-// first so the manifest and any new path are never visible to git.
-func (r *installer) save(extra []string) error {
-	if ar := r.m.Agents[r.agent]; ar != nil && len(ar.Items) == 0 {
-		delete(r.m.Agents, r.agent)
-	}
-	live, _ := r.m.livePaths(r.t)
-	willExist := len(r.m.Agents) > 0 || len(live) > 0
-	if err := r.t.SetExcludeBlock(excludePatterns(r.t, live, r.skills, willExist, extra)); err != nil {
-		return fmt.Errorf("update exclude block: %w", err)
-	}
-	if err := r.m.Save(r.t); err != nil {
-		return fmt.Errorf("save manifest: %w", err)
-	}
-	if !r.t.Exists(ManifestPath) {
-		extra = nil
-	}
-	if err := r.t.SetExcludeBlock(excludePatterns(r.t, r.m.CreatedPaths, r.skills, r.t.Exists(ManifestPath), extra)); err != nil {
-		return fmt.Errorf("update exclude block: %w", err)
-	}
-	return nil
+	r.putRecord(r.agent, rec)
+	r.m.Agents[r.agent].URL = r.url
 }
 
 // checkDest is the containment check at the point of use. replaceLink allows
@@ -703,7 +593,7 @@ func (r *installer) writeItem(c Canon, replaceLink bool) error {
 // and finally removes the aside copy.
 func (r *installer) writeSkill(c Canon, replaceLink bool) error {
 	tmp, aside := skillTempPath(c.Path), skillAsidePath(c.Path)
-	if err := removeSkillSiblings(r.t, c.Path, true); err != nil {
+	if err := r.removeSkillSiblings(c.Path, true); err != nil {
 		return err
 	}
 	abs, absTmp, absAside := r.t.Abs(c.Path), r.t.Abs(tmp), r.t.Abs(aside)
@@ -761,83 +651,8 @@ func (r *installer) writeSkill(c Canon, replaceLink bool) error {
 
 // remove journals and removes one orphaned item, then drops its record.
 func (r *installer) remove(op installOp) error {
-	if err := r.checkDest(op.Path, false); err != nil {
-		return err
+	if ar := r.m.Agents[r.agent]; ar != nil {
+		ar.URL = r.url
 	}
-	rec, _ := r.m.Record(r.agent, op.Kind, op.ID)
-	// Hash names what is on disk now, so an interrupted forced removal is
-	// finished by the next run without --force.
-	rec.Hash = op.disk.hash
-	rec.Pending = &Pending{Op: "remove"}
-	r.setRecord(rec)
-	var extra []string
-	if op.Kind == KindSkill {
-		extra = skillSiblingPatterns(op.Path)
-	}
-	if err := r.save(extra); err != nil {
-		return err
-	}
-	if err := r.step(); err != nil {
-		return err
-	}
-	if err := removeItem(r.t, r.m, op.Item); err != nil {
-		return err
-	}
-	if err := r.step(); err != nil {
-		return err
-	}
-	r.dropRecord(op.Kind, op.ID)
-	return r.save(nil)
-}
-
-// removeItem deletes an item from disk. A merged file left empty is deleted
-// only when install created it.
-func removeItem(t Target, m *Manifest, it Item) error {
-	if err := t.CheckContained(it.Path); err != nil {
-		return fmt.Errorf("remove %s: %w", it.Path, err)
-	}
-	abs := t.Abs(it.Path)
-	var empty bool
-	var err error
-	switch {
-	case it.Kind == KindSkill:
-		return removeSkillDir(t, it.Path)
-	case it.Kind == KindHook:
-		empty, err = RemoveHook(abs, it.ID)
-	case it.Agent == AgentCodex:
-		empty, err = RemoveCodexBlock(abs)
-	default:
-		empty, err = RemoveMCPJSON(abs)
-	}
-	if err != nil {
-		return fmt.Errorf("remove %s %s: %w", it.Kind, it.ID, err)
-	}
-	if empty && m.Created(it.Path) {
-		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove %s: %w", it.Path, err)
-		}
-	}
-	return nil
-}
-
-// removeSkillDir renames a skill directory aside, then removes the aside copy,
-// so the real path is never left holding a partial directory.
-func removeSkillDir(t Target, skill string) error {
-	aside := skillAsidePath(skill)
-	if err := removeSkillSibling(t, aside, true); err != nil {
-		return err
-	}
-	if err := t.CheckContained(aside); err != nil {
-		return fmt.Errorf("remove %s: %w", skill, err)
-	}
-	if err := os.Rename(t.Abs(skill), t.Abs(aside)); err != nil {
-		return fmt.Errorf("move %s aside: %w", skill, err)
-	}
-	if err := t.CheckContained(aside); err != nil {
-		return fmt.Errorf("remove %s: %w", aside, err)
-	}
-	if err := os.RemoveAll(t.Abs(aside)); err != nil { // does not follow links inside
-		return fmt.Errorf("remove %s: %w", aside, err)
-	}
-	return nil
+	return r.journal.remove(op.Item, op.disk.hash)
 }
