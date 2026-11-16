@@ -335,3 +335,68 @@ func TestHooks_RemoveCleansEmptyContainers(t *testing.T) {
 		t.Errorf("want {}, got %v", got)
 	}
 }
+
+func TestHooks_PreexistingEmptyEventPreserved(t *testing.T) {
+	start := `{"hooks":{"Stop":[],"Notification":[{"matcher":"x","hooks":[]}]}}`
+	p := writeTestFile(t, start)
+	h := canonicalHooks(t)[1]
+	if err := WriteHook(p, h); err != nil {
+		t.Fatal(err)
+	}
+	events := decodeDoc(t, readTestFile(t, p))["hooks"].(map[string]any)
+	if v, ok := events["Stop"]; !ok || v == nil || len(v.([]any)) != 0 {
+		t.Errorf("Stop must stay []: %v", events["Stop"])
+	}
+	if len(events["Notification"].([]any)) != 1 {
+		t.Errorf("empty group changed: %v", events["Notification"])
+	}
+	if _, err := RemoveHook(p, h.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := decodeDoc(t, readTestFile(t, p)), decodeDoc(t, start); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestJSON_NoHTMLEscaping(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	h := Hook{ID: "x", Event: "Stop", Type: "command", Command: ": projectlens-hook=x; a && b < c > d"}
+	if err := WriteHook(p, h); err != nil {
+		t.Fatal(err)
+	}
+	if raw := readTestFile(t, p); !strings.Contains(raw, "a && b < c > d") || strings.Contains(raw, `\u00`) {
+		t.Errorf("escaped: %s", raw)
+	}
+	q := filepath.Join(t.TempDir(), ".mcp.json")
+	if err := WriteMCPJSON(q, "http://u/mcp?a=1&b=2"); err != nil {
+		t.Fatal(err)
+	}
+	if raw := readTestFile(t, q); !strings.Contains(raw, "a=1&b=2") {
+		t.Errorf("escaped: %s", raw)
+	}
+}
+
+func TestEdit_PreservesFileModeAndCreates0644(t *testing.T) {
+	p := writeTestFile(t, "{}")
+	os.Chmod(p, 0o600)
+	if err := WriteMCPJSON(p, "http://u/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	c := writeTestFile(t, "a = 1\n")
+	os.Chmod(c, 0o600)
+	if err := WriteCodexBlock(c, "http://u/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{p, c} {
+		if info, _ := os.Stat(f); info.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode = %v, want 0600", f, info.Mode().Perm())
+		}
+	}
+	n := filepath.Join(t.TempDir(), "new.json")
+	if err := WriteMCPJSON(n, "http://u/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(n); info.Mode().Perm() != 0o644 {
+		t.Errorf("new file mode = %v", info.Mode().Perm())
+	}
+}

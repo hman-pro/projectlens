@@ -16,6 +16,18 @@ const mcpServerName = "projectlens"
 
 type jsonObject = map[string]json.RawMessage
 
+// marshalNoEscape is json.Marshal without HTML escaping, so values embedded as
+// RawMessage keep characters such as &, < and > literal.
+func marshalNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
 func invalidJSON(path string, detail error) error {
 	return fmt.Errorf("%s: %w: %v", path, ErrInvalidJSON, detail)
 }
@@ -121,12 +133,12 @@ func WriteMCPJSON(path, url string) error {
 	if err != nil {
 		return err
 	}
-	entry, err := json.Marshal(map[string]string{"type": "http", "url": url})
+	entry, err := marshalNoEscape(map[string]string{"type": "http", "url": url})
 	if err != nil {
 		return fmt.Errorf("encode MCP entry: %w", err)
 	}
 	servers[mcpServerName] = entry
-	if doc["mcpServers"], err = json.Marshal(servers); err != nil {
+	if doc["mcpServers"], err = marshalNoEscape(servers); err != nil {
 		return fmt.Errorf("encode mcpServers: %w", err)
 	}
 	return saveJSONObject(path, doc)
@@ -148,7 +160,7 @@ func RemoveMCPJSON(path string) (empty bool, err error) {
 		delete(servers, mcpServerName)
 		if len(servers) == 0 {
 			delete(doc, "mcpServers")
-		} else if doc["mcpServers"], err = json.Marshal(servers); err != nil {
+		} else if doc["mcpServers"], err = marshalNoEscape(servers); err != nil {
 			return false, fmt.Errorf("encode mcpServers: %w", err)
 		}
 		if err := saveJSONObject(path, doc); err != nil {
@@ -253,6 +265,7 @@ func removeHookID(path string, events hookEvents, id string) (int, error) {
 	removed := 0
 	for event, groups := range events {
 		var keptGroups []hookGroup
+		eventRemoved := 0
 		for _, g := range groups {
 			entries, err := groupEntries(path, g)
 			if err != nil {
@@ -262,6 +275,7 @@ func removeHookID(path string, events hookEvents, id string) (int, error) {
 			for _, e := range entries {
 				if eid, _ := entryID(e); eid == id {
 					removed++
+					eventRemoved++
 					continue
 				}
 				kept = append(kept, e)
@@ -270,7 +284,7 @@ func removeHookID(path string, events hookEvents, id string) (int, error) {
 				if len(kept) == 0 {
 					continue // drop the group we emptied
 				}
-				raw, err := json.Marshal(kept)
+				raw, err := marshalNoEscape(kept)
 				if err != nil {
 					return 0, fmt.Errorf("encode hooks: %w", err)
 				}
@@ -278,7 +292,10 @@ func removeHookID(path string, events hookEvents, id string) (int, error) {
 			}
 			keptGroups = append(keptGroups, g)
 		}
-		if len(keptGroups) == 0 && len(groups) > 0 {
+		if eventRemoved == 0 {
+			continue // leave events we did not touch exactly as found
+		}
+		if len(keptGroups) == 0 {
 			delete(events, event)
 		} else {
 			events[event] = keptGroups
@@ -291,7 +308,7 @@ func saveHooksDoc(path string, doc jsonObject, events hookEvents) error {
 	if len(events) == 0 {
 		delete(doc, "hooks")
 	} else {
-		raw, err := json.Marshal(events)
+		raw, err := marshalNoEscape(events)
 		if err != nil {
 			return fmt.Errorf("encode hooks: %w", err)
 		}
@@ -310,7 +327,7 @@ func WriteHook(path string, h Hook) error {
 	if _, err := removeHookID(path, events, h.ID); err != nil {
 		return err
 	}
-	entry, err := json.Marshal(hookEntryView{Type: h.Type, Command: h.Command})
+	entry, err := marshalNoEscape(hookEntryView{Type: h.Type, Command: h.Command})
 	if err != nil {
 		return fmt.Errorf("encode hook: %w", err)
 	}
@@ -324,7 +341,7 @@ func WriteHook(path string, h Hook) error {
 		if err != nil {
 			return err
 		}
-		raw, err := json.Marshal(append(entries, entry))
+		raw, err := marshalNoEscape(append(entries, entry))
 		if err != nil {
 			return fmt.Errorf("encode hooks: %w", err)
 		}
@@ -333,8 +350,8 @@ func WriteHook(path string, h Hook) error {
 		break
 	}
 	if !placed {
-		matcher, _ := json.Marshal(h.Matcher)
-		list, _ := json.Marshal([]json.RawMessage{entry})
+		matcher, _ := marshalNoEscape(h.Matcher)
+		list, _ := marshalNoEscape([]json.RawMessage{entry})
 		events[h.Event] = append(groups, hookGroup{"matcher": matcher, "hooks": list})
 	}
 	return saveHooksDoc(path, doc, events)

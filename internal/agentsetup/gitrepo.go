@@ -285,7 +285,11 @@ func writeFileAtomic(path string, data []byte) error {
 		tmp.Close()
 		return fmt.Errorf("write temp file: %w", err)
 	}
-	if err := tmp.Chmod(0o644); err != nil {
+	mode := os.FileMode(0o644)
+	if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
+		mode = info.Mode().Perm() // keep an existing file's permissions
+	}
+	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		return fmt.Errorf("chmod temp file: %w", err)
 	}

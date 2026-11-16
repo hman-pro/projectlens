@@ -162,3 +162,15 @@ func TestCodexConfig_InvalidTOMLRefused(t *testing.T) {
 		t.Errorf("modified: %q", got)
 	}
 }
+
+func TestCodexBlock_URLInjectionRefused(t *testing.T) {
+	orig := "a = 1\n"
+	p := writeTestFile(t, orig)
+	err := WriteCodexBlock(p, "x\"\nfoo = \"y")
+	if !errors.Is(err, ErrInvalidTOML) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := readTestFile(t, p); got != orig {
+		t.Errorf("modified: %q", got)
+	}
+}

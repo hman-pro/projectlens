@@ -106,6 +106,10 @@ func ReadCodexConfig(path string) (CodexState, error) {
 	if err != nil {
 		return CodexState{}, err
 	}
+	return codexStateFromText(path, text)
+}
+
+func codexStateFromText(path, text string) (CodexState, error) {
 	before, body, after, found, err := splitCodexBlock(text)
 	if err != nil {
 		return CodexState{}, invalidTOML(path, err)
@@ -140,7 +144,7 @@ func WriteCodexBlock(path, url string) error {
 	if err != nil {
 		return err
 	}
-	st, err := ReadCodexConfig(path)
+	st, err := codexStateFromText(path, text)
 	if err != nil {
 		return err
 	}
@@ -160,8 +164,15 @@ func WriteCodexBlock(path, url string) error {
 		}
 		out += codexBlock(url)
 	}
-	if _, err := parseTOML(path, out); err != nil {
+	m, err := parseTOML(path, out)
+	if err != nil {
 		return err
+	}
+	// The url must round-trip exactly, or it altered the document (injection).
+	servers, _ := m["mcp_servers"].(map[string]any)
+	entry, _ := servers[mcpServerName].(map[string]any)
+	if got, _ := entry["url"].(string); got != url {
+		return invalidTOML(path, errors.New("url does not round-trip through the managed block"))
 	}
 	return writeFileAtomic(path, []byte(out))
 }
