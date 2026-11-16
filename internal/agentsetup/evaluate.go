@@ -10,6 +10,11 @@ const (
 	detailSymlink    = "symlink"
 	detailForeign    = "defined outside the managed block"
 	detailDuplicates = "duplicate entries"
+	detailSymlinkIn  = "contains a symlink"
+
+	// hashSymlinkIn stands in for the hash of a skill directory holding a symlink.
+	// It is not hex, so it never equals a canonical or recorded hash.
+	hashSymlinkIn = "unhashable: contains a symlink"
 )
 
 // ItemStatus is the evaluated state of one item.
@@ -25,7 +30,7 @@ type ItemStatus struct {
 type installed struct {
 	hash       string
 	present    bool
-	detail     string // "symlink" for a symlinked skill directory
+	detail     string // skill: "symlink" (the directory is a link) or "contains a symlink"
 	dup        bool   // hook: the ID appears more than once
 	foreign    bool   // Codex MCP: defined outside the managed block
 	foreignURL string // Codex MCP: the foreign definition's url, when a plain string
@@ -45,6 +50,9 @@ func installedHash(t Target, it Item) (installed, error) {
 			return installed{present: true, detail: detailSymlink}, nil
 		}
 		h, err := HashDir(abs)
+		if errors.Is(err, ErrSymlinkInSkill) {
+			return installed{hash: hashSymlinkIn, present: true, detail: detailSymlinkIn}, nil
+		}
 		if err != nil {
 			return installed{}, err
 		}
@@ -168,7 +176,7 @@ func evaluateItem(t Target, c Canon, rec Record, owned bool) (ItemStatus, error)
 		if disk.present && disk.hash == c.Hash {
 			return result(StateCurrent, "")
 		}
-		return result(StateManual, "")
+		return result(StateManual, disk.detail)
 	}
 
 	// 3. Symlinked skill directory.
@@ -184,10 +192,12 @@ func evaluateItem(t Target, c Canon, rec Record, owned bool) (ItemStatus, error)
 		return result(StateBlocked, detailForeign)
 	}
 
-	// 5. Not present.
+	// 5. Not present. A first write that never happened, or a remove that
+	// finished, is not a local removal.
 	if !disk.present {
-		firstWriteNeverHappened := owned && rec.Pending != nil && rec.Pending.Op == "write" && rec.Hash == ""
-		if owned && !firstWriteNeverHappened && c.Kind == KindHook {
+		journaled := owned && rec.Pending != nil &&
+			((rec.Pending.Op == "write" && rec.Hash == "") || rec.Pending.Op == "remove")
+		if owned && !journaled && c.Kind == KindHook {
 			return result(StateRemovedLocally, "")
 		}
 		return result(StateMissing, "")
@@ -205,9 +215,9 @@ func evaluateItem(t Target, c Canon, rec Record, owned bool) (ItemStatus, error)
 	case disk.hash == c.Hash: // 7
 		return result(StateCurrent, "")
 	case !owned: // 8
-		return result(StateUnmanaged, "")
+		return result(StateUnmanaged, disk.detail)
 	case disk.hash == recorded: // 9
 		return result(StateStale, "")
 	}
-	return result(StateModified, "") // 10
+	return result(StateModified, disk.detail) // 10
 }

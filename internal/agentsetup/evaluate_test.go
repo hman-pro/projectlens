@@ -379,44 +379,64 @@ func TestEvaluate_SymlinkedAncestorBlocked(t *testing.T) {
 }
 
 func TestEvaluate_Pending(t *testing.T) {
-	oldF := defaultFixture()
-	newF := defaultFixture()
-	newF.alpha = "alpha v2"
-	newF.startCmd = ": projectlens-hook=start; echo start v2"
-	newerF := defaultFixture()
-	newerF.alpha = "alpha v3"
+	// A version is the canonical content at one point in time: assets plus MCP URL.
+	type version struct {
+		f   evalFixture
+		url string
+	}
+	oldV := version{defaultFixture(), evalURL}
+	newV := version{defaultFixture(), evalURLOther}
+	newV.f.alpha = "alpha v2"
+	newV.f.startCmd = ": projectlens-hook=start; echo start v2"
+	newerV := version{defaultFixture(), "http://localhost:7777/mcp"}
+	newerV.f.alpha = "alpha v3"
 
-	tests := []struct {
+	pWrite := &Pending{Op: "write", Hash: "new"}
+	pRemove := &Pending{Op: "remove"}
+	type row struct {
 		name    string
+		agent   Agent
 		kind    Kind
 		id      string
-		disk    *evalFixture // nil: nothing on disk
-		canon   evalFixture
+		disk    *version // nil: nothing on disk
+		canon   version
 		hash    string // "old", "new", or ""
 		pending *Pending
 		want    State
-	}{
-		{"write pending, disk old, canonical new", KindSkill, "alpha", &oldF, newF, "old", &Pending{Op: "write", Hash: "new"}, StateStale},
-		{"write pending, disk new", KindSkill, "alpha", &newF, newF, "old", &Pending{Op: "write", Hash: "new"}, StateCurrent},
-		{"write pending, disk new, canonical moved on", KindSkill, "alpha", &newF, newerF, "old", &Pending{Op: "write", Hash: "new"}, StateStale},
-		{"first write never happened", KindHook, "start", nil, newF, "", &Pending{Op: "write", Hash: "new"}, StateMissing},
-		{"update write interrupted, hook then removed", KindHook, "start", nil, newF, "old", &Pending{Op: "write", Hash: "new"}, StateRemovedLocally},
-		{"hook absent from the file", KindHook, "start", nil, oldF, "old", nil, StateRemovedLocally},
-		{"remove pending, disk old", KindSkill, "alpha", &oldF, oldF, "old", &Pending{Op: "remove"}, StateCurrent},
-		{"remove pending, disk old, canonical new", KindSkill, "alpha", &oldF, newF, "old", &Pending{Op: "remove"}, StateStale},
-		{"hook write pending, disk old, canonical new", KindHook, "start", &oldF, newF, "old", &Pending{Op: "write", Hash: "new"}, StateStale},
+	}
+	tests := []row{
+		{"write pending, disk old, canonical new", AgentClaude, KindSkill, "alpha", &oldV, newV, "old", pWrite, StateStale},
+		{"write pending, disk new", AgentClaude, KindSkill, "alpha", &newV, newV, "old", pWrite, StateCurrent},
+		{"write pending, disk new, canonical moved on", AgentClaude, KindSkill, "alpha", &newV, newerV, "old", pWrite, StateStale},
+		{"first write never happened", AgentClaude, KindHook, "start", nil, newV, "", pWrite, StateMissing},
+		{"update write interrupted, hook then removed", AgentClaude, KindHook, "start", nil, newV, "old", pWrite, StateRemovedLocally},
+		{"hook absent from the file", AgentClaude, KindHook, "start", nil, oldV, "old", nil, StateRemovedLocally},
+		{"remove pending, disk old", AgentClaude, KindSkill, "alpha", &oldV, oldV, "old", pRemove, StateCurrent},
+		{"remove pending, disk old, canonical new", AgentClaude, KindSkill, "alpha", &oldV, newV, "old", pRemove, StateStale},
+		{"hook write pending, disk old, canonical new", AgentClaude, KindHook, "start", &oldV, newV, "old", pWrite, StateStale},
+		// A remove that finished before the journal was cleared is not a local edit.
+		{"remove pending, hook absent", AgentClaude, KindHook, "start", nil, oldV, "old", pRemove, StateMissing},
+		{"remove pending, skill dir absent", AgentClaude, KindSkill, "alpha", nil, oldV, "old", pRemove, StateMissing},
+	}
+	for _, a := range []Agent{AgentClaude, AgentCodex} {
+		tests = append(tests, []row{
+			{string(a) + " mcp write pending, disk old", a, KindMCP, "projectlens", &oldV, newV, "old", pWrite, StateStale},
+			{string(a) + " mcp write pending, disk new", a, KindMCP, "projectlens", &newV, newV, "old", pWrite, StateCurrent},
+			{string(a) + " mcp first write never happened", a, KindMCP, "projectlens", nil, newV, "", pWrite, StateMissing},
+		}...)
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tg := mustTarget(t, newRepo(t))
+			canonOf := func(v version) []Canon { return v.f.canon(t, tc.agent, v.url) }
 			hashes := map[string]string{
-				"old": findCanon(t, oldF.canon(t, AgentClaude, evalURL), tc.kind, tc.id).Hash,
-				"new": findCanon(t, newF.canon(t, AgentClaude, evalURL), tc.kind, tc.id).Hash,
+				"old": findCanon(t, canonOf(oldV), tc.kind, tc.id).Hash,
+				"new": findCanon(t, canonOf(newV), tc.kind, tc.id).Hash,
 				"":    "",
 			}
-			cs := tc.canon.canon(t, AgentClaude, evalURL)
+			cs := canonOf(tc.canon)
 			if tc.disk != nil {
-				place(t, tg, findCanon(t, tc.disk.canon(t, AgentClaude, evalURL), tc.kind, tc.id))
+				place(t, tg, findCanon(t, canonOf(*tc.disk), tc.kind, tc.id))
 			} else if tc.kind == KindHook {
 				// The hooks file exists and holds the other hook only.
 				place(t, tg, findCanon(t, cs, KindHook, "edit"))
@@ -427,13 +447,13 @@ func TestEvaluate_Pending(t *testing.T) {
 				p.Hash = hashes[p.Hash]
 				rec.Pending = &p
 			}
-			m := manifestWith(AgentClaude, rec)
+			m := manifestWith(tc.agent, rec)
 			before, err := json.Marshal(m)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			st := findStatus(t, evaluate(t, tg, AgentClaude, cs, m), tc.kind, tc.id)
+			st := findStatus(t, evaluate(t, tg, tc.agent, cs, m), tc.kind, tc.id)
 			if st.State != tc.want || !st.Owned {
 				t.Fatalf("got %+v, want %s", st, tc.want)
 			}
@@ -611,4 +631,53 @@ func TestEvalFixture_Shape(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("fixture canon = %v, want %v", got, want)
 	}
+}
+
+func TestEvaluate_SymlinkInsideSkill(t *testing.T) {
+	const detail = "contains a symlink"
+	setup := func(t *testing.T) (string, Target, []Canon, Canon) {
+		t.Helper()
+		root := newRepo(t)
+		tg := mustTarget(t, root)
+		cs := defaultFixture().canon(t, AgentClaude, evalURL)
+		for _, c := range cs {
+			place(t, tg, c)
+		}
+		alpha := findCanon(t, cs, KindSkill, "alpha")
+		if err := os.Symlink("SKILL.md", filepath.Join(tg.Abs(alpha.Path), "link")); err != nil {
+			t.Fatal(err)
+		}
+		return root, tg, cs, alpha
+	}
+	check := func(t *testing.T, tg Target, cs []Canon, m *Manifest, want State, tracked bool) {
+		t.Helper()
+		sts, err := Evaluate(tg, AgentClaude, cs, m)
+		if err != nil {
+			t.Fatalf("Evaluate must not fail on a symlink inside a skill: %v", err)
+		}
+		for _, st := range sts {
+			if st.Kind == KindSkill && st.ID == "alpha" {
+				if st.State != want || st.Detail != detail || st.Tracked != tracked {
+					t.Errorf("alpha: got %+v, want %s %q", st, want, detail)
+				}
+			} else if st.State != StateCurrent {
+				t.Errorf("other item affected: %+v", st)
+			}
+		}
+	}
+
+	t.Run("no record", func(t *testing.T) {
+		_, tg, cs, _ := setup(t)
+		check(t, tg, cs, manifestWith(AgentClaude), StateUnmanaged, false)
+	})
+	t.Run("record", func(t *testing.T) {
+		_, tg, cs, alpha := setup(t)
+		check(t, tg, cs, manifestWith(AgentClaude, recordFor(alpha, alpha.Hash)), StateModified, false)
+	})
+	t.Run("tracked", func(t *testing.T) {
+		root, tg, cs, alpha := setup(t)
+		git(t, root, "add", "-f", "--", alpha.Path+"/SKILL.md")
+		git(t, root, "commit", "-q", "-m", "tracked")
+		check(t, tg, cs, manifestWith(AgentClaude), StateManual, true)
+	})
 }

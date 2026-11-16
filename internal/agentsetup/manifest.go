@@ -160,6 +160,9 @@ func (m *Manifest) Record(a Agent, kind Kind, id string) (Record, bool) {
 
 // InstalledAgents returns the agents that have a record, sorted.
 func (m *Manifest) InstalledAgents() []Agent {
+	if m == nil {
+		return nil
+	}
 	out := make([]Agent, 0, len(m.Agents))
 	for a := range m.Agents {
 		out = append(out, a)
@@ -170,6 +173,9 @@ func (m *Manifest) InstalledAgents() []Agent {
 
 // Created reports whether install created path.
 func (m *Manifest) Created(p string) bool {
+	if m == nil {
+		return false
+	}
 	for _, c := range m.CreatedPaths {
 		if c == p {
 			return true
@@ -201,7 +207,7 @@ func CheckManifestWritable(t Target) error {
 func RecoverCreated(t Target) ([]string, error) {
 	block, err := t.ExcludeBlock()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("recover created paths: %w", err)
 	}
 	var out []string
 	for _, pattern := range block {

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -67,6 +68,9 @@ func HashString(s string) string {
 // MCPHash is the hash of the MCP entry for a server URL.
 func MCPHash(url string) string { return HashString("mcp\n" + url) }
 
+// ErrSymlinkInSkill is wrapped by HashDir when it meets a symlink.
+var ErrSymlinkInSkill = errors.New("symlink not allowed")
+
 // HashDir hashes every regular file under dir (path and content), in sorted
 // slash-separated relative path order. Symlinks are an error.
 func HashDir(dir string) (string, error) {
@@ -76,7 +80,7 @@ func HashDir(dir string) (string, error) {
 			return err
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("symlink not allowed: %s", p)
+			return fmt.Errorf("%w: %s", ErrSymlinkInSkill, p)
 		}
 		if d.Type().IsRegular() {
 			rel, err := filepath.Rel(dir, p)

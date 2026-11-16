@@ -225,3 +225,16 @@ func TestRecoverCreated(t *testing.T) {
 		t.Fatalf("RecoverCreated = %v, want %v", got, want)
 	}
 }
+
+func TestManifest_NilSafeLookups(t *testing.T) {
+	var m *Manifest
+	if _, ok := m.Record(AgentClaude, KindMCP, "projectlens"); ok {
+		t.Error("Record on nil manifest")
+	}
+	if a := m.InstalledAgents(); len(a) != 0 {
+		t.Errorf("InstalledAgents on nil manifest = %v", a)
+	}
+	if m.Created(".mcp.json") {
+		t.Error("Created on nil manifest")
+	}
+}

@@ -1,8 +1,10 @@
 package agentsetup
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -217,5 +219,27 @@ func TestLoadCanonical_DuplicateHookID(t *testing.T) {
 		{"type":"command","command":": projectlens-hook=dup; echo b"}]}]}}`)
 	if _, err := LoadCanonical(root, AgentClaude, "u"); err == nil {
 		t.Fatal("expected error for duplicate hook ID")
+	}
+}
+
+func TestHashDir_SymlinkSentinel(t *testing.T) {
+	d := t.TempDir()
+	writeTree(t, d)
+	if err := os.Symlink("SKILL.md", filepath.Join(d, "a", "link")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := HashDir(d)
+	if !errors.Is(err, ErrSymlinkInSkill) || !strings.Contains(err.Error(), "symlink not allowed") {
+		t.Fatalf("want ErrSymlinkInSkill with the original text, got %v", err)
+	}
+}
+
+func TestLoadCanonical_SymlinkInSkillSourceErrors(t *testing.T) {
+	root := fixtureAssets(t, `{"hooks":{}}`)
+	if err := os.Symlink("SKILL.md", filepath.Join(root, "skills", "s1", "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadCanonical(root, AgentClaude, "u"); !errors.Is(err, ErrSymlinkInSkill) {
+		t.Fatalf("want ErrSymlinkInSkill, got %v", err)
 	}
 }
