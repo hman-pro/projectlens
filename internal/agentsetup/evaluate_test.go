@@ -483,6 +483,16 @@ func TestEvaluate_HookPlacementChanges(t *testing.T) {
 		write(t, tg.Abs(edit.Path), string(b))
 		check(t, tg, cs, rec, StateModified, "duplicate entries")
 		check(t, tg, cs, manifestWith(AgentClaude), StateModified, "duplicate entries")
+		// A forced dedupe that was journaled but not done is stale, not modified.
+		disk, err := installedHash(tg, edit.Item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		journaled := recordFor(edit, disk.hash)
+		journaled.Pending = &Pending{Op: "write", Hash: edit.Hash}
+		check(t, tg, cs, manifestWith(AgentClaude, journaled), StateStale, "")
+		journaled.Hash = "other"
+		check(t, tg, cs, manifestWith(AgentClaude, journaled), StateModified, "duplicate entries")
 	})
 }
 

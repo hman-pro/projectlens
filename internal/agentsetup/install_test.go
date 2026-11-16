@@ -539,10 +539,18 @@ func TestInstall_SymlinkedSkill(t *testing.T) {
 	assets := defaultFixture().dir(t)
 	outsideSnap := snapshot(t, outside)
 
+	before := porcelain(t, root)
+	if before != "?? .claude/skills/alpha\n" {
+		t.Fatalf("setup porcelain %q", before)
+	}
+
 	res := runInstall(t, tg, assets, claudeOpts())
 	alpha := resultFor(t, res, KindSkill, "alpha")
 	if alpha.Action != ActionSkipped || alpha.State != StateUnmanaged || alpha.Detail != "symlink" {
 		t.Fatalf("alpha: %+v", alpha)
+	}
+	if p := porcelain(t, root); p != before {
+		t.Fatalf("porcelain %q, want %q", p, before)
 	}
 	if !tg.IsSymlink(".claude/skills/alpha") {
 		t.Fatal("link replaced without --force")
@@ -560,6 +568,11 @@ func TestInstall_SymlinkedSkill(t *testing.T) {
 	}
 	if !reflect.DeepEqual(snapshot(t, outside), outsideSnap) {
 		t.Fatal("outside dir changed")
+	}
+	// The link was visible before install; the replaced directory was not
+	// created by install, so it stays visible (never excluded).
+	if p := porcelain(t, root); p != "?? .claude/skills/alpha/SKILL.md\n" {
+		t.Fatalf("porcelain after force %q", p)
 	}
 }
 
@@ -1403,4 +1416,305 @@ func TestInstall_TamperedManifestNeverDeletesOutside(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInstall_InterruptedForcedOrphanRemoval(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	runInstall(t, tg, defaultFixture().dir(t), claudeOpts())
+	write(t, tg.Abs(".claude/skills/beta/mine.md"), "mine") // disk now differs from the record
+	noBeta := defaultFixture()
+	noBeta.beta = ""
+	assets := noBeta.dir(t)
+
+	o := forced(claudeOpts())
+	o.failAt = 1 // beta's removal is the only journaled operation
+	if _, err := Install(tg, assets, o); err == nil {
+		t.Fatal("no error")
+	}
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("porcelain %q", p)
+	}
+	res := runInstall(t, tg, assets, claudeOpts())
+	wantActions(t, res, ActionCurrent, map[string]Action{"skill:beta": ActionRemoved})
+	if tg.Exists(".claude/skills/beta") {
+		t.Fatal("orphan kept")
+	}
+	if _, ok := loadManifest(t, tg).Record(AgentClaude, KindSkill, "beta"); ok {
+		t.Fatal("orphan record kept")
+	}
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("porcelain %q", p)
+	}
+}
+
+func TestInstall_InterruptedForcedDedupe(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	assets := defaultFixture().dir(t)
+	runInstall(t, tg, assets, claudeOpts())
+	edit := findCanon(t, defaultFixture().canon(t, AgentClaude, evalURL), KindHook, "edit")
+	// A second, different entry for the same ID under another event.
+	dup := edit.Hook
+	dup.Event, dup.Matcher, dup.Command = "Stop", "", edit.Hook.Command+" # copy"
+	p := tg.Abs(edit.Path)
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(readFile(t, p)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["hooks"].(map[string]any)["Stop"] = []any{map[string]any{"matcher": "", "hooks": []any{
+		map[string]any{"type": dup.Type, "command": dup.Command}}}}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, p, string(b))
+
+	res := runInstall(t, tg, assets, claudeOpts())
+	if r := resultFor(t, res, KindHook, "edit"); r.Action != ActionSkipped || r.Detail != "duplicate entries" {
+		t.Fatalf("edit: %+v", r)
+	}
+	o := forced(claudeOpts())
+	o.failAt = 1 // edit is the only write
+	if _, err := Install(tg, assets, o); err == nil {
+		t.Fatal("no error")
+	}
+	res = runInstall(t, tg, assets, claudeOpts())
+	if a := resultFor(t, res, KindHook, "edit").Action; a != ActionUpdated {
+		t.Fatalf("rerun without force: %s", a)
+	}
+	hooks, err := ReadHooks(p)
+	if err != nil || hooks["edit"].Dup || hooks["edit"].Hash() != edit.Hash {
+		t.Fatalf("hooks %+v %v", hooks, err)
+	}
+}
+
+// The real path of a skill being replaced is only ever whole-old, absent, or
+// whole-new; the old copy is moved aside first. Each crash state is simulated here.
+func TestInstall_SkillReplaceIntermediateStates(t *testing.T) {
+	v2 := defaultFixture()
+	v2.alpha = "alpha v2"
+	const alphaPath, aside = ".claude/skills/alpha", ".claude/skills/.alpha.lens-old"
+
+	interrupted := func(t *testing.T) (Target, string) {
+		t.Helper()
+		root := newRepo(t)
+		tg := mustTarget(t, root)
+		runInstall(t, tg, defaultFixture().dir(t), claudeOpts())
+		assets := v2.dir(t)
+		o := claudeOpts()
+		o.failAt = 1 // alpha's update is journaled, not yet done
+		if _, err := Install(tg, assets, o); err == nil {
+			t.Fatal("no error")
+		}
+		if err := os.Rename(tg.Abs(alphaPath), tg.Abs(aside)); err != nil {
+			t.Fatal(err)
+		}
+		return tg, assets
+	}
+	finish := func(t *testing.T, tg Target, assets string, want Action) {
+		t.Helper()
+		if p := porcelain(t, tg.Root); p != "" {
+			t.Fatalf("crash state visible: %q", p)
+		}
+		res := runInstall(t, tg, assets, claudeOpts())
+		if a := resultFor(t, res, KindSkill, "alpha").Action; a != want {
+			t.Fatalf("rerun: %s, want %s", a, want)
+		}
+		if tg.Exists(aside) || readFile(t, tg.Abs(alphaPath+"/SKILL.md")) != "alpha v2" {
+			t.Fatal("not finished")
+		}
+		if p := porcelain(t, tg.Root); p != "" {
+			t.Fatalf("porcelain %q", p)
+		}
+		if !reflect.DeepEqual(excludeBlock(t, tg), claudeBlock) {
+			t.Fatalf("block %v", excludeBlock(t, tg))
+		}
+	}
+
+	t.Run("aside present, real absent", func(t *testing.T) {
+		tg, assets := interrupted(t)
+		write(t, tg.Abs(".claude/skills/.alpha.lens-tmp/SKILL.md"), "alpha v2") // copy done too
+		finish(t, tg, assets, ActionWritten)
+	})
+	t.Run("aside present, real new", func(t *testing.T) {
+		tg, assets := interrupted(t)
+		if err := CopyDir(filepath.Join(assets, "skills", "alpha"), tg.Abs(alphaPath)); err != nil {
+			t.Fatal(err)
+		}
+		finish(t, tg, assets, ActionCurrent)
+	})
+	t.Run("orphan: aside present, real absent", func(t *testing.T) {
+		root := newRepo(t)
+		tg := mustTarget(t, root)
+		runInstall(t, tg, defaultFixture().dir(t), claudeOpts())
+		noBeta := defaultFixture()
+		noBeta.beta = ""
+		assets := noBeta.dir(t)
+		o := claudeOpts()
+		o.failAt = 1
+		if _, err := Install(tg, assets, o); err == nil {
+			t.Fatal("no error")
+		}
+		if err := os.Rename(tg.Abs(".claude/skills/beta"), tg.Abs(".claude/skills/.beta.lens-old")); err != nil {
+			t.Fatal(err)
+		}
+		if p := porcelain(t, root); p != "" {
+			t.Fatalf("crash state visible: %q", p)
+		}
+		res := runInstall(t, tg, assets, claudeOpts())
+		wantActions(t, res, ActionCurrent, map[string]Action{"skill:beta": ActionRemoved})
+		if tg.Exists(".claude/skills/.beta.lens-old") || tg.Exists(".claude/skills/beta") {
+			t.Fatal("not finished")
+		}
+		if p := porcelain(t, root); p != "" {
+			t.Fatalf("porcelain %q", p)
+		}
+	})
+}
+
+func TestInstall_OtherAgentTempLeftoverCleaned(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	assets := defaultFixture().dir(t)
+	o := claudeOpts()
+	o.failAt = 3 // claude alpha's odd step: its temp and aside siblings are excluded
+	if _, err := Install(tg, assets, o); err == nil {
+		t.Fatal("no error")
+	}
+	leftovers := []string{".claude/skills/.alpha.lens-tmp", ".claude/skills/.alpha.lens-old"}
+	for _, l := range leftovers {
+		write(t, tg.Abs(l+"/partial"), "partial")
+	}
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("leftovers visible: %q", p)
+	}
+	runInstall(t, tg, assets, codexOpts())
+	for _, l := range leftovers {
+		if tg.Exists(l) {
+			t.Errorf("%s kept by a codex install", l)
+		}
+	}
+	if p := porcelain(t, root); p != "" {
+		t.Fatalf("porcelain %q", p)
+	}
+}
+
+func TestInstall_PlanMatchesStatusesByItem(t *testing.T) {
+	tg := mustTarget(t, newRepo(t))
+	cs := defaultFixture().canon(t, AgentClaude, evalURL)
+	m := manifestWith(AgentClaude)
+	sts := evaluate(t, tg, AgentClaude, cs, m)
+	for i, j := 0, len(sts)-1; i < j; i, j = i+1, j-1 {
+		sts[i], sts[j] = sts[j], sts[i]
+	}
+	ops, err := planInstall(tg, claudeOpts(), cs, sts, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range ops {
+		if op.canon.Item != op.Item {
+			t.Errorf("status %+v planned with canonical %+v", op.Item, op.canon.Item)
+		}
+	}
+	stray := ItemStatus{Item: Item{Agent: AgentClaude, Kind: KindSkill, ID: "gamma", Path: ".claude/skills/gamma"}, State: StateMissing}
+	if _, err := planInstall(tg, claudeOpts(), cs, append(sts, stray), m); err == nil {
+		t.Fatal("a non-orphan status without a canonical item must be an error")
+	}
+}
+
+func TestInstall_SymlinkInsideSkill(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	assets := defaultFixture().dir(t)
+	runInstall(t, tg, assets, claudeOpts())
+	outside := t.TempDir()
+	write(t, filepath.Join(outside, "sentinel"), "sentinel")
+	outsideSnap := snapshot(t, outside)
+	if err := os.Symlink(outside, tg.Abs(".claude/skills/alpha/link")); err != nil {
+		t.Fatal(err)
+	}
+	before := porcelain(t, root)
+
+	res := runInstall(t, tg, assets, claudeOpts())
+	r := resultFor(t, res, KindSkill, "alpha")
+	if r.Action != ActionSkipped || r.State != StateModified || r.Detail != "contains a symlink" {
+		t.Fatalf("alpha: %+v", r)
+	}
+	if !tg.IsSymlink(".claude/skills/alpha/link") {
+		t.Fatal("link removed without --force")
+	}
+
+	res = runInstall(t, tg, assets, forced(claudeOpts()))
+	if a := resultFor(t, res, KindSkill, "alpha").Action; a != ActionUpdated {
+		t.Fatalf("forced: %s", a)
+	}
+	if tg.Exists(".claude/skills/alpha/link") || tg.IsSymlink(".claude/skills/alpha") {
+		t.Fatal("not replaced with a real directory")
+	}
+	if h, err := HashDir(tg.Abs(".claude/skills/alpha")); err != nil || h != findCanon(t, defaultFixture().canon(t, AgentClaude, evalURL), KindSkill, "alpha").Hash {
+		t.Fatalf("alpha content: %v", err)
+	}
+	if !reflect.DeepEqual(snapshot(t, outside), outsideSnap) {
+		t.Fatal("outside dir changed")
+	}
+	if p := porcelain(t, root); p != before {
+		t.Fatalf("porcelain %q, want %q", p, before)
+	}
+}
+
+func TestInstall_OrphanBlockedAndManual(t *testing.T) {
+	noBeta := defaultFixture()
+	noBeta.beta = ""
+
+	t.Run("blocked", func(t *testing.T) {
+		for _, force := range []bool{false, true} {
+			tg := mustTarget(t, newRepo(t))
+			runInstall(t, tg, defaultFixture().dir(t), claudeOpts())
+			outside := t.TempDir()
+			if err := os.Rename(tg.Abs(".claude/skills/beta"), filepath.Join(outside, "beta")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(outside, "beta"), tg.Abs(".claude/skills/beta")); err != nil {
+				t.Fatal(err)
+			}
+			outsideSnap := snapshot(t, outside)
+			o := claudeOpts()
+			o.Force = force
+			res := runInstall(t, tg, noBeta.dir(t), o)
+			r := resultFor(t, res, KindSkill, "beta")
+			if r.Action != ActionBlocked || r.Snippet != ".claude/skills/beta is a symlink; lens will not write through it" {
+				t.Fatalf("force=%v: %+v", force, r)
+			}
+			if !reflect.DeepEqual(snapshot(t, outside), outsideSnap) || !tg.IsSymlink(".claude/skills/beta") {
+				t.Fatalf("force=%v: link or its target changed", force)
+			}
+			if _, ok := loadManifest(t, tg).Record(AgentClaude, KindSkill, "beta"); !ok {
+				t.Fatalf("force=%v: record dropped", force)
+			}
+		}
+	})
+
+	t.Run("manual", func(t *testing.T) {
+		for _, force := range []bool{false, true} {
+			root := newRepo(t)
+			tg := mustTarget(t, root)
+			runInstall(t, tg, defaultFixture().dir(t), claudeOpts())
+			git(t, root, "add", "-f", "--", ".claude/skills/beta/SKILL.md")
+			git(t, root, "commit", "-q", "-m", "tracked")
+			o := claudeOpts()
+			o.Force = force
+			res := runInstall(t, tg, noBeta.dir(t), o)
+			r := resultFor(t, res, KindSkill, "beta")
+			if r.Action != ActionManual || !r.Tracked || !strings.Contains(r.Snippet, ".claude/skills/beta") {
+				t.Fatalf("force=%v: %+v", force, r)
+			}
+			if readFile(t, tg.Abs(".claude/skills/beta/SKILL.md")) != "beta v1" {
+				t.Fatalf("force=%v: tracked file changed", force)
+			}
+			if _, ok := loadManifest(t, tg).Record(AgentClaude, KindSkill, "beta"); !ok {
+				t.Fatalf("force=%v: record dropped", force)
+			}
+		}
+	})
 }

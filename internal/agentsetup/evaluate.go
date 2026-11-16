@@ -211,6 +211,11 @@ func evaluateItem(t Target, c Canon, rec Record, owned bool) (ItemStatus, error)
 
 	switch {
 	case c.Kind == KindHook && disk.dup: // 6
+		// A forced dedupe journals the duplicated content as Hash; if it was
+		// interrupted, the rewrite it promised is still owed, so it is stale.
+		if owned && rec.Pending != nil && rec.Pending.Op == "write" && disk.hash == rec.Hash {
+			return result(StateStale, "")
+		}
 		return result(StateModified, detailDuplicates)
 	case disk.hash == c.Hash: // 7
 		return result(StateCurrent, "")

@@ -31,9 +31,11 @@ const (
 	detailRecovered   = "recovered path; content differs from canonical"
 	snippetForeign    = "remove your existing mcp_servers.projectlens definition from .codex/config.toml, then re-run"
 
-	// skillTempSuffix names the sibling a skill is copied into before it is
-	// renamed into place: ".<name>.lens-tmp" in the same parent.
-	skillTempSuffix = ".lens-tmp"
+	// A skill is copied into ".<name>.lens-tmp" and renamed into place; the
+	// copy it replaces is first renamed aside to ".<name>.lens-old" and removed
+	// last. The real path is therefore only ever whole-old, absent, or whole-new.
+	skillTempSuffix  = ".lens-tmp"
+	skillAsideSuffix = ".lens-old"
 )
 
 // InstallOpts configures one install run.
@@ -78,7 +80,7 @@ type installOp struct {
 	ItemResult
 	kind  opKind
 	canon Canon     // opWrite, opRecord
-	disk  installed // opWrite: what is on disk before the write
+	disk  installed // opWrite, opRemove: what is on disk before the change
 }
 
 // Install wires an agent into t. Preflight (manifest writability, parsing and
@@ -113,7 +115,7 @@ func Install(t Target, assetsDir string, o InstallOpts) (InstallResult, error) {
 		res.ExcludePaths = projectExclude(t, o.Agent, m, ops, skills)
 	} else {
 		r := &installer{t: t, m: m, agent: o.Agent, url: o.URL, force: o.Force, failAt: o.failAt, skills: skills}
-		if err := r.run(canon, ops); err != nil {
+		if err := r.run(ops); err != nil {
 			return InstallResult{}, err
 		}
 		if res.ExcludePaths, err = t.ExcludeBlock(); err != nil {
@@ -141,7 +143,7 @@ func loadInstallManifest(t Target) (*Manifest, error) {
 		return nil, err
 	}
 	for _, p := range recovered {
-		if !isSkillTemp(p) {
+		if !isSkillSibling(p) {
 			m.CreatedPaths = append(m.CreatedPaths, p)
 		}
 	}
@@ -150,14 +152,22 @@ func loadInstallManifest(t Target) (*Manifest, error) {
 
 // planInstall decides the action for every evaluated item. It reads only.
 func planInstall(t Target, o InstallOpts, canon []Canon, sts []ItemStatus, m *Manifest) ([]installOp, error) {
+	byItem := make(map[string]Canon, len(canon))
+	for _, c := range canon {
+		byItem[itemKeyOf(c.Kind, c.ID)] = c
+	}
 	ops := make([]installOp, 0, len(sts))
-	for i, st := range sts {
+	for _, st := range sts {
 		var op installOp
 		var err error
-		if i < len(canon) { // Evaluate lists canonical items first, in order
-			op, err = planCanonical(t, o, canon[i], st, m)
-		} else {
+		c, ok := byItem[itemKeyOf(st.Kind, st.ID)]
+		switch {
+		case ok && st.State != StateOrphaned && c.Item == st.Item:
+			op, err = planCanonical(t, o, c, st, m)
+		case !ok && st.State == StateOrphaned:
 			op, err = planOrphan(t, o, st, m)
+		default:
+			err = fmt.Errorf("plan %s %s: status %q does not match the canonical items", st.Kind, st.ID, st.State)
 		}
 		if err != nil {
 			return nil, err
@@ -267,12 +277,15 @@ func planOrphan(t Target, o InstallOpts, st ItemStatus, m *Manifest) (installOp,
 		op.Action, op.kind = ActionRemoved, opDrop
 		return op, nil
 	}
+	op.disk = disk
 	rec, _ := m.Record(o.Agent, st.Kind, st.ID)
 	recorded := rec.Hash
 	if rec.Pending != nil && rec.Pending.Op == "write" && disk.hash == rec.Pending.Hash {
 		recorded = rec.Pending.Hash
 	}
-	if (disk.hash == recorded && !disk.dup) || o.Force {
+	// A journaled removal (forced or not) recorded the content it decided to remove.
+	pendingRemove := rec.Pending != nil && rec.Pending.Op == "remove" && disk.hash == rec.Hash
+	if (disk.hash == recorded && !disk.dup) || pendingRemove || o.Force {
 		op.Action, op.kind = ActionRemoved, opRemove
 		return op, nil
 	}
@@ -428,13 +441,61 @@ func projectExclude(t Target, a Agent, m *Manifest, ops []installOp, skills map[
 
 func itemKeyOf(k Kind, id string) string { return string(k) + "\x00" + id }
 
-func skillTempPath(skill string) string {
-	return path.Join(path.Dir(skill), "."+path.Base(skill)+skillTempSuffix)
+func skillSibling(skill, suffix string) string {
+	return path.Join(path.Dir(skill), "."+path.Base(skill)+suffix)
 }
 
-func isSkillTemp(p string) bool {
+func skillTempPath(skill string) string  { return skillSibling(skill, skillTempSuffix) }
+func skillAsidePath(skill string) string { return skillSibling(skill, skillAsideSuffix) }
+
+// skillSiblingPatterns are the exclude patterns for a skill's temp and aside
+// siblings, listed while a write or removal of that skill is journaled.
+func skillSiblingPatterns(skill string) []string {
+	return []string{"/" + skillTempPath(skill) + "/", "/" + skillAsidePath(skill) + "/"}
+}
+
+func isSkillSibling(p string) bool {
 	base := path.Base(p)
-	return strings.HasPrefix(base, ".") && strings.HasSuffix(base, skillTempSuffix)
+	return strings.HasPrefix(base, ".") &&
+		(strings.HasSuffix(base, skillTempSuffix) || strings.HasSuffix(base, skillAsideSuffix))
+}
+
+// removeSkillSibling deletes a leftover temp or aside sibling. strict makes an
+// uncontained or tracked sibling an error; otherwise it is left alone.
+func removeSkillSibling(t Target, rel string, strict bool) error {
+	if !t.Exists(rel) {
+		return nil
+	}
+	if err := t.CheckContained(rel); err != nil {
+		if strict {
+			return fmt.Errorf("remove %s: %w", rel, err)
+		}
+		return nil
+	}
+	tracked, err := t.IsTracked(rel)
+	if err != nil {
+		return err
+	}
+	if tracked {
+		if strict {
+			return fmt.Errorf("remove %s: path is tracked by git", rel)
+		}
+		return nil
+	}
+	if err := os.RemoveAll(t.Abs(rel)); err != nil {
+		return fmt.Errorf("remove %s: %w", rel, err)
+	}
+	return nil
+}
+
+// removeSkillSiblings deletes both leftover siblings of a skill.
+func removeSkillSiblings(t Target, skill string, strict bool) error {
+	for _, rel := range []string{skillTempPath(skill), skillAsidePath(skill)} {
+		if err := removeSkillSibling(t, rel, strict); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // installer applies planned operations, journaling each change in the manifest.
@@ -449,12 +510,17 @@ type installer struct {
 	skills map[string]bool
 }
 
-func (r *installer) run(canon []Canon, ops []installOp) error {
-	for _, c := range canon {
-		if c.Kind == KindSkill {
-			if err := r.removeSkillTemp(c.Path, false); err != nil {
-				return err
-			}
+func (r *installer) run(ops []installOp) error {
+	// Leftovers of a crash, for this agent's skills and every recorded skill of
+	// any agent: once the block is rewritten they would no longer be excluded.
+	skills := make([]string, 0, len(r.skills))
+	for p := range r.skills {
+		skills = append(skills, p)
+	}
+	sort.Strings(skills)
+	for _, p := range skills {
+		if err := removeSkillSiblings(r.t, p, false); err != nil {
+			return err
 		}
 	}
 	for _, op := range ops {
@@ -589,7 +655,7 @@ func (r *installer) write(op installOp) error {
 	}
 	var extra []string
 	if c.Kind == KindSkill {
-		extra = []string{"/" + skillTempPath(c.Path) + "/"}
+		extra = skillSiblingPatterns(c.Path)
 	}
 	if err := r.save(extra); err != nil {
 		return err
@@ -632,43 +698,15 @@ func (r *installer) writeItem(c Canon, replaceLink bool) error {
 	return nil
 }
 
-// removeSkillTemp deletes a leftover temp sibling of a skill. strict makes an
-// uncontained or tracked temp path an error; otherwise it is left alone.
-func (r *installer) removeSkillTemp(skill string, strict bool) error {
-	tmp := skillTempPath(skill)
-	if !r.t.Exists(tmp) {
-		return nil
-	}
-	if err := r.t.CheckContained(tmp); err != nil {
-		if strict {
-			return fmt.Errorf("remove %s: %w", tmp, err)
-		}
-		return nil
-	}
-	tracked, err := r.t.IsTracked(tmp)
-	if err != nil {
-		return err
-	}
-	if tracked {
-		if strict {
-			return fmt.Errorf("remove %s: path is tracked by git", tmp)
-		}
-		return nil
-	}
-	if err := os.RemoveAll(r.t.Abs(tmp)); err != nil {
-		return fmt.Errorf("remove %s: %w", tmp, err)
-	}
-	return nil
-}
-
-// writeSkill copies the skill into a temp sibling, removes the old directory
-// (or, with --force, the symlink itself), and renames the copy into place.
+// writeSkill copies the skill into a temp sibling, moves the old directory aside
+// (or, with --force, removes the symlink itself), renames the copy into place,
+// and finally removes the aside copy.
 func (r *installer) writeSkill(c Canon, replaceLink bool) error {
-	tmp := skillTempPath(c.Path)
-	if err := r.removeSkillTemp(c.Path, true); err != nil {
+	tmp, aside := skillTempPath(c.Path), skillAsidePath(c.Path)
+	if err := removeSkillSiblings(r.t, c.Path, true); err != nil {
 		return err
 	}
-	abs, absTmp := r.t.Abs(c.Path), r.t.Abs(tmp)
+	abs, absTmp, absAside := r.t.Abs(c.Path), r.t.Abs(tmp), r.t.Abs(aside)
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", path.Dir(c.Path), err)
 	}
@@ -676,19 +714,29 @@ func (r *installer) writeSkill(c Canon, replaceLink bool) error {
 		return err
 	}
 	if err := CopyDir(c.SkillSrc, absTmp); err != nil {
-		os.RemoveAll(absTmp)
-		return fmt.Errorf("copy skill: %w", err)
+		err = fmt.Errorf("copy skill: %w", err)
+		if rmErr := os.RemoveAll(absTmp); rmErr != nil {
+			err = errors.Join(err, fmt.Errorf("clean up %s: %w", tmp, rmErr))
+		}
+		return err
 	}
+	movedAside := false
 	if r.t.Exists(c.Path) {
 		if err := r.checkDest(c.Path, replaceLink); err != nil {
 			return err
 		}
-		remove := os.RemoveAll // does not follow links inside the directory
 		if replaceLink {
-			remove = os.Remove // the link itself, never its target
-		}
-		if err := remove(abs); err != nil {
-			return fmt.Errorf("remove old %s: %w", c.Path, err)
+			if err := os.Remove(abs); err != nil { // the link itself, never its target
+				return fmt.Errorf("remove link %s: %w", c.Path, err)
+			}
+		} else {
+			if err := r.checkDest(aside, false); err != nil {
+				return err
+			}
+			if err := os.Rename(abs, absAside); err != nil {
+				return fmt.Errorf("move %s aside: %w", c.Path, err)
+			}
+			movedAside = true
 		}
 	}
 	if err := r.checkDest(c.Path, false); err != nil {
@@ -700,6 +748,14 @@ func (r *installer) writeSkill(c Canon, replaceLink bool) error {
 	if err := os.Rename(absTmp, abs); err != nil {
 		return fmt.Errorf("rename %s: %w", tmp, err)
 	}
+	if movedAside {
+		if err := r.checkDest(aside, false); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(absAside); err != nil { // does not follow links inside
+			return fmt.Errorf("remove %s: %w", aside, err)
+		}
+	}
 	return nil
 }
 
@@ -709,9 +765,16 @@ func (r *installer) remove(op installOp) error {
 		return err
 	}
 	rec, _ := r.m.Record(r.agent, op.Kind, op.ID)
+	// Hash names what is on disk now, so an interrupted forced removal is
+	// finished by the next run without --force.
+	rec.Hash = op.disk.hash
 	rec.Pending = &Pending{Op: "remove"}
 	r.setRecord(rec)
-	if err := r.save(nil); err != nil {
+	var extra []string
+	if op.Kind == KindSkill {
+		extra = skillSiblingPatterns(op.Path)
+	}
+	if err := r.save(extra); err != nil {
 		return err
 	}
 	if err := r.step(); err != nil {
@@ -738,10 +801,7 @@ func removeItem(t Target, m *Manifest, it Item) error {
 	var err error
 	switch {
 	case it.Kind == KindSkill:
-		if err := os.RemoveAll(abs); err != nil {
-			return fmt.Errorf("remove %s: %w", it.Path, err)
-		}
-		return nil
+		return removeSkillDir(t, it.Path)
 	case it.Kind == KindHook:
 		empty, err = RemoveHook(abs, it.ID)
 	case it.Agent == AgentCodex:
@@ -756,6 +816,28 @@ func removeItem(t Target, m *Manifest, it Item) error {
 		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove %s: %w", it.Path, err)
 		}
+	}
+	return nil
+}
+
+// removeSkillDir renames a skill directory aside, then removes the aside copy,
+// so the real path is never left holding a partial directory.
+func removeSkillDir(t Target, skill string) error {
+	aside := skillAsidePath(skill)
+	if err := removeSkillSibling(t, aside, true); err != nil {
+		return err
+	}
+	if err := t.CheckContained(aside); err != nil {
+		return fmt.Errorf("remove %s: %w", skill, err)
+	}
+	if err := os.Rename(t.Abs(skill), t.Abs(aside)); err != nil {
+		return fmt.Errorf("move %s aside: %w", skill, err)
+	}
+	if err := t.CheckContained(aside); err != nil {
+		return fmt.Errorf("remove %s: %w", aside, err)
+	}
+	if err := os.RemoveAll(t.Abs(aside)); err != nil { // does not follow links inside
+		return fmt.Errorf("remove %s: %w", aside, err)
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 )
 
 // ErrInvalidJSON is wrapped (with the file path) when a destination JSON file
@@ -229,13 +230,21 @@ func entryID(raw json.RawMessage) (string, hookEntryView) {
 }
 
 // ReadHooks returns every entry carrying a ProjectLens hook ID, as found on disk.
+// When an ID appears more than once, the first entry in sorted event order is
+// reported, so its hash is stable from one read to the next.
 func ReadHooks(path string) (map[string]InstalledHook, error) {
 	_, events, _, err := loadHooksDoc(path)
 	if err != nil {
 		return nil, err
 	}
+	names := make([]string, 0, len(events))
+	for event := range events {
+		names = append(names, event)
+	}
+	sort.Strings(names)
 	out := map[string]InstalledHook{}
-	for event, groups := range events {
+	for _, event := range names {
+		groups := events[event]
 		for _, g := range groups {
 			entries, err := groupEntries(path, g)
 			if err != nil {
