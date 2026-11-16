@@ -2,7 +2,7 @@
 
 Date: 2026-05-21
 Status: lessons and future-spec guidance
-Source: `docs/2026-05-21-pnphive-comparison.md`
+Source: pnphive comparison notes (original comparison doc since removed from this repo)
 
 ## Purpose
 

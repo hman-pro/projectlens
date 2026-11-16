@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "projectlens": {
-      "type": "streamable-http",
+      "type": "http",
       "url": "http://localhost:8484/mcp"
     }
   }

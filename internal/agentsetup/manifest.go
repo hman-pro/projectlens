@@ -1,0 +1,480 @@
+package agentsetup
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"sort"
+	"strings"
+)
+
+const manifestVersion = 1
+
+// manifestRecovery ends every error about a manifest that cannot be used. With
+// the manifest gone, install recovers ownership from the exclude block.
+const manifestRecovery = "; fix or delete " + ManifestPath + " and re-run: lens agent install <agent>"
+
+// ErrManifestTracked reports that git tracks the manifest, so lens must not write it.
+var ErrManifestTracked = errors.New(ManifestPath + " is tracked by git")
+
+// ErrInvalidManifest reports a manifest entry that is not a path install could
+// have written: not local to the target root, or not where its agent and kind live.
+var ErrInvalidManifest = errors.New("invalid manifest")
+
+// Record is one item lens installed for an agent.
+type Record struct {
+	Kind    Kind     `json:"kind"`
+	ID      string   `json:"id"`
+	Path    string   `json:"path"`
+	Hash    string   `json:"hash"` // hash last known to be on disk; "" before the first write completes
+	Pending *Pending `json:"pending,omitempty"`
+}
+
+// Pending names an operation that was journaled but may not have completed.
+type Pending struct {
+	Op   string `json:"op"`             // "write" | "remove"
+	Hash string `json:"hash,omitempty"` // for "write": the hash the write will produce
+}
+
+// AgentRecord holds what lens installed for one agent.
+type AgentRecord struct {
+	URL   string   `json:"url"`
+	Items []Record `json:"items"`
+}
+
+// Manifest is the record of what lens wrote into a work tree.
+type Manifest struct {
+	Version int                    `json:"version"` // 1
+	Agents  map[Agent]*AgentRecord `json:"agents"`
+	// Path-level ownership for the whole work tree. Entries leave only when the path is gone.
+	CreatedPaths []string `json:"created_paths"` // files and skill dirs install created; drives exclude and deletion
+	CreatedDirs  []string `json:"created_dirs"`  // parent dirs install created; removed on uninstall when empty
+}
+
+func emptyManifest() *Manifest {
+	return &Manifest{Version: manifestVersion, Agents: map[Agent]*AgentRecord{}}
+}
+
+// LoadManifest reads the manifest; a missing file is an empty manifest.
+func LoadManifest(t Target) (*Manifest, error) {
+	data, err := os.ReadFile(t.Abs(ManifestPath))
+	if os.IsNotExist(err) {
+		return emptyManifest(), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse manifest %s: %w%s", ManifestPath, err, manifestRecovery)
+	}
+	if m.Version != manifestVersion {
+		return nil, fmt.Errorf("parse manifest %s: unsupported version %d%s", ManifestPath, m.Version, manifestRecovery)
+	}
+	if m.Agents == nil {
+		m.Agents = map[Agent]*AgentRecord{}
+	}
+	if err := m.validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w: %v%s", ManifestPath, ErrInvalidManifest, err, manifestRecovery)
+	}
+	return &m, nil
+}
+
+// validate checks that every path in the manifest is one install could have
+// written. The manifest is data on disk; a tampered entry must never steer a
+// write or a delete outside the work tree or to an unexpected file.
+func (m *Manifest) validate() error {
+	for a, ar := range m.Agents {
+		if ar == nil {
+			continue
+		}
+		pl, err := PlacementFor(a, ScopePersonal)
+		if err != nil {
+			return err
+		}
+		for _, r := range ar.Items {
+			if err := validRecordPath(pl, r); err != nil {
+				return fmt.Errorf("%s %s %q: %w", a, r.Kind, r.ID, err)
+			}
+		}
+	}
+	for _, list := range [][]string{m.CreatedPaths, m.CreatedDirs} {
+		for _, p := range list {
+			if err := checkLocal(p); err != nil {
+				return err
+			}
+		}
+	}
+	// CreatedPaths entries become exclude patterns and CreatedDirs entries are
+	// deleted when empty, so each must be what install records: a placement
+	// path (never a skill sibling), or a parent directory of one.
+	for _, p := range m.CreatedPaths {
+		if !placementShaped(p) || isSkillSibling(p) {
+			return fmt.Errorf("created path %q is not a path install writes", p)
+		}
+	}
+	parents := placementParents()
+	for _, d := range m.CreatedDirs {
+		if !parents[d] {
+			return fmt.Errorf("created dir %q is not a parent directory install creates", d)
+		}
+	}
+	return nil
+}
+
+// placementParents returns every proper ancestor directory of a path install
+// writes for a known agent: the parents of its MCP and hooks files, and its
+// skills directory with that directory's parents. These are the only
+// directories install records in CreatedDirs (see installer.missingParents).
+func placementParents() map[string]bool {
+	out := map[string]bool{}
+	add := func(p string) {
+		for d := path.Dir(p); d != "." && d != "/"; d = path.Dir(d) {
+			out[d] = true
+		}
+	}
+	for _, a := range knownAgents() {
+		pl, err := PlacementFor(a, ScopePersonal)
+		if err != nil {
+			continue
+		}
+		add(pl.MCPFile)
+		if pl.HooksFile != "" {
+			add(pl.HooksFile)
+		}
+		add(pl.SkillsDir + "/x") // the skills dir itself and its parents
+	}
+	return out
+}
+
+// validRecordPath requires the path the placement table gives for the record's kind.
+func validRecordPath(pl Placement, r Record) error {
+	if err := checkLocal(r.Path); err != nil {
+		return err
+	}
+	var want string
+	switch r.Kind {
+	case KindMCP:
+		want = pl.MCPFile
+	case KindHook:
+		if pl.HooksFile == "" {
+			return errors.New("agent has no hooks file")
+		}
+		want = pl.HooksFile
+	case KindSkill:
+		if !singleSegment(r.ID) {
+			return fmt.Errorf("skill ID %q is not a single path segment", r.ID)
+		}
+		want = pl.SkillsDir + "/" + r.ID
+	default:
+		return fmt.Errorf("unknown kind %q", r.Kind)
+	}
+	if r.Path != want {
+		return fmt.Errorf("path %q, want %q", r.Path, want)
+	}
+	return nil
+}
+
+// singleSegment reports whether s is one path segment: not empty, ".", or "..",
+// and without a separator.
+func singleSegment(s string) bool {
+	return s != "" && s != "." && s != ".." && !strings.ContainsAny(s, `/\`)
+}
+
+// knownAgents lists every supported agent.
+func knownAgents() []Agent { return []Agent{AgentClaude, AgentCodex} }
+
+// isSkillsDir reports whether dir is a known agent's skills directory.
+func isSkillsDir(dir string) bool {
+	for _, a := range knownAgents() {
+		if pl, err := PlacementFor(a, ScopePersonal); err == nil && dir == pl.SkillsDir {
+			return true
+		}
+	}
+	return false
+}
+
+// placementShaped reports whether p is a path install writes for a known agent:
+// its MCP file, its hooks file, or one entry of its skills directory.
+func placementShaped(p string) bool {
+	_, ok := placementAgent(p)
+	return ok
+}
+
+// placementAgent returns the known agent whose MCP file, hooks file, or skills
+// directory entry p is.
+func placementAgent(p string) (Agent, bool) {
+	for _, a := range knownAgents() {
+		pl, err := PlacementFor(a, ScopePersonal)
+		if err != nil {
+			continue
+		}
+		if p == pl.MCPFile || (pl.HooksFile != "" && p == pl.HooksFile) {
+			return a, true
+		}
+		if name, ok := strings.CutPrefix(p, pl.SkillsDir+"/"); ok && singleSegment(name) {
+			return a, true
+		}
+	}
+	return "", false
+}
+
+// RecoveryAgents returns, sorted, the agents whose placement holds any of paths.
+func RecoveryAgents(paths []string) []Agent {
+	seen := map[Agent]bool{}
+	for _, p := range paths {
+		if a, ok := placementAgent(p); ok {
+			seen[a] = true
+		}
+	}
+	var out []Agent
+	for _, a := range knownAgents() {
+		if seen[a] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// RecoverablePaths returns, when there is no manifest, the paths this work
+// tree's exclude block still hides that are where install writes and exist (see
+// RecoverCreated), without skill siblings. They may hold live wiring that only
+// install can take back into a manifest. It returns nil when the manifest exists.
+func RecoverablePaths(t Target) ([]string, error) {
+	if t.Exists(ManifestPath) {
+		return nil, nil
+	}
+	paths, err := RecoverCreated(t)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, p := range paths {
+		if !isSkillSibling(p) {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// UnreferencedPaths returns the CreatedPaths entries no record refers to: paths
+// install created that stay excluded from git although no agent manages them.
+func (m *Manifest) UnreferencedPaths() []string {
+	if m == nil {
+		return nil
+	}
+	referenced := map[string]bool{}
+	for _, ar := range m.Agents {
+		if ar == nil {
+			continue
+		}
+		for _, r := range ar.Items {
+			referenced[r.Path] = true
+		}
+	}
+	var out []string
+	for _, p := range m.CreatedPaths {
+		if !referenced[p] {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// existingPaths returns the sorted, de-duplicated entries of paths that exist on
+// disk or for which keep reports true.
+func existingPaths(t Target, paths []string, keep func(string) bool) []string {
+	out := []string{}
+	for _, p := range paths {
+		if t.Exists(p) || keep(p) {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return compactStrings(out)
+}
+
+// pendingWritePaths returns the paths of every record, of any agent, with a
+// journaled write.
+func (m *Manifest) pendingWritePaths() []string {
+	var out []string
+	for _, ar := range m.Agents {
+		if ar == nil {
+			continue
+		}
+		for _, r := range ar.Items {
+			if r.Pending != nil && r.Pending.Op == "write" {
+				out = append(out, r.Path)
+			}
+		}
+	}
+	return out
+}
+
+func compactStrings(sorted []string) []string {
+	out := sorted[:0]
+	for i, s := range sorted {
+		if i == 0 || s != sorted[i-1] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// livePaths returns the CreatedPaths and CreatedDirs entries Save keeps: those
+// that exist, plus those a pending write may be about to create.
+func (m *Manifest) livePaths(t Target) (paths, dirs []string) {
+	pending := m.pendingWritePaths()
+	paths = existingPaths(t, m.CreatedPaths, func(p string) bool {
+		for _, w := range pending {
+			if w == p {
+				return true
+			}
+		}
+		return false
+	})
+	dirs = existingPaths(t, m.CreatedDirs, func(d string) bool {
+		for _, w := range pending {
+			if strings.HasPrefix(w, d+"/") {
+				return true
+			}
+		}
+		return false
+	})
+	return paths, dirs
+}
+
+// Save prunes CreatedPaths/CreatedDirs entries that no longer exist on disk, then
+// writes the manifest. A pending write may be about to create a path, so while a
+// record (of any agent) has Pending{Op: "write"}, an absent CreatedPaths entry
+// equal to its Path, and an absent CreatedDirs entry that is an ancestor of its
+// Path, are kept. When no agent and no CreatedPaths entry remain, it deletes the
+// manifest file and .projectlens/ if that is left empty.
+func (m *Manifest) Save(t Target) error {
+	if err := CheckManifestWritable(t); err != nil {
+		return err
+	}
+	m.Version = manifestVersion
+	if m.Agents == nil {
+		m.Agents = map[Agent]*AgentRecord{}
+	}
+	m.CreatedPaths, m.CreatedDirs = m.livePaths(t)
+
+	if len(m.Agents) == 0 && len(m.CreatedPaths) == 0 {
+		return removeManifest(t)
+	}
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode manifest: %w", err)
+	}
+	if err := writeFileAtomic(t.Abs(ManifestPath), append(data, '\n')); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
+	return nil
+}
+
+func removeManifest(t Target) error {
+	if err := os.Remove(t.Abs(ManifestPath)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove manifest: %w", err)
+	}
+	dir := t.Abs(path.Dir(ManifestPath))
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", dir, err)
+	}
+	if len(entries) > 0 {
+		return nil
+	}
+	if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", dir, err)
+	}
+	return nil
+}
+
+// Record returns the record for one item of an agent.
+func (m *Manifest) Record(a Agent, kind Kind, id string) (Record, bool) {
+	if m == nil {
+		return Record{}, false
+	}
+	ar, ok := m.Agents[a]
+	if !ok || ar == nil {
+		return Record{}, false
+	}
+	for _, r := range ar.Items {
+		if r.Kind == kind && r.ID == id {
+			return r, true
+		}
+	}
+	return Record{}, false
+}
+
+// InstalledAgents returns the agents that have a record, sorted.
+func (m *Manifest) InstalledAgents() []Agent {
+	if m == nil {
+		return nil
+	}
+	out := make([]Agent, 0, len(m.Agents))
+	for a := range m.Agents {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// Created reports whether install created path.
+func (m *Manifest) Created(p string) bool {
+	if m == nil {
+		return false
+	}
+	for _, c := range m.CreatedPaths {
+		if c == p {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckManifestWritable must be called by install and uninstall before any mutation.
+// It fails with ErrManifestTracked when ManifestPath is tracked by git, and with
+// ErrEscapesTarget when ".projectlens" or the manifest file is a symlink.
+func CheckManifestWritable(t Target) error {
+	if err := t.CheckContained(ManifestPath); err != nil {
+		return fmt.Errorf("manifest: %w", err)
+	}
+	tracked, err := t.IsTracked(ManifestPath)
+	if err != nil {
+		return err
+	}
+	if tracked {
+		return fmt.Errorf("refusing to write: %w", ErrManifestTracked)
+	}
+	return nil
+}
+
+// RecoverCreated is used when the manifest is missing but this work tree's exclude
+// block exists: it returns the block's paths that are present on disk, without the
+// leading "/" and trailing "/", excluding ManifestPath and any path that is not
+// local to the root (see checkLocal) or not a path install writes (see
+// placementShaped): the exclude file is editable, so anything else is ignored.
+func RecoverCreated(t Target) ([]string, error) {
+	block, err := t.ExcludeBlock()
+	if err != nil {
+		return nil, fmt.Errorf("recover created paths: %w", err)
+	}
+	var out []string
+	for _, pattern := range block {
+		p := strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/")
+		if checkLocal(p) != nil || p == ManifestPath || !placementShaped(p) || !t.Exists(p) {
+			continue
+		}
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return compactStrings(out), nil
+}
