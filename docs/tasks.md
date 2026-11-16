@@ -31,7 +31,7 @@ backlogs should be folded here instead of creating another competing list.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| - | None queued. | - | - | - |
+| `P2` | Agent setup follow-ups (structure refactor and small hardening) | Next | Start with the structured `ItemStatus` fields; the other items are independent. See "Follow-ups" under section 3. | Every item in the section 3 follow-up list is fixed or explicitly dropped, with no change to `lens agent` behavior beyond the listed fixes. |
 
 ## Recently Done
 
@@ -196,6 +196,32 @@ Starting points:
 - `agent/codex/`
 - `docs/AGENT_SETUP.md`
 - `docs/2026-05-21-graphify-comparison.md`
+
+### Follow-ups
+
+Left open when the feature shipped. None affects the safety properties in
+[`AGENT_SETUP.md`](AGENT_SETUP.md).
+
+Structure (no behavior change):
+
+- `ItemStatus` carries its facts only as detail text, so `install` parses
+  `Evaluate` detail strings and re-reads `config.toml`. Add structured fields.
+- The removal decision is written twice: `planOrphan` in `install.go` and
+  `planRemoval` in `uninstall.go` (both under `internal/agentsetup/`). Unify
+  them.
+- `--json` output uses untagged Go field names. Add JSON tags; this renames
+  the fields, so do it before anyone scripts against them.
+
+Small hardening:
+
+- `--url http://:8484/mcp` (empty host) is accepted, and `--port` is not
+  range-checked when `--url` is also given (`internal/agentsetup/resolve.go`).
+- A hard crash during a config write can leave a `.tmp-*` file visible in
+  `git status`; the exclude block does not cover it.
+- The indexer's git call in `cmd/lens/main.go` still inherits `GIT_DIR`-style
+  variables; `agentsetup.ScrubGitEnv` exists for this.
+- The manifest-loss limitation in `AGENT_SETUP.md` is imprecise for
+  `lens agent status <agent>`.
 
 ## 4. End-to-End Smoke Test
 
