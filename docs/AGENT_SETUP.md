@@ -115,6 +115,10 @@ Then restart Claude Code in the repo, run `/mcp`, and approve the
 `projectlens` server (Claude Code asks before using a project-scoped
 server). Finish with `lens agent doctor claude`.
 
+[`agent/claude/CLAUDE.md.snippet`](../agent/claude/CLAUDE.md.snippet) is
+optional always-on prompt text you can paste into your `CLAUDE.md`. Install
+does not write it.
+
 To wire several projects, run install in each repository; each gets the URL
 of its own registered project.
 
@@ -149,12 +153,13 @@ audit trail distinguishes agents.
 
 ### Other MCP-compatible agents
 
-These are manual steps; `lens agent` does not cover them. Any client that supports Streamable HTTP MCP works (Cline, Continue,
-Windsurf, Zed, custom agents built on the Anthropic / OpenAI SDKs, ...).
-Point it at `http://localhost:8484/<slug>/mcp` (multi-project mode) or
-`http://localhost:8484/mcp` (legacy single-project mode) — that one URL
-is everything the agent needs. The server exposes ten tools the agent loop
-can call like any function-calling tool.
+These are manual steps; `lens agent` does not cover them. Any client that
+supports Streamable HTTP MCP works (Cline, Continue, Windsurf, Zed, custom
+agents built on the Anthropic / OpenAI SDKs, ...). Point it at
+`http://localhost:8484/<slug>/mcp` (multi-project mode) or
+`http://localhost:8484/mcp` (legacy single-project mode) — that one URL is
+everything the agent needs. The agent loop can call the ProjectLens tools
+like any function-calling tool.
 
 ---
 
@@ -266,8 +271,8 @@ changes nothing. With no argument it covers every agent you installed.
 
 | Command | Exit |
 |---|---|
-| `status` | 0 when everything is `current`; 1 when anything is not. |
-| `doctor` | 0 when no check failed; 1 when a check failed. |
+| `status` | 0 when everything is `current`; 1 when anything is not, and also 1 when nothing is installed. |
+| `doctor` | 0 when no check failed; 1 when a check failed, and also 1 when nothing is installed. |
 | any | 2 for a usage error (unknown subcommand, bad flag, wrong arguments). |
 | `install`, `uninstall` | 0, even when some items were skipped, blocked, or need a manual step. Run `lens agent status` to check the result. |
 
@@ -393,8 +398,9 @@ busy errors, and missing TUI binaries are covered in
 - Run `lens agent doctor`. It checks the install, the server URL, the tool
   list, and the approval or trust step, and prints one next action per
   failure.
-- To check by hand, confirm the MCP server is reachable: `curl http://localhost:8484/<slug>/mcp`
-  (multi-project) or `curl http://localhost:8484/mcp` (legacy single-project)
+- To check by hand, confirm the MCP server is reachable:
+  `curl http://localhost:8484/<slug>/mcp` (multi-project) or
+  `curl http://localhost:8484/mcp` (legacy single-project)
   should respond (probably with a 405 or upgrade hint — that's fine, it
   means the port is open and the server is alive). HTTP 503 from a
   multi-project URL means the schema has not been migrated yet — run

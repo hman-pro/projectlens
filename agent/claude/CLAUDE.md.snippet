@@ -1,7 +1,8 @@
 ## ProjectLens — Repository Intelligence Layer
 
-This repo has a local intelligence layer called **ProjectLens** running at
-`http://localhost:8484/mcp`. It indexes Go code, database schemas, git
+This repo has a local intelligence layer called **ProjectLens**, served by
+the `projectlens` MCP server that `lens agent install claude` configures
+(check it with `lens agent doctor`). It indexes Go code, database schemas, git
 history, and saved lessons into a searchable graph that any MCP-capable
 agent (Claude, Cursor, Codex, ...) can query.
 

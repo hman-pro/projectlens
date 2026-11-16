@@ -188,10 +188,10 @@ Run from inside the target repository. The shared flags `--project` and
 | `--assets` | `install`, `status`, `doctor` | Path to the ProjectLens `agent/` directory. Default: the checkout the binary was built from. |
 | `--json` | `status`, `doctor` | Print machine-readable output. |
 
-Exit codes: `status` exits 1 when any item is not current; `doctor` exits 1
-when a check fails; a usage error exits 2; `install` and `uninstall` exit 0
-even when items were skipped, blocked, or need a manual step, so run
-`lens agent status` afterward.
+Exit codes: `status` exits 1 when any item is not current or nothing is
+installed; `doctor` exits 1 when a check fails or nothing is installed; a
+usage error exits 2; `install` and `uninstall` exit 0 even when items were
+skipped, blocked, or need a manual step, so run `lens agent status` afterward.
 
 For the walkthrough, item states, worktrees, and limitations, see
 [`AGENT_SETUP.md`](AGENT_SETUP.md).

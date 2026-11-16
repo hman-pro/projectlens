@@ -129,6 +129,9 @@ Starting point:
 
 ## 3. Agent Setup UX
 
+Shipped: see [`AGENT_SETUP.md`](AGENT_SETUP.md) and the Agent Setup section of
+[`operations.md`](operations.md). The text below is the original scope.
+
 Goal: make ProjectLens easy to connect to MCP-capable coding agents without
 manual snippet copying or stale local agent assets.
 
