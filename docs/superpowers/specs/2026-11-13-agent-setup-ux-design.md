@@ -1,7 +1,7 @@
 # Agent Setup UX Design: `lens agent install / uninstall / status / doctor`
 
 Date: 2026-11-13
-Status: draft, awaiting approval
+Status: approved and implemented; synced to the code as built on 2026-11-16
 Task: `docs/tasks.md` section 3 (P1, Agent setup UX)
 
 ## Intent
@@ -12,7 +12,7 @@ an MCP entry into home-directory config, paste a prompt snippet, restart. There
 is no way to check whether the result is current or why the agent is not
 calling the tools.
 
-This adds three commands so a developer can wire Claude Code or Codex into one
+This adds four commands so a developer can wire Claude Code or Codex into one
 repository, see whether that wiring is stale, and diagnose a broken
 agent-to-MCP loop.
 
@@ -20,7 +20,7 @@ agent-to-MCP loop.
 
 - `lens agent install claude|codex` puts the wiring in place with one command.
 - Re-running install is safe and reports per item: written, already current,
-  updated, skipped (locally modified), or needs a manual step.
+  updated, skipped (locally modified), blocked, or needs a manual step.
 - `lens agent status` reports state per item without changing any file.
 - `lens agent uninstall claude|codex|all` removes exactly what install wrote.
 - `lens agent doctor` checks the live loop and prints a concrete next action
@@ -180,9 +180,13 @@ First match wins:
 - Exclude entries are as narrow as the thing created: the skill directory
   `/.claude/skills/use-projectlens/`, not `/.claude/`. A parent directory that
   install created only to hold its own files is covered by those narrow
-  entries, not by an entry for the parent.
-- The manifest records, per path, whether install created it. That record
-  drives both the exclude entry and what uninstall may delete.
+  entries, not by an entry for the parent. A skill path is always written as a
+  directory pattern (trailing `/`), so a symlink the developer puts at that
+  path stays visible.
+- The manifest records which paths install created (`created_paths`) and which
+  parent directories it created (`created_dirs`). Those lists drive both the
+  exclude entries and what uninstall may delete. An entry leaves the list only
+  when the path is gone.
 - `.gitignore` is never edited: it is tracked, so editing it would itself be a
   shared diff.
 - **One explicit exception to "inside the target repository only".** The
@@ -197,22 +201,40 @@ First match wins:
   worktree. They are root-anchored paths (`/.mcp.json`) and cannot hide a file
   another branch tracks. They can hide an untracked file of the same name in a
   sibling worktree; the "hides no file" guarantee therefore holds for the
-  target work tree only. Install prints a notice naming the excluded paths
-  when it detects this layout. The installed files and the manifest are per
-  worktree: each worktree needs its own install.
+  target work tree only. Install prints a notice when it detects this layout
+  and wrote at least one exclude entry. The installed files, the manifest, and
+  the marked block are per worktree: each worktree needs its own install.
 - Before writing any path, install checks whether git tracks it
   (`git ls-files --error-unmatch`). A tracked file is never modified; see
   "Tracked paths" below for how it is evaluated.
 - The exclude entries are written inside a marked block so they can be found
-  and updated on re-install.
+  and updated on re-install. The markers name the work tree root
+  (`# >>> projectlens agent wiring: <root> >>>`), so each worktree owns its own
+  block in the shared file. The block belongs to lens: it is rewritten on
+  every run, and a line added to it by hand is dropped (the file it named is
+  never deleted because of that line).
+- Git is run without inherited repository-local variables (`GIT_DIR`,
+  `GIT_WORK_TREE`, `GIT_INDEX_FILE`, and the rest of
+  `git rev-parse --local-env-vars`), so an exported `GIT_DIR` cannot redirect
+  the tracked-file check or the exclude file to another repository.
 
 ## Manifest and item states
 
 Install records what it wrote in `.projectlens/agent-manifest.json` in the
-target repo (also excluded from git). Per item: agent, kind, path, and the
-content hash of what was written. For entries merged into a file that holds
-other content (`.mcp.json`, `.codex/config.toml`, `settings.local.json`), the
-hash covers only the ProjectLens-owned entry, in a canonical serialization.
+target repo (also excluded from git). Per agent: the resolved URL and its
+items. Per item: kind, ID, path, the content hash last known to be on disk,
+and an optional pending operation (see "Crash safety"). For entries merged
+into a file that holds other content (`.mcp.json`, `.codex/config.toml`,
+`settings.local.json`), the hash covers only the ProjectLens-owned entry, in a
+canonical serialization. The manifest also holds the work-tree-wide
+`created_paths` and `created_dirs` lists.
+
+The manifest is untrusted input. Every path in it must be local to the target
+root and match a location install could have written for that agent and kind;
+`created_dirs` entries must be proper parents of such a location. Anything
+else is rejected with an error that says to fix or delete the manifest and
+re-run install. If git tracks the manifest, install and uninstall refuse to
+write it.
 
 `status` derives one state per item from three values: canonical (checkout),
 recorded (manifest), and installed (on disk).
@@ -224,6 +246,10 @@ recorded (manifest), and installed (on disk).
 | stale | installed = recorded, canonical differs | updates it |
 | modified | installed differs from recorded | skips, reports; `--force` overwrites |
 | unmanaged | on disk, no manifest record | skips, reports; `--force` adopts |
+| blocked | a symlink or a foreign definition is in the way | never writes, with or without `--force`; reports what to move |
+
+The rules are evaluated in a fixed order, and tracked, blocked, and orphaned
+are decided before the hash comparison.
 
 Tracked paths. Whether install may write a file and whether its content is
 correct are separate questions. For a path git tracks, the manifest is not
@@ -236,17 +262,31 @@ from comparing the ProjectLens-owned entry on disk against canonical:
 | manual | owned entry absent or different | prints the exact entry to add or replace |
 
 So a developer who follows the printed manual step gets a passing `status` and
-`doctor`, and the file stays protected from writes.
+`doctor`, and the file stays protected from writes. A tracked file whose
+ProjectLens entry is already gone, but which still has a manifest record, has
+that record dropped; nothing is written.
 
-Two more cases:
+More cases:
 
 - **Orphaned** (in the manifest, no longer in the canonical assets, for example
   a renamed skill): re-install removes it and its exclude entry when installed
   = recorded; otherwise it is reported and left, and `--force` removes it.
-- **Symlinked path** (a skill directory that is a symlink, as the old manual
-  instructions created): treated as unmanaged. Install never writes through a
-  symlink, because that would modify the checkout. `--force` replaces the link
-  itself with a copy.
+- **Symlinked skill directory** (as the old manual instructions created):
+  treated as unmanaged. Install never writes through a symlink, because that
+  would modify the checkout. `--force` replaces the link itself with a copy.
+- **Any other symlink** (a symlinked config file, or a symlinked parent
+  directory such as `.claude` or `.agents`): blocked. `--force` does not
+  change that.
+- **A symlink inside an installed skill directory:** the skill is reported
+  modified, not an error.
+- **A hand-written Codex definition.** `[mcp_servers.projectlens]` defined in
+  `.codex/config.toml` outside the managed block is never rewritten: the same
+  URL counts as current, a different URL is blocked. A file holding both the
+  managed block and a hand-written definition is an error.
+- **Scratch directories.** Skill replacement uses the sibling names
+  `.<skill>.lens-tmp` and `.<skill>.lens-old`. A leftover is deleted only when
+  this work tree's exclude block already lists it; otherwise a directory with
+  that name is treated as the developer's and the skill is blocked.
 
 Wiring left by the old manual instructions is detected and reported, never
 migrated automatically. Doctor flags ProjectLens hook commands that also appear
@@ -272,8 +312,9 @@ manifest records the ID and the hash of the full command.
 - ID present, command differs from recorded: modified. Install skips it and
   never appends a second copy.
 - ID recorded but no longer present in the file: the developer removed the
-  marker or the hook. Reported as "removed locally"; install does not re-add
-  it without `--force`.
+  marker or the hook. Reported as `removed-locally`; install does not re-add
+  it without `--force`. The exception is a record with a pending remove:
+  that is an uninstall that was interrupted, and it counts as missing.
 
 IDs are unique per hook and never reused for a different hook.
 
@@ -284,8 +325,11 @@ lens agent install <claude|codex> [--project <slug>] [--url <url>] [--port <n>]
                                   [--assets <dir>] [--dry-run] [--force]
 lens agent uninstall <claude|codex|all> [--project <slug>] [--dry-run] [--force]
 lens agent status  [claude|codex] [--project <slug>] [--assets <dir>] [--json]
-lens agent doctor  [claude|codex] [--project <slug>] [--assets <dir>] [--json]
+lens agent doctor  [claude|codex] [--project <slug>] [--url <url>]
+                                  [--assets <dir>] [--json]
 ```
+
+`--project` and `--projects` are the CLI's existing global flags.
 
 - `status` and `doctor` with no agent argument cover the agents recorded in the
   manifest. An agent that was never installed is not a failure. With no
@@ -293,8 +337,21 @@ lens agent doctor  [claude|codex] [--project <slug>] [--assets <dir>] [--json]
   and exit 1.
 - `doctor` accepts `--url` to probe a different endpoint than the recorded one.
 - An unsupported agent name is an error that lists the supported ones.
+- `--url` and `--port` are validated before anything is written: the URL must
+  parse, use `http` or `https`, and contain no quote, backslash, or control
+  character; the port must be in range. An invalid `PROJECTLENS_MCP_PORT` is
+  an error, and so is a registry in which two projects match the target.
 - Exit codes: 0 when everything is current or healthy; 1 when `status` finds
-  anything other than current, or `doctor` finds a failure; 2 for usage errors.
+  anything other than current, or `doctor` finds a failure; 2 for usage errors
+  (unknown subcommand, bad flag, wrong arguments). `install` and `uninstall`
+  exit 0 even when items were skipped, blocked, or need a manual step; the
+  result is checked with `status`.
+- With no manifest but a marked exclude block that still lists existing paths,
+  `status`, `doctor`, and `uninstall` name those paths and print the install
+  command that recovers ownership, instead of a bare "nothing installed".
+- `status` also lists paths that are excluded from git but no longer belong to
+  an installed item (for example a config file install created that now holds
+  the developer's own content).
 
 What the developer sees from install:
 
@@ -303,14 +360,23 @@ $ lens agent install claude
 Target: /Users/me/src/shop   URL: http://localhost:8484/mcp
 
   written   .mcp.json                         (mcpServers.projectlens)
-  written   .claude/skills/use-projectlens/
   written   .claude/skills/capture-knowledge/
+  written   .claude/skills/use-projectlens/
   written   .claude/settings.local.json       (4 hooks)
   written   .git/info/exclude                 (5 paths)
 
 Next: restart Claude Code in this repo and approve the "projectlens" server.
       Then run: lens agent doctor claude
 ```
+
+The restart line is printed only when the MCP item ended written, updated,
+adopted, or current. Otherwise the last line says to resolve the items above
+and re-run install.
+
+A pre-existing `.mcp.json` or `settings.local.json` that install edits is
+re-serialized (2-space indent, sorted keys). Its content is preserved
+semantically, not byte for byte. `.codex/config.toml` is preserved byte for
+byte outside the managed block. Existing file permissions are kept.
 
 ## Uninstall
 
@@ -330,10 +396,41 @@ nothing else. It does not need the canonical assets.
   uninstalled, the marked exclude block and the manifest are removed too, and
   `.projectlens/` is deleted if empty.
 - `--dry-run` prints what would be removed and writes nothing.
-- Nothing recorded for that agent: report "nothing installed", exit 0.
+- Nothing recorded for that agent: report that the named agent is not
+  installed, exit 0.
+- When no agent has records but `created_paths` is not empty (a config file
+  install created now holds the developer's own content), uninstall still
+  prunes paths that are gone, and removes the manifest, `.projectlens/`, and
+  the block once nothing is left.
+- After a lost manifest, lens does not guess which parent directories it
+  created, so empty `.claude/`, `.agents/`, or `.codex/` directories may
+  remain.
 
-To support the "created by install" rule, the manifest records per merged file
-whether install created it.
+The "created by install" rule reads the manifest's `created_paths` list.
+
+## Crash safety
+
+Install and uninstall share one journal. A crash at any point, or a deleted
+manifest, is recovered by the next run without `--force`, and `git status`
+never changes at an intermediate point.
+
+- Journal before write: the manifest records a pending operation (`write` with
+  the hash it will produce, or `remove`) before the file is touched.
+- The exclude block is widened before each manifest save, to the patterns
+  whose paths exist plus the ones about to be created, and narrowed after.
+- Files are written atomically (temp file, then rename). A skill directory is
+  replaced by rename-aside: copy to `.<skill>.lens-tmp`, move the old one to
+  `.<skill>.lens-old`, rename the new one in, delete the old one.
+- A forced overwrite or removal that was interrupted is finished by the next
+  run without `--force`.
+- If the manifest is deleted, the next install recovers `created_paths` from
+  this work tree's exclude block. Paths read from the block are untrusted and
+  pass the same location check as manifest paths.
+- Before every write, rename, or delete, the path is checked to be inside the
+  target root with no symlinked parent.
+
+Known gap: a hard crash during a config write can leave a `.tmp-*` file that
+shows in `git status`.
 
 ## Doctor checks
 
@@ -344,7 +441,8 @@ concrete next action. In order:
 2. **Items current.** Same evaluation as `status`.
 3. **Server reachable.** The configured URL answers. HTTP 404 on a slug URL
    maps to "slug not registered"; 503 maps to "run `lens migrate --project
-   <slug>`"; connection refused maps to "start the server".
+   <slug>`" (plain `lens migrate` for the legacy `/mcp` URL); connection
+   refused maps to "start the server".
 4. **Tools match.** Connect with the MCP client already in `go.mod`, list
    tools, and compare names against the server's own tool registry in
    `internal/mcpserver`. No second hand-maintained list.
@@ -353,11 +451,19 @@ concrete next action. In order:
 6. **Not shadowed.** Read-only look at `~/.claude.json` and
    `~/.codex/config.toml` for a `projectlens` server that points somewhere
    else. Doctor never writes these.
-7. **Agent will load it.** Codex: the project must be trusted, or
+7. **No duplicate hooks.** Claude only. Read-only look at
+   `.claude/settings.json` for a hook command equal to a canonical ProjectLens
+   hook, with or without the ID prefix. Each match is named by event and hook
+   ID, with the instruction to delete it there.
+8. **Agent will load it.** Codex: the project must be trusted, or
    `.codex/config.toml` is ignored. Claude: the project-scoped server must be
    approved. Where the state cannot be read reliably, print the manual check
    instead of guessing.
-8. **`lens` on PATH**, for the commands doctor recommends.
+9. **`lens` on PATH**, for the commands doctor recommends.
+
+The check names in `--json` output are `assets-found`, `items-current`,
+`server-reachable`, `tools-match`, `installed-url-matches`, `not-shadowed`,
+`no-duplicate-hooks`, `agent-will-load`, and `lens-on-path`.
 
 ## Scope switch
 
@@ -370,12 +476,13 @@ and not the install, status, or doctor logic.
 
 - Follow repo conventions: internal packages only, wrapped errors, no global
   state, constructor-injected dependencies.
-- Core logic lives in a new internal package and takes the target root, asset
-  root, and a filesystem as inputs so it is testable against temp directories.
-  `cmd/lens/` holds only the cobra wiring.
-- No new runtime dependency for JSON. A TOML library may be added if the
-  builder judges it necessary to preserve unrelated `.codex/config.toml`
-  content safely.
+- Core logic lives in `internal/agentsetup` and takes the target root, asset
+  root, and process environment (`Env`) as inputs. It uses the real filesystem
+  and is tested against temp directories; no filesystem abstraction was
+  added. `cmd/lens/` holds only the cobra wiring.
+- No new runtime dependency for JSON. `github.com/BurntSushi/toml` was added
+  (approved by the maintainer) to read `.codex/config.toml` and to verify that
+  an edit leaves it parseable.
 
 ## Tests required
 
@@ -419,14 +526,20 @@ and not the install, status, or doctor logic.
 - `agent/claude/CLAUDE.md.snippet`: remove the instruction to merge hooks into
   `.claude/settings.json`.
 
-## Left to the builder
+## Left to the builder, as resolved
 
-- Package name and internal layout.
-- Manifest schema details and the canonical serialization used for hashing.
-- Whether to parse TOML with a library or manage a marked block.
-- Exact wording of output lines and next actions.
-- How to detect Claude approval and Codex trust state, within check 7's rule
-  of printing the manual check when detection is unreliable.
+- Package name and internal layout: `internal/agentsetup`; the tool-name list
+  comes from `internal/mcpserver.ToolNames()`.
+- Manifest schema: see "Manifest and item states".
+- TOML: both. The file is parsed with a library; the ProjectLens entry is
+  written as a block between `# >>> projectlens ... >>>` and
+  `# <<< projectlens <<<` marker lines, and the written URL is read back to
+  confirm it round-trips.
+- Exact wording of output lines and next actions: see `cmd/lens/agent.go`.
+- Claude approval and Codex trust state: see the `agent-will-load` check in
+  `internal/agentsetup/doctor.go`.
+- Skill hashing ignores `.DS_Store`, so opening a skill in Finder does not
+  make it modified.
 
 ## Calls made by the author, not the maintainer
 
@@ -452,3 +565,22 @@ and not the install, status, or doctor logic.
   marker was removed.
 - Refusing a relative `repo_path` when the registry is outside the checkout.
 - Tracked files with matching content counting as current.
+
+## Calls made during implementation
+
+Approved by the maintainer:
+
+- The `github.com/BurntSushi/toml` dependency.
+- Re-serializing pre-existing JSON config files (semantic, not byte, equality).
+
+Made by the builder, and open to reversal:
+
+- `install` and `uninstall` exit 0 when items were skipped or blocked.
+- The `blocked` state, and `--force` never adopting a tracked file, a
+  non-skill symlink, or a hand-written Codex definition.
+- Treating the manifest and the exclude block as untrusted input.
+- An interrupted hook uninstall counting as finished rather than as
+  `removed-locally`.
+- Dropping hand-added lines from the marked exclude block.
+- Ignoring an exported `GIT_DIR`.
+- Not inferring created parent directories after a lost manifest.
