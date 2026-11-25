@@ -209,8 +209,8 @@ Structure (no behavior change):
 - The removal decision is written twice: `planOrphan` in `install.go` and
   `planRemoval` in `uninstall.go` (both under `internal/agentsetup/`). Unify
   them.
-- `--json` output uses untagged Go field names. Add JSON tags; this renames
-  the fields, so do it before anyone scripts against them.
+- Done: `--json` output uses snake_case JSON tags, pinned by key-set tests in
+  `cmd/lens/agent_test.go`.
 
 Small hardening:
 

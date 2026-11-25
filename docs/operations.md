@@ -188,6 +188,14 @@ Run from inside the target repository. The shared flags `--project` and
 | `--assets` | `install`, `status`, `doctor` | Path to the ProjectLens `agent/` directory. Default: the checkout the binary was built from. |
 | `--json` | `status`, `doctor` | Print machine-readable output. |
 
+With `--json`, stdout is a JSON array and nothing else. Every key is always
+present; unset strings are `""`.
+
+| Command | Element keys |
+|---|---|
+| `status` | `agent`, `kind`, `id`, `path`, `state`, `owned`, `tracked`, `detail` |
+| `doctor` | `name`, `agent` (`""` when not per agent), `result`, `detail`, `next` |
+
 Exit codes: `status` exits 1 when any item is not current or nothing is
 installed; `doctor` exits 1 when a check fails or nothing is installed; a
 usage error exits 2; `install` and `uninstall` exit 0 even when items were

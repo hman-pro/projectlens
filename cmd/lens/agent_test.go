@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -254,9 +256,22 @@ func TestAgentCmd_StatusJSON(t *testing.T) {
 		t.Fatal("no items")
 	}
 	for _, it := range items {
-		if _, ok := it["State"]; !ok {
-			t.Fatalf("element without State: %v", it)
-		}
+		assertJSONKeys(t, it, "agent", "kind", "id", "path", "state", "owned", "tracked", "detail")
+	}
+}
+
+// assertJSONKeys pins the --json contract: exactly these keys, so a renamed or
+// untagged field fails here instead of in a user's script.
+func assertJSONKeys(t *testing.T, obj map[string]any, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(obj))
+	for k := range obj {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("JSON keys = %v, want %v", got, want)
 	}
 }
 
@@ -352,6 +367,9 @@ func TestAgentCmd_DoctorJSONFailsWhenServerDown(t *testing.T) {
 	var checks []map[string]any
 	if err := json.Unmarshal([]byte(out), &checks); err != nil || len(checks) == 0 {
 		t.Fatalf("stdout is not a JSON array of checks: %v\n%s", err, out)
+	}
+	for _, c := range checks {
+		assertJSONKeys(t, c, "name", "agent", "result", "detail", "next")
 	}
 }
 
