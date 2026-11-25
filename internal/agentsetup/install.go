@@ -255,72 +255,16 @@ func planCanonical(t Target, o InstallOpts, c Canon, st ItemStatus, m *Manifest,
 }
 
 // planOrphan decides what to do with a record whose item is no longer canonical.
+// The decision is the one uninstall makes (planRecordRemoval); install reports
+// the State as orphaned whatever the disk holds.
 func planOrphan(t Target, o InstallOpts, st ItemStatus, m *Manifest, own map[string]bool) (installOp, error) {
-	op := installOp{ItemResult: ItemResult{ItemStatus: st}}
-	fail := func(err error) (installOp, error) {
+	rec, _ := m.Record(o.Agent, st.Kind, st.ID)
+	r, err := planRecordRemoval(t, st.Item, rec, own, o.Force)
+	if err != nil {
 		return installOp{}, fmt.Errorf("orphan %s %s: %w", st.Kind, st.ID, err)
 	}
-	if err := checkLocal(st.Path); err != nil { // LoadManifest already refuses these
-		return fail(err)
-	}
-	detail, snippet, err := symlinkBlock(t, st.Path)
-	if err != nil {
-		return fail(err)
-	}
-	if detail != "" {
-		op.Detail, op.Action, op.Snippet = detail, ActionBlocked, snippet
-		return op, nil
-	}
-	disk, err := installedHash(t, st.Item)
-	if err != nil {
-		return fail(err)
-	}
-	if op.Tracked, err = t.IsTracked(st.Path); err != nil {
-		return fail(err)
-	}
-	switch {
-	case lensAbsent(disk):
-		// Nothing of lens's is there: drop the record, even for a tracked path.
-		op.Action, op.kind = ActionRemoved, opDrop
-		if disk.foreign {
-			op.Detail = detailForeign
-		}
-	case op.Tracked:
-		op.Action, op.Snippet = ActionManual, removeByHandSnippet(st.Item)
-	default:
-		rec, _ := m.Record(o.Agent, st.Kind, st.ID)
-		switch {
-		case !matchesRecord(rec, disk) && !o.Force:
-			op.Action = ActionSkipped
-		case blockForeignSibling(t, own, st.Item, &op.ItemResult):
-		default:
-			op.Action, op.kind, op.disk = ActionRemoved, opRemove, disk
-		}
-	}
-	return op, nil
-}
-
-// symlinkBlock reports, as a detail and snippet, the first symlinked component
-// of p (p itself included); both are "" when there is none.
-func symlinkBlock(t Target, p string) (detail, snippet string, err error) {
-	err = t.CheckContained(p)
-	if err == nil {
-		return "", "", nil
-	}
-	if !errors.Is(err, ErrEscapesTarget) {
-		return "", "", err
-	}
-	comp := firstSymlink(t, p)
-	detail = "symlinked parent " + comp
-	if comp == p {
-		detail = detailSymlink
-	}
-	return detail, symlinkSnippet(comp), nil
-}
-
-// removeByHandSnippet is what a developer deletes by hand from a tracked path.
-func removeByHandSnippet(it Item) string {
-	return fmt.Sprintf("remove the projectlens %s %q from %s by hand", it.Kind, it.ID, it.Path)
+	r.State = StateOrphaned
+	return installOp{ItemResult: r.ItemResult, kind: r.kind, disk: r.disk}, nil
 }
 
 func symlinkSnippet(comp string) string {

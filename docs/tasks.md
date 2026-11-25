@@ -29,7 +29,7 @@ None.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P2` | Agent setup follow-ups (structure refactor and small hardening) | Next | Start with the `planOrphan`/`planRemoval` unification; the other items are independent. See "Follow-ups" under section 3. | Every item in the section 3 follow-up list is fixed or explicitly dropped, with no change to `lens agent` behavior beyond the listed fixes. |
+| `P2` | Agent setup follow-ups (structure refactor and small hardening) | Next | Work through the small-hardening items; they are independent. See "Follow-ups" under section 3. | Every item in the section 3 follow-up list is fixed or explicitly dropped, with no change to `lens agent` behavior beyond the listed fixes. |
 
 ## Recently Done
 
@@ -205,9 +205,9 @@ Structure (no behavior change):
 
 - Done: `ItemStatus` carries `foreign` and `symlinkAt` as structured fields, so
   `install` no longer parses detail strings or re-reads `config.toml`.
-- The removal decision is written twice: `planOrphan` in `install.go` and
-  `planRemoval` in `uninstall.go` (both under `internal/agentsetup/`). Unify
-  them.
+- Done: the removal decision lives once in `planRecordRemoval`
+  (`internal/agentsetup/removal.go`), used by `planOrphan` and `Uninstall`;
+  install orphans now report the same `Detail` uninstall does.
 - Done: `--json` output uses snake_case JSON tags, pinned by key-set tests in
   `cmd/lens/agent_test.go`.
 
