@@ -25,12 +25,6 @@ type UninstallResult struct {
 	Recoverable []string // no manifest, but the block hides these existing paths (see RecoverablePaths)
 }
 
-type uninstallOp struct {
-	ItemResult
-	kind opKind    // opNone, opRemove, or opDrop
-	disk installed // opRemove: what is on disk before the removal
-}
-
 // Uninstall removes what install recorded for o.Agents, working from the
 // manifest alone. Preflight (manifest writability, reading every recorded item)
 // completes before anything is changed.
@@ -59,12 +53,13 @@ func Uninstall(t Target, o UninstallOpts) (UninstallResult, error) {
 		return uninstallNothing(t, m, own, o)
 	}
 
-	var ops []uninstallOp
+	var ops []removalOp
 	for _, a := range agents {
 		for _, rec := range m.Agents[a].Items {
-			op, err := planRemoval(t, a, rec, own, o.Force)
+			it := Item{Agent: a, Kind: rec.Kind, ID: rec.ID, Path: rec.Path}
+			op, err := planRecordRemoval(t, it, rec, own, o.Force)
 			if err != nil {
-				return UninstallResult{}, err
+				return UninstallResult{}, fmt.Errorf("uninstall %s %s: %w", rec.Kind, rec.ID, err)
 			}
 			ops = append(ops, op)
 		}
@@ -143,69 +138,10 @@ func uninstallNothing(t Target, m *Manifest, own map[string]bool, o UninstallOpt
 	return res, nil
 }
 
-// planRemoval decides what uninstall does with one record. It reads only.
-func planRemoval(t Target, a Agent, rec Record, own map[string]bool, force bool) (uninstallOp, error) {
-	it := Item{Agent: a, Kind: rec.Kind, ID: rec.ID, Path: rec.Path}
-	op := uninstallOp{ItemResult: ItemResult{ItemStatus: ItemStatus{Item: it, Owned: true}}}
-	if err := checkLocal(it.Path); err != nil { // LoadManifest already refuses these
-		return uninstallOp{}, fmt.Errorf("uninstall %s %s: %w", it.Kind, it.ID, err)
-	}
-
-	// A symlink anywhere in the path, the path itself included: never removed through.
-	fail := func(err error) (uninstallOp, error) {
-		return uninstallOp{}, fmt.Errorf("uninstall %s %s: %w", it.Kind, it.ID, err)
-	}
-	detail, snippet, err := symlinkBlock(t, it.Path)
-	if err != nil {
-		return fail(err)
-	}
-	if detail != "" {
-		op.State, op.Detail, op.Action, op.Snippet = StateBlocked, detail, ActionBlocked, snippet
-		return op, nil
-	}
-
-	disk, err := installedHash(t, it)
-	if err != nil {
-		return fail(err)
-	}
-	if op.Tracked, err = t.IsTracked(it.Path); err != nil {
-		return fail(err)
-	}
-
-	switch {
-	case lensAbsent(disk):
-		op.State = StateMissing
-		if disk.foreign {
-			op.Detail = detailForeign
-		}
-	case matchesRecord(rec, disk):
-		op.State = StateCurrent
-	default:
-		op.State, op.Detail = StateModified, disk.detail
-		if disk.dup {
-			op.Detail = detailDuplicates
-		}
-	}
-
-	switch {
-	case op.State == StateMissing:
-		// Nothing of lens's is there: drop the record, even for a tracked path.
-		op.Action, op.kind = ActionRemoved, opDrop
-	case op.Tracked:
-		op.Action, op.Snippet = ActionManual, removeByHandSnippet(it)
-	case op.State == StateModified && !force:
-		op.Action = ActionSkipped
-	case blockForeignSibling(t, own, it, &op.ItemResult):
-	default:
-		op.Action, op.kind, op.disk = ActionRemoved, opRemove, disk
-	}
-	return op, nil
-}
-
 // dropAbsent drops the record of an item that is no longer on disk. For a merged
 // file that is untracked, the remover runs too: it writes nothing when the entry
 // is absent, and deletes a file install created that a crash left empty.
-func dropAbsent(j *journal, op uninstallOp) error {
+func dropAbsent(j *journal, op removalOp) error {
 	if op.Kind != KindSkill && !op.Tracked {
 		if err := j.removeItem(op.Item); err != nil {
 			return err

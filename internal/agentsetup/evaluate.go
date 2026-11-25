@@ -25,6 +25,7 @@ type ItemStatus struct {
 	Tracked bool   `json:"tracked"`
 	Detail  string `json:"detail"` // e.g. "symlink", "symlinked parent .agents", "defined outside the managed block"
 
+	// foreign and symlinkAt are never both set.
 	foreign   bool   // Codex MCP: defined outside the managed block
 	symlinkAt string // blocked: the symlinked path component
 }
