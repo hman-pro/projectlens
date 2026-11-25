@@ -48,12 +48,23 @@ make build-lens-mcp
 make build-lens-tui
 make test
 make test-int
+make smoke
 make fmt
 make vet
 make clean
 ```
 
 `make install` runs `go install ./cmd/...` into `$GOBIN`.
+
+`make smoke` is the end-to-end check: it builds `bin/lens` and `bin/lens-mcp`,
+creates a throwaway database, runs migrations, indexes the fixture repo in
+`testdata/smoke-repo/` against a deterministic fake Ollama, and calls every MCP
+tool. It needs a reachable Postgres (`make docker-up` locally) and takes a few
+seconds. The database comes from `PROJECTLENS_SMOKE_DATABASE_URL`, falling back
+to `PROJECTLENS_DATABASE_URL`; the test fails (not skips) if neither is set. CI
+runs it as the `smoke` job. An interrupted run (Ctrl-C or timeout) can leave a
+`smoke_<hex>` database behind; drop it with
+`DROP DATABASE smoke_<hex> WITH (FORCE);`. Source: `internal/smoketest/`.
 
 ### Index
 
@@ -187,6 +198,14 @@ Run from inside the target repository. The shared flags `--project` and
 | `--port` | `install` | MCP server port (default `$PROJECTLENS_MCP_PORT` or 8484). |
 | `--assets` | `install`, `status`, `doctor` | Path to the ProjectLens `agent/` directory. Default: the checkout the binary was built from. |
 | `--json` | `status`, `doctor` | Print machine-readable output. |
+
+With `--json`, stdout is a JSON array and nothing else. Every key is always
+present; unset strings are `""`.
+
+| Command | Element keys |
+|---|---|
+| `status` | `agent`, `kind`, `id`, `path`, `state`, `owned`, `tracked`, `detail` |
+| `doctor` | `name`, `agent` (`""` when not per agent), `result`, `detail`, `next` |
 
 Exit codes: `status` exits 1 when any item is not current or nothing is
 installed; `doctor` exits 1 when a check fails or nothing is installed; a

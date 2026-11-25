@@ -54,11 +54,11 @@ const (
 
 // Check is one diagnosis result.
 type Check struct {
-	Name   string
-	Agent  Agent // "" for checks that are not per agent
-	Result CheckResult
-	Detail string
-	Next   string // required when Result is "fail" or "manual"
+	Name   string      `json:"name"`
+	Agent  Agent       `json:"agent"` // "" for checks that are not per agent
+	Result CheckResult `json:"result"`
+	Detail string      `json:"detail"`
+	Next   string      `json:"next"` // required when Result is "fail" or "manual"
 }
 
 // DoctorDeps holds the injectable side effects of Doctor.

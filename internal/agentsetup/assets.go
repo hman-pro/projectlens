@@ -18,10 +18,10 @@ import (
 
 // Item identifies one installable thing in a target repository.
 type Item struct {
-	Agent Agent
-	Kind  Kind
-	ID    string // skill name | hook ID | "projectlens" for the MCP entry
-	Path  string // target-relative: the skill dir, the hooks file, or the MCP file
+	Agent Agent  `json:"agent"`
+	Kind  Kind   `json:"kind"`
+	ID    string `json:"id"`   // skill name | hook ID | "projectlens" for the MCP entry
+	Path  string `json:"path"` // target-relative: the skill dir, the hooks file, or the MCP file
 }
 
 // Canon is an Item as defined by the canonical assets, with its hash.

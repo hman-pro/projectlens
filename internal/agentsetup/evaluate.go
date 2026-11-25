@@ -20,10 +20,10 @@ const (
 // ItemStatus is the evaluated state of one item.
 type ItemStatus struct {
 	Item
-	State   State
-	Owned   bool // the manifest has a record for this item
-	Tracked bool
-	Detail  string // e.g. "symlink", "symlinked parent .agents", "defined outside the managed block"
+	State   State  `json:"state"`
+	Owned   bool   `json:"owned"` // the manifest has a record for this item
+	Tracked bool   `json:"tracked"`
+	Detail  string `json:"detail"` // e.g. "symlink", "symlinked parent .agents", "defined outside the managed block"
 }
 
 // installed is what installedHash finds on disk for one item.
