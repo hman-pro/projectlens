@@ -213,18 +213,14 @@ func planCanonical(t Target, o InstallOpts, c Canon, st ItemStatus, m *Manifest,
 
 	switch st.State {
 	case StateBlocked:
-		op.Snippet = blockedSnippet(st.Detail)
+		op.Snippet = blockedSnippet(st)
 		return set(ActionBlocked, opNone)
 	case StateManual:
 		op.Snippet = manualSnippet(c)
 		return set(ActionManual, opNone)
 	case StateCurrent:
-		foreign, err := isForeignCodex(t, c)
-		if err != nil {
-			return installOp{}, err
-		}
 		switch {
-		case foreign || (st.Tracked && !st.Owned):
+		case st.foreign || (st.Tracked && !st.Owned):
 			// Never adopted: uninstall could not remove it.
 		case st.Owned:
 			return set(ActionCurrent, opRecord) // also completes a finished journal
@@ -327,29 +323,16 @@ func removeByHandSnippet(it Item) string {
 	return fmt.Sprintf("remove the projectlens %s %q from %s by hand", it.Kind, it.ID, it.Path)
 }
 
-func isForeignCodex(t Target, c Canon) (bool, error) {
-	if c.Kind != KindMCP || c.Agent != AgentCodex {
-		return false, nil
-	}
-	st, err := ReadCodexConfig(t.Abs(c.Path))
-	if err != nil {
-		return false, err
-	}
-	return st.Foreign, nil
-}
-
 func symlinkSnippet(comp string) string {
 	return comp + " is a symlink; lens will not write through it"
 }
 
-func blockedSnippet(detail string) string {
-	if detail == detailForeign {
+func blockedSnippet(st ItemStatus) string {
+	switch {
+	case st.foreign:
 		return snippetForeign
-	}
-	for _, prefix := range []string{"symlinked parent ", "symlinked file "} {
-		if comp, ok := strings.CutPrefix(detail, prefix); ok {
-			return symlinkSnippet(comp)
-		}
+	case st.symlinkAt != "":
+		return symlinkSnippet(st.symlinkAt)
 	}
 	return ""
 }

@@ -164,7 +164,7 @@ func TestEvaluate_States(t *testing.T) {
 					m = manifestWith(k.agent, recordFor(item, item.Hash))
 				}
 				st := findStatus(t, evaluate(t, tg, k.agent, cs, m), k.kind, k.id)
-				if st.State != r.wantState || st.Owned != r.wantOwned || st.Tracked || st.Detail != "" {
+				if st.State != r.wantState || st.Owned != r.wantOwned || st.Tracked || st.Detail != "" || st.foreign || st.symlinkAt != "" {
 					t.Fatalf("got %+v, want state %s owned %v", st, r.wantState, r.wantOwned)
 				}
 			})
@@ -299,7 +299,7 @@ func TestEvaluate_SymlinkedAncestorBlocked(t *testing.T) {
 				continue
 			}
 			skills++
-			if st.State != StateBlocked || st.Detail != "symlinked parent .agents" {
+			if st.State != StateBlocked || st.Detail != "symlinked parent .agents" || st.symlinkAt != ".agents" {
 				t.Errorf("got %+v", st)
 			}
 		}
@@ -308,6 +308,20 @@ func TestEvaluate_SymlinkedAncestorBlocked(t *testing.T) {
 		}
 		if st := findStatus(t, sts, KindSkill, "alpha"); !st.Owned {
 			t.Errorf("Owned must still reflect the record: %+v", st)
+		}
+	})
+	t.Run("claude .mcp.json is a symlink", func(t *testing.T) {
+		root := newRepo(t)
+		tg := mustTarget(t, root)
+		outside := filepath.Join(t.TempDir(), "mcp.json")
+		write(t, outside, "{}")
+		if err := os.Symlink(outside, filepath.Join(root, ".mcp.json")); err != nil {
+			t.Fatal(err)
+		}
+		cs := defaultFixture().canon(t, AgentClaude, evalURL)
+		st := findStatus(t, evaluate(t, tg, AgentClaude, cs, manifestWith(AgentClaude)), KindMCP, "projectlens")
+		if st.State != StateBlocked || st.symlinkAt != ".mcp.json" {
+			t.Fatalf("got %+v", st)
 		}
 	})
 	t.Run("claude hooks file is a symlink", func(t *testing.T) {
@@ -508,16 +522,23 @@ func TestEvaluate_CodexForeign(t *testing.T) {
 
 	tg := setup(t, "[mcp_servers.\"projectlens\"]\nurl = \""+evalURL+"\"\n")
 	st := findStatus(t, evaluate(t, tg, AgentCodex, cs, manifestWith(AgentCodex)), KindMCP, "projectlens")
-	if st.State != StateCurrent || st.Owned {
+	if st.State != StateCurrent || st.Owned || !st.foreign {
 		t.Fatalf("canonical URL: %+v", st)
 	}
 
 	tg = setup(t, "[mcp_servers.projectlens]\nurl = \""+evalURLOther+"\"\n")
 	for _, m := range []*Manifest{manifestWith(AgentCodex), manifestWith(AgentCodex, recordFor(mcp, mcp.Hash))} {
 		st = findStatus(t, evaluate(t, tg, AgentCodex, cs, m), KindMCP, "projectlens")
-		if st.State != StateBlocked || st.Detail != "defined outside the managed block" {
+		if st.State != StateBlocked || st.Detail != "defined outside the managed block" || !st.foreign {
 			t.Fatalf("other URL: %+v", st)
 		}
+	}
+
+	// A managed block is not a foreign definition.
+	tg = setup(t, codexBlock(evalURL))
+	st = findStatus(t, evaluate(t, tg, AgentCodex, cs, manifestWith(AgentCodex, recordFor(mcp, mcp.Hash))), KindMCP, "projectlens")
+	if st.State != StateCurrent || st.foreign {
+		t.Fatalf("managed block: %+v", st)
 	}
 
 	// A foreign definition next to the managed block makes the file invalid for Codex.
@@ -588,6 +609,20 @@ func TestEvaluate_TrackedPaths(t *testing.T) {
 			t.Fatalf("untracked skill reported tracked: %+v", beta)
 		}
 	})
+}
+
+func TestEvaluate_TrackedCodexForeign(t *testing.T) {
+	root := newRepo(t)
+	tg := mustTarget(t, root)
+	cs := defaultFixture().canon(t, AgentCodex, evalURL)
+	mcp := findCanon(t, cs, KindMCP, "projectlens")
+	write(t, tg.Abs(mcp.Path), "[mcp_servers.projectlens]\nurl = \""+evalURL+"\"\n")
+	git(t, root, "add", "-f", "--", mcp.Path)
+	git(t, root, "commit", "-q", "-m", "tracked")
+	st := findStatus(t, evaluate(t, tg, AgentCodex, cs, manifestWith(AgentCodex)), KindMCP, "projectlens")
+	if st.State != StateCurrent || !st.Tracked || !st.foreign {
+		t.Fatalf("got %+v", st)
+	}
 }
 
 // Guard against the fixture drifting: the test rows above assume these shapes.

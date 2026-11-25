@@ -3,6 +3,7 @@ package agentsetup
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -1910,5 +1911,52 @@ func TestInstall_ManifestLossSiblingLeftoverCleaned(t *testing.T) {
 	}
 	if p := porcelain(t, root); p != "" {
 		t.Fatalf("porcelain %q", p)
+	}
+}
+
+func TestInstall_TrackedCodexForeignNotRerecorded(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%v", force), func(t *testing.T) {
+			root := newRepo(t)
+			tg := mustTarget(t, root)
+			assets := defaultFixture().dir(t)
+			cs := defaultFixture().canon(t, AgentCodex, evalURL)
+			mcp := findCanon(t, cs, KindMCP, "projectlens")
+			body := "[mcp_servers.projectlens]\nurl = \"" + evalURL + "\"\n"
+			write(t, tg.Abs(mcp.Path), body)
+			git(t, root, "add", "-f", "--", mcp.Path)
+			git(t, root, "commit", "-q", "-m", "tracked")
+			seed := manifestWith(AgentCodex, recordFor(mcp, MCPHash(evalURLOther)))
+			if err := seed.Save(tg); err != nil {
+				t.Fatal(err)
+			}
+
+			o := codexOpts()
+			o.Force = force
+			res := runInstall(t, tg, assets, o)
+			if r := resultFor(t, res, KindMCP, "projectlens"); r.Action != ActionCurrent {
+				t.Fatalf("action %q, want %q", r.Action, ActionCurrent)
+			}
+			rec, ok := loadManifest(t, tg).Record(AgentCodex, KindMCP, "projectlens")
+			if !ok || rec.Hash != MCPHash(evalURLOther) {
+				t.Fatalf("record re-recorded: %+v ok=%v", rec, ok)
+			}
+			got, err := os.ReadFile(tg.Abs(mcp.Path))
+			if err != nil || string(got) != body {
+				t.Fatalf("config.toml changed: %q err=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestBlockedSnippet_UsesFields(t *testing.T) {
+	if got := blockedSnippet(ItemStatus{symlinkAt: "x", Detail: "unrelated text"}); got != symlinkSnippet("x") {
+		t.Errorf("symlinkAt: %q", got)
+	}
+	if got := blockedSnippet(ItemStatus{foreign: true}); got != snippetForeign {
+		t.Errorf("foreign: %q", got)
+	}
+	if got := blockedSnippet(ItemStatus{Detail: "symlinked parent x"}); got != "" {
+		t.Errorf("detail text must not be parsed: %q", got)
 	}
 }

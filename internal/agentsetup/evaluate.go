@@ -24,6 +24,9 @@ type ItemStatus struct {
 	Owned   bool   `json:"owned"` // the manifest has a record for this item
 	Tracked bool   `json:"tracked"`
 	Detail  string `json:"detail"` // e.g. "symlink", "symlinked parent .agents", "defined outside the managed block"
+
+	foreign   bool   // Codex MCP: defined outside the managed block
+	symlinkAt string // blocked: the symlinked path component
 }
 
 // installed is what installedHash finds on disk for one item.
@@ -155,9 +158,11 @@ func evaluateItem(t Target, c Canon, rec Record, owned bool) (ItemStatus, error)
 		if !errors.Is(err, ErrEscapesTarget) {
 			return ItemStatus{}, err
 		}
-		return result(StateBlocked, "symlinked parent "+firstSymlink(t, c.Path))
+		st.symlinkAt = firstSymlink(t, c.Path)
+		return result(StateBlocked, "symlinked parent "+st.symlinkAt)
 	}
 	if c.Kind != KindSkill && t.IsSymlink(c.Path) {
+		st.symlinkAt = c.Path
 		return result(StateBlocked, "symlinked file "+c.Path)
 	}
 
@@ -165,6 +170,7 @@ func evaluateItem(t Target, c Canon, rec Record, owned bool) (ItemStatus, error)
 	if err != nil {
 		return ItemStatus{}, err
 	}
+	st.foreign = disk.foreign
 
 	// 2. Tracked by git: never written; the manifest is not consulted.
 	tracked, err := t.IsTracked(c.Path)
