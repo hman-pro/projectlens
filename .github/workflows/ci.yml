@@ -30,3 +30,33 @@ jobs:
 
       - name: build
         run: make build
+
+  smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: projectlens
+          POSTGRES_PASSWORD: projectlens
+          POSTGRES_DB: projectlens
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U projectlens"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: smoke test
+        run: make smoke
+        env:
+          PROJECTLENS_DATABASE_URL: postgres://projectlens:projectlens@localhost:5433/projectlens?sslmode=disable

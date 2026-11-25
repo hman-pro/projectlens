@@ -32,7 +32,7 @@ help: ## Show this help
 # ────────────────────────────────────────────────────────────────────
 # Build (always re-runs go build; Go's own cache makes it cheap)
 # ────────────────────────────────────────────────────────────────────
-.PHONY: build build-lens build-lens-mcp build-lens-tui install clean fmt vet test test-int
+.PHONY: build build-lens build-lens-mcp build-lens-tui install clean fmt vet test test-int smoke
 
 build: build-lens build-lens-mcp build-lens-tui ## Build all binaries into ./bin/
 
@@ -66,6 +66,9 @@ test: ## Run unit tests
 
 test-int: ## Run integration tests (requires DB)
 	go test -tags integration ./...
+
+smoke: build ## End-to-end smoke test: migrate, index fixture, call every MCP tool (requires DB)
+	PROJECTLENS_DATABASE_URL="$(PROJECTLENS_DATABASE_URL)" go test -tags smoke -count=1 -timeout 5m ./internal/smoketest/
 
 # ────────────────────────────────────────────────────────────────────
 # Run binaries (always builds first, then execs from ./bin/)

@@ -23,9 +23,7 @@ backlogs should be folded here instead of creating another competing list.
 
 ## Active Tasks
 
-| Priority | Task | Status | Next Action | Done When |
-|---|---|---|---|---|
-| `P2` | End-to-end smoke test | Active | Promote the brief below into an implementation plan. Existing `scripts/release-smoke.sh` only covers the embedding+DB contract — it is not the full loop. | `make smoke` proves the full indexer to storage to MCP loop against a small fixture repo in under 5 minutes. |
+None.
 
 ## Next Tasks
 
@@ -37,6 +35,7 @@ backlogs should be folded here instead of creating another competing list.
 
 | Priority | Task | Status | Evidence |
 |---|---|---|---|
+| `P2` | End-to-end smoke test (`make smoke`: migrate, index fixture repo, call every MCP tool) | Done | `internal/smoketest/`, `testdata/smoke-repo/`, `make smoke`, CI `smoke` job |
 | `P1` | Agent setup UX (`lens agent install/uninstall/status/doctor` for Claude and Codex, personal and git-invisible) | Done | `cmd/lens/agent.go`, `internal/agentsetup/` |
 | `P1` | `lens report` (markdown/json, `--format`, `--out`, all sections) | Done | `cmd/lens/report.go`, `internal/report/` |
 | `P1` | `lens export graph` (native-schema nodes+edges, stable IDs, streaming) | Done | `cmd/lens/export.go`, `internal/export/graph.go` |
@@ -225,6 +224,9 @@ Small hardening:
 
 ## 4. End-to-End Smoke Test
 
+Shipped: see the Build And Test section of [`operations.md`](operations.md) and
+`internal/smoketest/`. The text below is the original scope.
+
 Goal: add one command that proves the full ProjectLens loop is healthy:
 Postgres up, migrations applied, indexer can ingest a tiny fixture repo, and
 every MCP tool returns a sensible structured payload.
@@ -277,8 +279,7 @@ Additional future-spec inputs:
 ## Suggested Sequence
 
 1. Done: agent setup UX (`lens agent install/uninstall/status/doctor`).
-2. Promote the end-to-end smoke test brief into an implementation plan, then
-   build it.
+2. Done: end-to-end smoke test (`make smoke`, CI `smoke` job).
 3. Revisit Jira/Confluence only if external document/context ingestion becomes
    a product priority again.
 
