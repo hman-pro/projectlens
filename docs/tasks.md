@@ -29,7 +29,7 @@ None.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P2` | Agent setup follow-ups (structure refactor and small hardening) | Next | Start with the structured `ItemStatus` fields; the other items are independent. See "Follow-ups" under section 3. | Every item in the section 3 follow-up list is fixed or explicitly dropped, with no change to `lens agent` behavior beyond the listed fixes. |
+| `P2` | Agent setup follow-ups (structure refactor and small hardening) | Next | Start with the `planOrphan`/`planRemoval` unification; the other items are independent. See "Follow-ups" under section 3. | Every item in the section 3 follow-up list is fixed or explicitly dropped, with no change to `lens agent` behavior beyond the listed fixes. |
 
 ## Recently Done
 
@@ -203,8 +203,8 @@ Left open when the feature shipped. None affects the safety properties in
 
 Structure (no behavior change):
 
-- `ItemStatus` carries its facts only as detail text, so `install` parses
-  `Evaluate` detail strings and re-reads `config.toml`. Add structured fields.
+- Done: `ItemStatus` carries `foreign` and `symlinkAt` as structured fields, so
+  `install` no longer parses detail strings or re-reads `config.toml`.
 - The removal decision is written twice: `planOrphan` in `install.go` and
   `planRemoval` in `uninstall.go` (both under `internal/agentsetup/`). Unify
   them.
