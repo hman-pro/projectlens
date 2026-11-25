@@ -3,9 +3,16 @@
 package smoketest
 
 import (
+	"context"
 	"os/exec"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/hman-pro/projectlens/internal/mcpserver"
 )
 
 func TestFixtureRepo_ThreeCommits(t *testing.T) {
@@ -26,7 +33,7 @@ func TestFixtureRepo_ThreeCommits(t *testing.T) {
 	}
 }
 
-func TestSmoke_IndexesFixture(t *testing.T) {
+func TestSmoke_FullLoop(t *testing.T) {
 	ollama := NewFakeOllama(1024)
 	defer ollama.Close()
 	db := freshDatabase(t)
@@ -41,4 +48,145 @@ func TestSmoke_IndexesFixture(t *testing.T) {
 			t.Errorf("index-all output contains %q:\n%s", bad, out)
 		}
 	}
+
+	ctx := context.Background()
+	c, err := client.NewStreamableHttpClient(startMCP(t, cfg, db, repo))
+	if err != nil {
+		t.Fatalf("new mcp client: %v", err)
+	}
+	defer c.Close()
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("start mcp client: %v", err)
+	}
+	var initReq mcp.InitializeRequest
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "smoke-test", Version: "0"}
+	if _, err := c.Initialize(ctx, initReq); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	var names []string
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+	}
+	sort.Strings(names)
+	wantTools := []string{"find_symbol", "get_change_history", "get_coupling", "get_package_summary",
+		"get_symbol_context", "get_table_context", "index_status", "save_knowledge", "search_go_context", "search_knowledge"}
+	if strings.Join(names, ",") != strings.Join(wantTools, ",") {
+		t.Fatalf("tools = %v, want %v", names, wantTools)
+	}
+
+	st := callTool[statusPayload](t, c, "index_status", nil)
+	for _, s := range []string{"code", "datastore", "history", "embed"} {
+		if got := st.Stages[s].Status; got != "completed" {
+			t.Errorf("stage %s status = %q, want completed (%+v)", s, got, st.Stages[s])
+		}
+	}
+	if st.Git.Head == "" {
+		t.Error("index_status git.head is empty")
+	}
+	for _, p := range st.Providers {
+		if p.Error != "" {
+			t.Errorf("provider %s/%s error: %s", p.Role, p.Provider, p.Error)
+		}
+	}
+
+	fs := callTool[mcpserver.FindSymbolPayload](t, c, "find_symbol", map[string]any{"name": "NewWidget"})
+	if fs.Total < 1 || len(fs.Hits) < 1 {
+		t.Fatalf("find_symbol NewWidget: %+v", fs)
+	}
+	if got := fs.Hits[0].Evidence.FilePath; got != "widget/widget.go" {
+		t.Errorf("find_symbol file = %q, want widget/widget.go", got)
+	}
+
+	sg := callTool[mcpserver.SearchGoContextPayload](t, c, "search_go_context", map[string]any{"query": "save a widget"})
+	if sg.Degradation.Degraded {
+		t.Errorf("search_go_context degraded: %+v", sg.Degradation)
+	}
+	if sg.Total < 1 {
+		t.Errorf("search_go_context total = %d, want >= 1", sg.Total)
+	}
+
+	sc := callTool[mcpserver.SymbolContextPayload](t, c, "get_symbol_context", map[string]any{"name": "NewWidget"})
+	if sc.NotFound {
+		t.Fatalf("get_symbol_context NewWidget not found")
+	}
+	if !hasHit(sc.Callers, "main") {
+		t.Errorf("NewWidget callers = %+v, want one named main", sc.Callers)
+	}
+	si := callTool[mcpserver.SymbolContextPayload](t, c, "get_symbol_context", map[string]any{"name": "Store"})
+	if !hasHit(si.Implementors, "SQLStore") {
+		t.Errorf("Store implementors = %+v, want SQLStore", si.Implementors)
+	}
+
+	ps := callTool[mcpserver.PackageSummaryPayload](t, c, "get_package_summary", map[string]any{"package_name": "widget"})
+	if ps.PackageName != "widget" {
+		t.Errorf("package_name = %q, want widget", ps.PackageName)
+	}
+
+	tc := callTool[mcpserver.TableContextPayload](t, c, "get_table_context", map[string]any{"table_name": "widgets"})
+	if tc.NotFound {
+		t.Fatalf("get_table_context widgets not found")
+	}
+	hasPK := false
+	for _, col := range tc.Columns {
+		if col.Name == "id" && col.IsPrimaryKey {
+			hasPK = true
+		}
+	}
+	if !hasPK {
+		t.Errorf("widgets columns = %+v, want primary key id", tc.Columns)
+	}
+	if len(tc.ReadBy)+len(tc.WrittenBy) < 1 {
+		t.Error("widgets has no read_by/written_by edges")
+	}
+
+	ch := callTool[mcpserver.ChangeHistoryPayload](t, c, "get_change_history", map[string]any{"name": "widget/widget.go"})
+	if len(ch.Records) != 3 {
+		t.Errorf("change history records = %d, want 3 (%+v)", len(ch.Records), ch)
+	}
+
+	cp := callTool[mcpserver.CouplingPayload](t, c, "get_coupling", map[string]any{"name": "widget/widget.go"})
+	coupled := false
+	for _, e := range cp.Coupled {
+		if e.FilePath == "main.go" {
+			coupled = true
+		}
+	}
+	if !coupled {
+		t.Errorf("coupling = %+v, want main.go", cp)
+	}
+
+	sk := callTool[mcpserver.SaveKnowledgePayload](t, c, "save_knowledge", map[string]any{
+		"category": "lesson", "title": "smoke: widgets", "body": "Widgets are saved via SQLStore.",
+		"anchors": []map[string]string{{"type": "symbol", "ref": "NewWidget"}},
+	})
+	if sk.ID <= 0 || !sk.Embedded || sk.AnchorsResolved != 1 {
+		t.Errorf("save_knowledge = %+v, want id>0, embedded, 1 anchor resolved", sk)
+	}
+
+	kq := callTool[mcpserver.SearchKnowledgePayload](t, c, "search_knowledge",
+		map[string]any{"anchor_type": "symbol", "anchor_ref": "NewWidget"})
+	found := false
+	for _, e := range kq.Entries {
+		if e.Title == "smoke: widgets" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("search_knowledge entries = %+v, want smoke: widgets", kq.Entries)
+	}
+}
+
+func hasHit(hits []mcpserver.SymbolHit, name string) bool {
+	for _, h := range hits {
+		if h.Name == name {
+			return true
+		}
+	}
+	return false
 }

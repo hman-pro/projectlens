@@ -3,22 +3,31 @@
 package smoketest
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
 	"gopkg.in/yaml.v3"
 
 	"github.com/hman-pro/projectlens/internal/agentsetup"
+	"github.com/hman-pro/projectlens/internal/indexstate"
 )
 
 // repoRoot returns the directory containing go.mod, walking up from the cwd.
@@ -204,8 +213,12 @@ func writeConfig(t *testing.T, ollamaURL, repoPath string) string {
 	hist["min_commits_per_file"] = 1
 	hist["coupling_min_cochanges"] = 2
 	idx := section("index")
+	patterns, ok := idx["exclude_patterns"].([]any)
+	if !ok {
+		t.Fatalf("template config index.exclude_patterns is %T, want a list", idx["exclude_patterns"])
+	}
 	var excludes []any
-	for _, e := range idx["exclude_patterns"].([]any) {
+	for _, e := range patterns {
 		if e != "**/testdata/**" {
 			excludes = append(excludes, e)
 		}
@@ -234,4 +247,110 @@ func runLens(t *testing.T, env []string, args ...string) string {
 		t.Fatalf("lens %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return string(out)
+}
+
+// statusPayload mirrors the unexported mcpserver.indexStatusPayload.
+type statusPayload struct {
+	ProjectSlug   string                               `json:"project_slug,omitempty"`
+	StorageSchema string                               `json:"storage_schema,omitempty"`
+	Stages        map[string]indexstate.StageFreshness `json:"stages"`
+	Git           struct {
+		Head  string `json:"head,omitempty"`
+		Dirty bool   `json:"dirty"`
+	} `json:"git"`
+	Providers []indexstate.ProviderHealth `json:"providers"`
+}
+
+// startMCP runs bin/lens-mcp in single-project mode on a free port and returns
+// its /mcp URL once the port accepts connections.
+func startMCP(t *testing.T, cfgPath, dbURL, repoPath string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("pick port: %v", err)
+	}
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	ln.Close()
+
+	cmd := exec.Command(binPath(t, "lens-mcp"))
+	cmd.Dir = repoRoot(t)
+	cmd.Env = subprocEnv(
+		"PROJECTLENS_CONFIG="+cfgPath,
+		"PROJECTLENS_DATABASE_URL="+dbURL,
+		"PROJECTLENS_REPO_PATH="+repoPath,
+		"PROJECTLENS_MCP_PORT="+port,
+		"PROJECTLENS_PROJECTS="+filepath.Join(t.TempDir(), "absent.yaml"),
+	)
+	var logs bytes.Buffer
+	cmd.Stdout = &logs
+	cmd.Stderr = &logs
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start lens-mcp: %v", err)
+	}
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			_ = cmd.Process.Kill()
+			<-exited
+		}
+		if t.Failed() {
+			t.Logf("lens-mcp output:\n%s", logs.String())
+		}
+	})
+
+	addr := "127.0.0.1:" + port
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case <-exited:
+			t.Fatalf("lens-mcp exited before accepting connections:\n%s", logs.String())
+		default:
+		}
+		if conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
+			conn.Close()
+			return "http://" + addr + "/mcp"
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("lens-mcp did not accept connections on %s within 15s", addr)
+	return ""
+}
+
+// callTool calls an MCP tool and strictly decodes its structured content into T.
+func callTool[T any](t *testing.T, c *client.Client, name string, args map[string]any) T {
+	t.Helper()
+	var req mcp.CallToolRequest
+	req.Params.Name = name
+	req.Params.Arguments = args
+	res, err := c.CallTool(context.Background(), req)
+	if err != nil {
+		t.Fatalf("call %s: %v", name, err)
+	}
+	if res.IsError {
+		var texts []string
+		for _, content := range res.Content {
+			if tc, ok := content.(mcp.TextContent); ok {
+				texts = append(texts, tc.Text)
+			}
+		}
+		t.Fatalf("tool %s returned an error: %s", name, strings.Join(texts, "\n"))
+	}
+	raw, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal %s structured content: %v", name, err)
+	}
+	var out T
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		t.Fatalf("decode %s payload: %v\n%s", name, err, raw)
+	}
+	return out
 }
