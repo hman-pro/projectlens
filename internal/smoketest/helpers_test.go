@@ -75,6 +75,9 @@ func adminURL(t *testing.T) string {
 func freshDatabase(t *testing.T) string {
 	t.Helper()
 	admin := adminURL(t)
+	if u, err := url.Parse(admin); err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+		t.Fatalf("admin database URL must be a postgres:// URL")
+	}
 	var b [4]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		t.Fatalf("random: %v", err)
@@ -123,6 +126,17 @@ func subprocEnv(extra ...string) []string {
 	}
 	env = agentsetup.ScrubGitEnv(env)
 	return append(env, extra...)
+}
+
+// smokeEnv is the child environment with the three variables that godotenv
+// would otherwise fill in from <repo>/.env pinned explicitly: godotenv never
+// overrides a variable that is already set.
+func smokeEnv(ollamaURL, dbURL, repoPath string) []string {
+	return subprocEnv(
+		"PROJECTLENS_OLLAMA_ENDPOINT="+ollamaURL,
+		"PROJECTLENS_DATABASE_URL="+dbURL,
+		"PROJECTLENS_REPO_PATH="+repoPath,
+	)
 }
 
 func git(t *testing.T, dir string, env []string, args ...string) {
@@ -263,7 +277,7 @@ type statusPayload struct {
 
 // startMCP runs bin/lens-mcp in single-project mode on a free port and returns
 // its /mcp URL once the port accepts connections.
-func startMCP(t *testing.T, cfgPath, dbURL, repoPath string) string {
+func startMCP(t *testing.T, cfgPath string, env []string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -273,11 +287,10 @@ func startMCP(t *testing.T, cfgPath, dbURL, repoPath string) string {
 	ln.Close()
 
 	cmd := exec.Command(binPath(t, "lens-mcp"))
-	cmd.Dir = repoRoot(t)
-	cmd.Env = subprocEnv(
+	// Run from an empty dir so godotenv finds no .env; config paths are absolute.
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(append([]string{}, env...),
 		"PROJECTLENS_CONFIG="+cfgPath,
-		"PROJECTLENS_DATABASE_URL="+dbURL,
-		"PROJECTLENS_REPO_PATH="+repoPath,
 		"PROJECTLENS_MCP_PORT="+port,
 		"PROJECTLENS_PROJECTS="+filepath.Join(t.TempDir(), "absent.yaml"),
 	)
@@ -341,6 +354,9 @@ func callTool[T any](t *testing.T, c *client.Client, name string, args map[strin
 			}
 		}
 		t.Fatalf("tool %s returned an error: %s", name, strings.Join(texts, "\n"))
+	}
+	if res.StructuredContent == nil {
+		t.Fatalf("tool %s returned no structured content", name)
 	}
 	raw, err := json.Marshal(res.StructuredContent)
 	if err != nil {

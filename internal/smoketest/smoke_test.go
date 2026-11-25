@@ -17,14 +17,14 @@ import (
 
 func TestFixtureRepo_ThreeCommits(t *testing.T) {
 	dir := buildFixtureRepo(t)
-	count, err := exec.Command("git", "-C", dir, "rev-list", "--count", "HEAD").Output()
+	count, err := gitOutput(dir, "rev-list", "--count", "HEAD")
 	if err != nil {
 		t.Fatalf("rev-list: %v", err)
 	}
 	if got := strings.TrimSpace(string(count)); got != "3" {
 		t.Fatalf("commit count = %q, want 3", got)
 	}
-	status, err := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
+	status, err := gitOutput(dir, "status", "--porcelain")
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
@@ -33,16 +33,26 @@ func TestFixtureRepo_ThreeCommits(t *testing.T) {
 	}
 }
 
+// gitOutput runs git in dir with the scrubbed subprocess environment.
+func gitOutput(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = subprocEnv()
+	return cmd.Output()
+}
+
 func TestSmoke_FullLoop(t *testing.T) {
 	ollama := NewFakeOllama(1024)
 	defer ollama.Close()
 	db := freshDatabase(t)
 	repo := buildFixtureRepo(t)
 	cfg := writeConfig(t, ollama.URL, repo)
-	env := subprocEnv()
+	env := smokeEnv(ollama.URL, db, repo)
 
 	runLens(t, env, "migrate", "--config", cfg, "--db", db)
 	out := runLens(t, env, "index-all", "--config", cfg, "--db", db, "--repo", repo)
+	if n := ollama.EmbedCalls(); n < 1 {
+		t.Fatalf("fake Ollama served %d /api/embed calls during index-all, want >= 1 (is lens routing embeddings elsewhere?)", n)
+	}
 	for _, bad := range []string{"embedding failed", "datastore indexing failed", "history indexing failed"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("index-all output contains %q:\n%s", bad, out)
@@ -50,7 +60,7 @@ func TestSmoke_FullLoop(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	c, err := client.NewStreamableHttpClient(startMCP(t, cfg, db, repo))
+	c, err := client.NewStreamableHttpClient(startMCP(t, cfg, env))
 	if err != nil {
 		t.Fatalf("new mcp client: %v", err)
 	}
@@ -89,10 +99,27 @@ func TestSmoke_FullLoop(t *testing.T) {
 	if st.Git.Head == "" {
 		t.Error("index_status git.head is empty")
 	}
+	var embedderOK, summarizerSeen bool
 	for _, p := range st.Providers {
+		if p.Role == "embedder" && p.State == "reachable" {
+			embedderOK = true
+		}
+		if p.Role == "summarizer" {
+			summarizerSeen = true
+			if p.State != "disabled" {
+				t.Errorf("summarizer state = %q, want disabled", p.State)
+			}
+		}
 		if p.Error != "" {
 			t.Errorf("provider %s/%s error: %s", p.Role, p.Provider, p.Error)
 		}
+	}
+
+	if !embedderOK {
+		t.Errorf("no reachable embedder provider in %+v", st.Providers)
+	}
+	if !summarizerSeen {
+		t.Errorf("no summarizer provider in %+v", st.Providers)
 	}
 
 	fs := callTool[mcpserver.FindSymbolPayload](t, c, "find_symbol", map[string]any{"name": "NewWidget"})
@@ -141,8 +168,11 @@ func TestSmoke_FullLoop(t *testing.T) {
 	if !hasPK {
 		t.Errorf("widgets columns = %+v, want primary key id", tc.Columns)
 	}
-	if len(tc.ReadBy)+len(tc.WrittenBy) < 1 {
-		t.Error("widgets has no read_by/written_by edges")
+	if !hasEdge(tc.WrittenBy, "Save") {
+		t.Errorf("widgets written_by = %+v, want Save", tc.WrittenBy)
+	}
+	if !hasEdge(tc.ReadBy, "Load") {
+		t.Errorf("widgets read_by = %+v, want Load", tc.ReadBy)
 	}
 
 	ch := callTool[mcpserver.ChangeHistoryPayload](t, c, "get_change_history", map[string]any{"name": "widget/widget.go"})
@@ -185,6 +215,16 @@ func TestSmoke_FullLoop(t *testing.T) {
 func hasHit(hits []mcpserver.SymbolHit, name string) bool {
 	for _, h := range hits {
 		if h.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// hasEdge reports whether any hit's symbol name is name or ends in ".name".
+func hasEdge(hits []mcpserver.TableEdgeHit, name string) bool {
+	for _, h := range hits {
+		if h.Name == name || strings.HasSuffix(h.Name, "."+name) {
 			return true
 		}
 	}

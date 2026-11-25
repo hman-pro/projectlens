@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 )
 
 const fakeModelName = "qwen3-embedding:0.6b"
@@ -22,12 +23,23 @@ type embedResponse struct {
 	Embeddings [][]float64 `json:"embeddings"`
 }
 
+// FakeOllama is an httptest server that counts the /api/embed requests it serves.
+type FakeOllama struct {
+	*httptest.Server
+	embedCalls atomic.Int64
+}
+
+// EmbedCalls returns how many POST /api/embed requests have been served.
+func (f *FakeOllama) EmbedCalls() int64 { return f.embedCalls.Load() }
+
 // NewFakeOllama starts an httptest server that mimics the Ollama endpoints
 // ProjectLens uses: POST /api/embed and GET /api/tags. Embeddings are
 // deterministic functions of the input text with the given dimensionality.
-func NewFakeOllama(dim int) *httptest.Server {
+func NewFakeOllama(dim int) *FakeOllama {
+	f := &FakeOllama{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/embed", func(w http.ResponseWriter, r *http.Request) {
+		f.embedCalls.Add(1)
 		var req embedRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -44,7 +56,8 @@ func NewFakeOllama(dim int) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"models":[{"name":"` + fakeModelName + `"}]}`))
 	})
-	return httptest.NewServer(mux)
+	f.Server = httptest.NewServer(mux)
+	return f
 }
 
 // FakeVector returns a deterministic unit-length vector of length dim derived

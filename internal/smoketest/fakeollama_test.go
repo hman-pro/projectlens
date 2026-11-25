@@ -19,6 +19,9 @@ func TestFakeOllama_RealClientRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmbedBatch: %v", err)
 	}
+	if got := srv.EmbedCalls(); got != 1 {
+		t.Fatalf("EmbedCalls = %d, want 1", got)
+	}
 	if len(vecs) != 3 {
 		t.Fatalf("got %d vectors, want 3", len(vecs))
 	}

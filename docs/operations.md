@@ -62,7 +62,9 @@ creates a throwaway database, runs migrations, indexes the fixture repo in
 tool. It needs a reachable Postgres (`make docker-up` locally) and takes a few
 seconds. The database comes from `PROJECTLENS_SMOKE_DATABASE_URL`, falling back
 to `PROJECTLENS_DATABASE_URL`; the test fails (not skips) if neither is set. CI
-runs it as the `smoke` job. Source: `internal/smoketest/`.
+runs it as the `smoke` job. An interrupted run (Ctrl-C or timeout) can leave a
+`smoke_<hex>` database behind; drop it with
+`DROP DATABASE smoke_<hex> WITH (FORCE);`. Source: `internal/smoketest/`.
 
 ### Index
 
