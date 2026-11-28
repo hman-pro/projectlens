@@ -331,8 +331,11 @@ file that install created and that is empty after removal is deleted.
   `blocked` until you move it.
 - A config file that install created and you leave empty is deleted on
   uninstall.
-- A hard crash while writing a config file can leave a `.tmp-*` file that
-  shows in `git status`. Delete it and re-run install.
+- A hard crash while writing a config file can leave a `.tmp-*` file in
+  `.git/projectlens-tmp/`, where git never shows it; it is safe to delete.
+  Only when the git dir is on another file system than the work tree does
+  the temp file go beside the config file, where `git status` shows it:
+  delete it and re-run install.
 
 ---
 

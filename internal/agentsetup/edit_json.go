@@ -57,7 +57,7 @@ func loadJSONObject(path string) (doc jsonObject, exists bool, err error) {
 
 // saveJSONObject writes doc as 2-space indented JSON with sorted keys and a
 // trailing newline, without HTML escaping.
-func saveJSONObject(path string, doc any) error {
+func saveJSONObject(stage, path string, doc any) error {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -65,7 +65,7 @@ func saveJSONObject(path string, doc any) error {
 	if err := enc.Encode(doc); err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
 	}
-	return writeFileAtomic(path, buf.Bytes())
+	return writeFileStaged(stage, path, buf.Bytes())
 }
 
 // docIsEmpty reports whether the document is {} or holds only empty
@@ -125,7 +125,8 @@ func ReadMCPJSON(path string) (hash string, present bool, err error) {
 }
 
 // WriteMCPJSON sets mcpServers.projectlens, creating the file if needed.
-func WriteMCPJSON(path, url string) error {
+// stage is where the temp file for the write goes (see writeFileStaged).
+func WriteMCPJSON(stage, path, url string) error {
 	doc, _, err := loadJSONObject(path)
 	if err != nil {
 		return err
@@ -142,13 +143,14 @@ func WriteMCPJSON(path, url string) error {
 	if doc["mcpServers"], err = marshalNoEscape(servers); err != nil {
 		return fmt.Errorf("encode mcpServers: %w", err)
 	}
-	return saveJSONObject(path, doc)
+	return saveJSONObject(stage, path, doc)
 }
 
 // RemoveMCPJSON deletes mcpServers.projectlens. empty reports whether the
 // remaining document is {} or holds only an empty mcpServers/hooks object. The
 // file is left in place.
-func RemoveMCPJSON(path string) (empty bool, err error) {
+// stage is where the temp file for the write goes (see writeFileStaged).
+func RemoveMCPJSON(stage, path string) (empty bool, err error) {
 	doc, exists, err := loadJSONObject(path)
 	if err != nil || !exists {
 		return false, err
@@ -164,7 +166,7 @@ func RemoveMCPJSON(path string) (empty bool, err error) {
 		} else if doc["mcpServers"], err = marshalNoEscape(servers); err != nil {
 			return false, fmt.Errorf("encode mcpServers: %w", err)
 		}
-		if err := saveJSONObject(path, doc); err != nil {
+		if err := saveJSONObject(stage, path, doc); err != nil {
 			return false, err
 		}
 	}
@@ -316,7 +318,7 @@ func removeHookID(path string, events hookEvents, id string) (int, error) {
 	return removed, nil
 }
 
-func saveHooksDoc(path string, doc jsonObject, events hookEvents) error {
+func saveHooksDoc(stage, path string, doc jsonObject, events hookEvents) error {
 	if len(events) == 0 {
 		delete(doc, "hooks")
 	} else {
@@ -326,12 +328,13 @@ func saveHooksDoc(path string, doc jsonObject, events hookEvents) error {
 		}
 		doc["hooks"] = raw
 	}
-	return saveJSONObject(path, doc)
+	return saveJSONObject(stage, path, doc)
 }
 
 // WriteHook installs h: it removes every entry carrying h.ID, then appends the
 // canonical entry to the first group under h.Event with h.Matcher.
-func WriteHook(path string, h Hook) error {
+// stage is where the temp file for the write goes (see writeFileStaged).
+func WriteHook(stage, path string, h Hook) error {
 	doc, events, _, err := loadHooksDoc(path)
 	if err != nil {
 		return err
@@ -366,13 +369,14 @@ func WriteHook(path string, h Hook) error {
 		list, _ := marshalNoEscape([]json.RawMessage{entry})
 		events[h.Event] = append(groups, hookGroup{"matcher": matcher, "hooks": list})
 	}
-	return saveHooksDoc(path, doc, events)
+	return saveHooksDoc(stage, path, doc, events)
 }
 
 // RemoveHook deletes every entry carrying id and cleans up the containers it
 // emptied. empty reports whether the remaining document is {} or holds only an
 // empty mcpServers/hooks object. The file is left in place.
-func RemoveHook(path, id string) (empty bool, err error) {
+// stage is where the temp file for the write goes (see writeFileStaged).
+func RemoveHook(stage, path, id string) (empty bool, err error) {
 	doc, events, exists, err := loadHooksDoc(path)
 	if err != nil || !exists {
 		return false, err
@@ -382,7 +386,7 @@ func RemoveHook(path, id string) (empty bool, err error) {
 		return false, err
 	}
 	if removed > 0 {
-		if err := saveHooksDoc(path, doc, events); err != nil {
+		if err := saveHooksDoc(stage, path, doc, events); err != nil {
 			return false, err
 		}
 	}

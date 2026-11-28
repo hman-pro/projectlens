@@ -23,14 +23,14 @@ var foreignCodexSpellings = []string{
 func TestCodexBlock_AppendAndRemoveRestoresBytes(t *testing.T) {
 	orig := "model = \"x\"\n[other]\nk = 1\n"
 	p := writeTestFile(t, orig)
-	if err := WriteCodexBlock(p, "http://u/mcp"); err != nil {
+	if err := WriteCodexBlock("", p, "http://u/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	want := orig + "\n# >>> projectlens (managed by `lens agent`) >>>\n[mcp_servers.projectlens]\nurl = \"http://u/mcp\"\n# <<< projectlens <<<\n"
 	if got := readTestFile(t, p); got != want {
 		t.Fatalf("written:\n%q\nwant:\n%q", got, want)
 	}
-	empty, err := RemoveCodexBlock(p)
+	empty, err := RemoveCodexBlock("", p)
 	if err != nil || empty {
 		t.Fatalf("remove: %v %v", empty, err)
 	}
@@ -44,14 +44,14 @@ func TestCodexBlock_CreateOnMissingFile(t *testing.T) {
 	if st, err := ReadCodexConfig(p); err != nil || st != (CodexState{}) {
 		t.Fatalf("missing: %+v %v", st, err)
 	}
-	if err := WriteCodexBlock(p, "http://u/mcp"); err != nil {
+	if err := WriteCodexBlock("", p, "http://u/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	st, err := ReadCodexConfig(p)
 	if err != nil || !st.BlockPresent || st.BlockHash != MCPHash("http://u/mcp") || st.Foreign {
 		t.Fatalf("state: %+v %v", st, err)
 	}
-	empty, err := RemoveCodexBlock(p)
+	empty, err := RemoveCodexBlock("", p)
 	if err != nil || !empty {
 		t.Fatalf("remove: %v %v", empty, err)
 	}
@@ -59,13 +59,13 @@ func TestCodexBlock_CreateOnMissingFile(t *testing.T) {
 
 func TestCodexBlock_ReplaceInPlace(t *testing.T) {
 	p := writeTestFile(t, "a = 1\n")
-	if err := WriteCodexBlock(p, "http://one/mcp"); err != nil {
+	if err := WriteCodexBlock("", p, "http://one/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, []byte(readTestFile(t, p)+"b = 2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteCodexBlock(p, "http://two/mcp"); err != nil {
+	if err := WriteCodexBlock("", p, "http://two/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	got := readTestFile(t, p)
@@ -79,7 +79,7 @@ func TestCodexBlock_ReplaceInPlace(t *testing.T) {
 
 func TestCodexBlock_EditedBodyHashDiffers(t *testing.T) {
 	p := writeTestFile(t, "")
-	if err := WriteCodexBlock(p, "http://u/mcp"); err != nil {
+	if err := WriteCodexBlock("", p, "http://u/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	edited := strings.Replace(readTestFile(t, p), "url = ", "startup_timeout_sec = 5\nurl = ", 1)
@@ -112,7 +112,7 @@ func TestCodexConfig_ForeignDetectedInEverySpelling(t *testing.T) {
 func TestCodexBlock_WriteRefusesForeign(t *testing.T) {
 	for _, in := range foreignCodexSpellings {
 		p := writeTestFile(t, in)
-		if err := WriteCodexBlock(p, "http://u/mcp"); !errors.Is(err, ErrForeignCodex) {
+		if err := WriteCodexBlock("", p, "http://u/mcp"); !errors.Is(err, ErrForeignCodex) {
 			t.Errorf("%q: err = %v", in, err)
 		}
 		if got := readTestFile(t, p); got != in {
@@ -131,7 +131,7 @@ func TestCodexBlock_ResultAlwaysParses(t *testing.T) {
 		"mcp_servers other":       "[mcp_servers.other]\nurl = \"q\"\n",
 	} {
 		p := writeTestFile(t, in)
-		if err := WriteCodexBlock(p, url); err != nil {
+		if err := WriteCodexBlock("", p, url); err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
@@ -152,10 +152,10 @@ func TestCodexConfig_InvalidTOMLRefused(t *testing.T) {
 	if _, err := ReadCodexConfig(p); !errors.Is(err, ErrInvalidTOML) {
 		t.Errorf("read err = %v", err)
 	}
-	if err := WriteCodexBlock(p, "http://u/mcp"); !errors.Is(err, ErrInvalidTOML) || !strings.Contains(err.Error(), p) {
+	if err := WriteCodexBlock("", p, "http://u/mcp"); !errors.Is(err, ErrInvalidTOML) || !strings.Contains(err.Error(), p) {
 		t.Errorf("write err = %v", err)
 	}
-	if _, err := RemoveCodexBlock(p); !errors.Is(err, ErrInvalidTOML) {
+	if _, err := RemoveCodexBlock("", p); !errors.Is(err, ErrInvalidTOML) {
 		t.Errorf("remove err = %v", err)
 	}
 	if got := readTestFile(t, p); got != "[broken" {
@@ -166,7 +166,7 @@ func TestCodexConfig_InvalidTOMLRefused(t *testing.T) {
 func TestCodexBlock_URLInjectionRefused(t *testing.T) {
 	orig := "a = 1\n"
 	p := writeTestFile(t, orig)
-	err := WriteCodexBlock(p, "x\"\nfoo = \"y")
+	err := WriteCodexBlock("", p, "x\"\nfoo = \"y")
 	if !errors.Is(err, ErrInvalidTOML) {
 		t.Fatalf("err = %v", err)
 	}

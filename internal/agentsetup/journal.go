@@ -166,11 +166,11 @@ func (j *journal) removeItem(it Item) error {
 	case it.Kind == KindSkill:
 		return j.removeSkillDir(it.Path)
 	case it.Kind == KindHook:
-		empty, err = RemoveHook(abs, it.ID)
+		empty, err = RemoveHook(j.t.stageDir(), abs, it.ID)
 	case it.Agent == AgentCodex:
-		empty, err = RemoveCodexBlock(abs)
+		empty, err = RemoveCodexBlock(j.t.stageDir(), abs)
 	default:
-		empty, err = RemoveMCPJSON(abs)
+		empty, err = RemoveMCPJSON(j.t.stageDir(), abs)
 	}
 	if err != nil {
 		return fmt.Errorf("remove %s %s: %w", it.Kind, it.ID, err)

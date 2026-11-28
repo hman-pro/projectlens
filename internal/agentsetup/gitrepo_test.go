@@ -276,3 +276,44 @@ func TestInstall_IgnoresInheritedGitDir(t *testing.T) {
 		t.Fatalf("porcelain %q", p)
 	}
 }
+
+// A staged write creates its temp file in the stage dir, never beside the
+// destination, so a crash cannot leave a file that git status shows.
+func TestWriteFileStaged_TempGoesToStage(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "config.json")
+	stage := filepath.Join(t.TempDir(), "stage")
+
+	if err := writeFileStaged(stage, dest, []byte("one\n")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dest); string(b) != "one\n" {
+		t.Fatalf("dest = %q", b)
+	}
+	if left, _ := os.ReadDir(stage); len(left) != 0 {
+		t.Fatalf("stage not empty: %v", left)
+	}
+
+	// An unwritable stage fails the write: proof the temp file goes there.
+	if err := os.Chmod(stage, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(stage, 0o700) })
+	if err := writeFileStaged(stage, dest, []byte("two\n")); err == nil {
+		t.Fatal("write with an unwritable stage succeeded; temp file was not staged")
+	}
+	if b, _ := os.ReadFile(dest); string(b) != "one\n" {
+		t.Fatalf("dest changed to %q", b)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(dest))
+	if len(entries) != 1 {
+		t.Fatalf("dest dir holds %v, want only config.json", entries)
+	}
+}
+
+// Install stages every work tree write in the per-worktree git dir.
+func TestTargetStageDirIsInGitDir(t *testing.T) {
+	tg := mustTarget(t, newRepo(t))
+	if want := filepath.Join(tg.Root, ".git", "projectlens-tmp"); tg.stageDir() != want {
+		t.Fatalf("stageDir = %q, want %q", tg.stageDir(), want)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // ErrEscapesTarget reports a path that could reach outside the target work
@@ -21,6 +22,18 @@ type Target struct {
 	Root           string // absolute, symlinks resolved
 	CommonDir      string // absolute git common dir
 	LinkedWorktree bool   // git-dir differs from git-common-dir
+	GitDir         string // absolute per-worktree git dir; holds stageDir
+}
+
+// stageDir is where writes into the work tree stage their temp file: inside
+// the git dir, so a crash between create and rename never leaves a file that
+// git status shows. It is per worktree so concurrent runs in linked worktrees
+// do not share it. Empty (a Target not from OpenTarget) stages beside the file.
+func (t Target) stageDir() string {
+	if t.GitDir == "" {
+		return ""
+	}
+	return filepath.Join(t.GitDir, "projectlens-tmp")
 }
 
 func runGit(dir string, args ...string) (string, error) {
@@ -87,7 +100,7 @@ func OpenTarget(dir string) (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
-	return Target{Root: root, CommonDir: commonAbs, LinkedWorktree: commonAbs != gitDirAbs}, nil
+	return Target{Root: root, CommonDir: commonAbs, LinkedWorktree: commonAbs != gitDirAbs, GitDir: gitDirAbs}, nil
 }
 
 // IsTracked reports whether rel is a tracked file, or a directory holding one.
@@ -296,12 +309,27 @@ func (t Target) SetExcludeBlock(paths []string) error {
 	return writeFileAtomic(t.excludePath(), []byte(out.String()))
 }
 
+// writeFileAtomic replaces path by renaming a temp file created beside it.
 func writeFileAtomic(path string, data []byte) error {
+	return writeFileStaged("", path, data)
+}
+
+// writeFileStaged replaces path by renaming a temp file created in stage (or
+// beside path when stage is empty). When stage is on another file system the
+// rename fails with EXDEV, and the write falls back to a temp file beside path.
+func writeFileStaged(stage, path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
-	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
+	tmpDir := dir
+	if stage != "" {
+		if err := os.MkdirAll(stage, 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", stage, err)
+		}
+		tmpDir = stage
+	}
+	tmp, err := os.CreateTemp(tmpDir, ".tmp-"+filepath.Base(path)+"-*")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
@@ -322,6 +350,9 @@ func writeFileAtomic(path string, data []byte) error {
 		return fmt.Errorf("close temp file: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
+		if stage != "" && errors.Is(err, syscall.EXDEV) {
+			return writeFileStaged("", path, data)
+		}
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil
