@@ -259,6 +259,7 @@ func TestResolveURL_RejectsBadFlagsAndEnv(t *testing.T) {
 	for _, u := range []string{
 		`http://x/"y`, `http://x/\y`, "http://x/\ny", "http://x/\x7fy", "ftp://x/mcp", "x/mcp",
 		"http:///mcp", "http://%zz/mcp", "localhost:8484/mcp",
+		"http://:8484/mcp", "http://[]:8484/mcp", "http://x:0/mcp", "http://x:65536/mcp",
 	} {
 		if _, err := ResolveURL(noReg, ResolveOpts{URL: u}, tgt); !errors.Is(err, ErrInvalidFlag) {
 			t.Errorf("--url %q: got %v, want ErrInvalidFlag", u, err)
@@ -267,6 +268,10 @@ func TestResolveURL_RejectsBadFlagsAndEnv(t *testing.T) {
 	for _, p := range []int{-1, 65536} {
 		if _, err := ResolveURL(noReg, ResolveOpts{Port: p}, tgt); !errors.Is(err, ErrInvalidFlag) {
 			t.Errorf("--port %d: got %v, want ErrInvalidFlag", p, err)
+		}
+		// --url does not exempt --port from the range check.
+		if _, err := ResolveURL(noReg, ResolveOpts{URL: "http://localhost:8484/mcp", Port: p}, tgt); !errors.Is(err, ErrInvalidFlag) {
+			t.Errorf("--url with --port %d: got %v, want ErrInvalidFlag", p, err)
 		}
 	}
 	for _, u := range []string{"http://localhost:8484/mcp", "https://lens.example.com:9000/shop/mcp"} {

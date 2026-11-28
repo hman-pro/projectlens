@@ -194,8 +194,8 @@ Run from inside the target repository. The shared flags `--project` and
 |---|---|---|
 | `--dry-run` | `install`, `uninstall` | Show what would change; write nothing. |
 | `--force` | `install`, `uninstall` | `install`: overwrite items you changed, and take over items lens does not manage. `uninstall`: remove recorded items even if you changed them; it never touches anything lens did not record. Neither writes a tracked file or through a symlink. |
-| `--url` | `install`, `doctor` | MCP server URL (`http` or `https`, with a host). Default for `install`: derived from the project registry and port. For `doctor`: check this URL instead of the installed one. |
-| `--port` | `install` | MCP server port (default `$PROJECTLENS_MCP_PORT` or 8484). |
+| `--url` | `install`, `doctor` | MCP server URL (`http` or `https`, with a host; an explicit port must be 1-65535). Default for `install`: derived from the project registry and port. For `doctor`: check this URL instead of the installed one. |
+| `--port` | `install` | MCP server port, 1-65535 (default `$PROJECTLENS_MCP_PORT` or 8484). Range-checked even when `--url` is given. |
 | `--assets` | `install`, `status`, `doctor` | Path to the ProjectLens `agent/` directory. Default: the checkout the binary was built from. |
 | `--json` | `status`, `doctor` | Print machine-readable output. |
 
