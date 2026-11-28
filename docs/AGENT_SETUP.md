@@ -336,7 +336,10 @@ file that install created and that is empty after removal is deleted.
 - A config file that install created and you leave empty is deleted on
   uninstall.
 - A hard crash while writing a config file can leave a `.tmp-*` file in
-  `.git/projectlens-tmp/`, where git never shows it; it is safe to delete.
+  `projectlens-tmp/` inside the repository's git dir (`.git/`, or for a
+  linked worktree its own dir under `.git/worktrees/`), where git never shows
+  it; it is safe to delete. That directory is not recorded in the manifest
+  and stays after uninstall; it is empty unless a write crashed.
   Only when the git dir is on another file system than the work tree does
   the temp file go beside the config file, where `git status` shows it:
   delete it and re-run install.

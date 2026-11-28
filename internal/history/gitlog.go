@@ -3,9 +3,10 @@ package history
 import (
 	"context"
 	"fmt"
-	"github.com/hman-pro/projectlens/internal/gitenv"
 	"strconv"
 	"strings"
+
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 // Commit represents a parsed git log entry.

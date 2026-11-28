@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/hman-pro/projectlens/internal/gitenv"
 	"io/fs"
 	"net"
 	"net/url"
@@ -27,6 +26,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"gopkg.in/yaml.v3"
 
+	"github.com/hman-pro/projectlens/internal/gitenv"
 	"github.com/hman-pro/projectlens/internal/indexstate"
 )
 
@@ -124,7 +124,7 @@ func subprocEnv(extra ...string) []string {
 		}
 		env = append(env, kv)
 	}
-	env = gitenv.Scrub(env)
+	env = gitenv.ScrubStrict(env)
 	return append(env, extra...)
 }
 

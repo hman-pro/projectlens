@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hman-pro/projectlens/internal/classifier"
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 func TestRelativeToRepo(t *testing.T) {
@@ -204,7 +205,10 @@ func defaultTestConfig() classifier.Config {
 
 func initGit(t *testing.T, dir string) {
 	t.Helper()
+	// Scrubbed: run from a git hook, an inherited GIT_DIR would otherwise
+	// make this init and commit land in the developer's repository.
 	cmd := exec.Command("git", "-C", dir, "init")
+	cmd.Env = gitenv.ScrubStrict(os.Environ())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -212,7 +216,7 @@ func initGit(t *testing.T, dir string) {
 	}
 	// Need at least one commit so rev-parse HEAD works.
 	cmd = exec.Command("git", "-C", dir, "commit", "--allow-empty", "-m", "init")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(gitenv.ScrubStrict(os.Environ()),
 		"GIT_AUTHOR_NAME=test",
 		"GIT_AUTHOR_EMAIL=test@test.com",
 		"GIT_COMMITTER_NAME=test",

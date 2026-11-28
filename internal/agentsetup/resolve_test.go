@@ -274,7 +274,7 @@ func TestResolveURL_RejectsBadFlagsAndEnv(t *testing.T) {
 			t.Errorf("--url with --port %d: got %v, want ErrInvalidFlag", p, err)
 		}
 	}
-	for _, u := range []string{"http://localhost:8484/mcp", "https://lens.example.com:9000/shop/mcp"} {
+	for _, u := range []string{"http://localhost:8484/mcp", "https://lens.example.com:9000/shop/mcp", "http://[::1]:8484/mcp", "http://localhost/mcp"} {
 		if got, err := ResolveURL(noReg, ResolveOpts{URL: u}, tgt); err != nil || got != u {
 			t.Errorf("--url %q: %q %v", u, got, err)
 		}

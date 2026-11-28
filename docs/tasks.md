@@ -219,9 +219,12 @@ Small hardening:
 - Done: config and manifest writes stage their temp file in
   `<git-dir>/projectlens-tmp/`, so a crash leaves nothing in `git status`
   (falls back to beside the file only across file systems).
-- Done: every git call (indexer, history, index state, TUI, agent setup) goes
-  through `internal/gitenv`, which drops inherited `GIT_DIR`-style variables.
-  It was not only `cmd/lens/main.go`: history ingestion had the same leak.
+- Done: every production git call (indexer, history, index state, TUI, agent
+  setup) goes through `internal/gitenv`, which drops inherited `GIT_DIR`-style
+  variables. It was not only `cmd/lens/main.go`: history ingestion had the
+  same leak. Command-scope config (`GIT_CONFIG_COUNT`, `git -c`) still passes
+  through, as git does for submodules, so `safe.directory` set by env in a
+  container keeps working; `lens agent` drops it too, as before.
 - Done: the manifest-loss limitation in `AGENT_SETUP.md` now says what
   `status <agent>` and `doctor <agent>` each report. The `status <agent>`
   behavior itself is queued as its own task above.

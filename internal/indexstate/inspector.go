@@ -2,9 +2,10 @@ package indexstate
 
 import (
 	"context"
-	"github.com/hman-pro/projectlens/internal/gitenv"
 	"strings"
 	"time"
+
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 // EmbedderProber matches retrieval.Router.ProbeEmbedder.

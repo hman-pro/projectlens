@@ -1,16 +1,17 @@
 package agentsetup
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"github.com/hman-pro/projectlens/internal/gitenv"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
+
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 // ErrEscapesTarget reports a path that could reach outside the target work
@@ -37,7 +38,9 @@ func (t Target) stageDir() string {
 }
 
 func runGit(dir string, args ...string) (string, error) {
-	cmd := gitenv.Command(context.Background(), dir, args...)
+	// Strict: lens agent has always ignored a caller's command-scope config.
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = gitenv.ScrubStrict(os.Environ())
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

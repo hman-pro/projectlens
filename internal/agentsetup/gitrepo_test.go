@@ -294,6 +294,7 @@ func TestWriteFileStaged_TempGoesToStage(t *testing.T) {
 	}
 
 	// An unwritable stage fails the write: proof the temp file goes there.
+	skipIfRoot(t)
 	if err := os.Chmod(stage, 0o500); err != nil {
 		t.Fatal(err)
 	}
@@ -315,5 +316,42 @@ func TestTargetStageDirIsInGitDir(t *testing.T) {
 	tg := mustTarget(t, newRepo(t))
 	if want := filepath.Join(tg.Root, ".git", "projectlens-tmp"); tg.stageDir() != want {
 		t.Fatalf("stageDir = %q, want %q", tg.stageDir(), want)
+	}
+}
+
+// Manifest.Save and config edits stage their temp file: with the stage dir
+// unwritable they fail before anything is written into the work tree.
+func TestStagedWrites_UseGitDir(t *testing.T) {
+	skipIfRoot(t)
+	repo := newRepo(t)
+	tg := mustTarget(t, repo)
+	if err := os.MkdirAll(tg.stageDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(tg.stageDir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(tg.stageDir(), 0o700) })
+
+	m := emptyManifest()
+	m.CreatedPaths = []string{".mcp.json"}
+	if err := os.WriteFile(tg.Abs(".mcp.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Save(tg); err == nil {
+		t.Fatal("Manifest.Save with an unwritable stage succeeded; it did not stage")
+	}
+	if err := WriteMCPJSON(tg.stageDir(), tg.Abs(".mcp.json"), "http://localhost:8484/mcp"); err == nil {
+		t.Fatal("WriteMCPJSON with an unwritable stage succeeded; it did not stage")
+	}
+	if left, _ := filepath.Glob(filepath.Join(repo, ".tmp-*")); len(left) != 0 {
+		t.Fatalf("temp files in work tree: %v", left)
+	}
+}
+
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
 	}
 }

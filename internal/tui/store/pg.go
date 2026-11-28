@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hman-pro/projectlens/internal/gitenv"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/hman-pro/projectlens/internal/config"
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 type PG struct {

@@ -3,10 +3,11 @@ package history
 import (
 	"context"
 	"fmt"
-	"github.com/hman-pro/projectlens/internal/gitenv"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 // SymbolChange represents one commit that modified a symbol.
