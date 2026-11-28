@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hman-pro/projectlens/internal/gitenv"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -431,7 +431,7 @@ func repoCommitSHA(repoPath string) string {
 	if repoPath == "" {
 		return ""
 	}
-	out, err := exec.Command("git", "-C", repoPath, "rev-parse", "HEAD").Output()
+	out, err := gitenv.Command(context.Background(), repoPath, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return ""
 	}

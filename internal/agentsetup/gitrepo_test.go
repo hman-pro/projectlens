@@ -246,20 +246,6 @@ func TestCheckContained(t *testing.T) {
 	}
 }
 
-func TestScrubGitEnv(t *testing.T) {
-	in := []string{
-		"HOME=/h", "GIT_DIR=/a/.git", "GIT_WORK_TREE=/a", "GIT_INDEX_FILE=/a/i", "GIT_COMMON_DIR=/a",
-		"GIT_OBJECT_DIRECTORY=/o", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/o2", "GIT_CONFIG=/c",
-		"GIT_CONFIG_PARAMETERS='x.y'='z'", "GIT_CONFIG_COUNT=1", "GIT_NAMESPACE=n", "GIT_PREFIX=p/",
-		"GIT_IMPLICIT_WORK_TREE=0", "GIT_GRAFT_FILE=/g", "GIT_NO_REPLACE_OBJECTS=1", "GIT_REPLACE_REF_BASE=r",
-		"GIT_SHALLOW_FILE=/s", "GIT_INTERNAL_SUPER_PREFIX=s/", "GIT_AUTHOR_NAME=A", "GIT_DIRX=keep", "PATH=/bin",
-	}
-	want := []string{"HOME=/h", "GIT_AUTHOR_NAME=A", "GIT_DIRX=keep", "PATH=/bin"}
-	if got := ScrubGitEnv(in); !reflect.DeepEqual(got, want) {
-		t.Fatalf("ScrubGitEnv = %v, want %v", got, want)
-	}
-}
-
 // An inherited GIT_DIR (as in a git hook, or exported by hand) must not make lens
 // consult another repository: a file tracked in the target stays manual, and the
 // other repository's exclude file is untouched.

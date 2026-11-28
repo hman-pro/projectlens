@@ -6,7 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"os/exec"
+	"github.com/hman-pro/projectlens/internal/gitenv"
 	"path/filepath"
 	"strings"
 	"time"
@@ -613,8 +613,7 @@ func (idx *Indexer) DryRun(ctx context.Context) error {
 
 // gitOutput runs a git command in the repo directory and returns trimmed stdout.
 func gitOutput(repoPath string, args ...string) (string, error) {
-	cmdArgs := append([]string{"-C", repoPath}, args...)
-	cmd := exec.Command("git", cmdArgs...)
+	cmd := gitenv.Command(context.Background(), repoPath, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
