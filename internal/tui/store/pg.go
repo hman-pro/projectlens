@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/hman-pro/projectlens/internal/config"
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 type PG struct {
@@ -81,7 +81,7 @@ func (s *PG) gitHead() string {
 	if s.repoPath == "" {
 		return ""
 	}
-	cmd := exec.Command("git", "-C", s.repoPath, "rev-parse", "HEAD")
+	cmd := gitenv.Command(context.Background(), s.repoPath, "rev-parse", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -367,9 +367,9 @@ func (s *PG) HistoryNewCommits(ctx context.Context) (int, error) {
 	if err := s.pool.QueryRow(ctx, q).Scan(&since); err != nil {
 		return 0, fmt.Errorf("store: latest file_history: %w", err)
 	}
-	args := []string{"-C", s.repoPath, "rev-list", "--count",
+	args := []string{"rev-list", "--count",
 		"--since=" + since.Add(-5*time.Minute).Format(time.RFC3339), "HEAD"}
-	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	out, err := gitenv.Command(ctx, s.repoPath, args...).Output()
 	if err != nil {
 		return 0, fmt.Errorf("store: git rev-list: %w", err)
 	}

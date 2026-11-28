@@ -6,13 +6,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 // testGitEnv is the environment for test git commands: no repository-local
-// variables inherited from the caller (see ScrubGitEnv), and no global or system
+// variables inherited from the caller (see gitenv.ScrubStrict), and no global or system
 // git config, so the developer's settings never leak into a test.
 func testGitEnv() []string {
-	return append(ScrubGitEnv(os.Environ()), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	return append(gitenv.ScrubStrict(os.Environ()), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 }
 
 func git(t *testing.T, dir string, args ...string) string {

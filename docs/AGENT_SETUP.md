@@ -313,11 +313,15 @@ file that install created and that is empty after removal is deleted.
 ## Limitations
 
 - If `.projectlens/agent-manifest.json` is deleted, the next install
-  recovers ownership from the marked block in `.git/info/exclude`; until
-  then, `status`, `doctor`, and `uninstall` list the paths the block still
-  hides and print the `lens agent install <agent>` command to run. Uninstall
-  after that may leave empty parent directories (`.claude/`, `.agents/`,
-  `.codex/`).
+  recovers ownership from the marked block in `.git/info/exclude`. Until
+  then, `lens agent status`, `lens agent doctor`, and
+  `lens agent uninstall <agent|all>` list the paths the block still hides
+  and print the `lens agent install <agent>` command to run. With an agent
+  named, `doctor <agent>` instead reports each item `unmanaged` with the
+  same command, and `status <agent>` compares file contents only: it reports
+  wiring still on disk as `current` and exits 0, so use `doctor` to spot a
+  lost manifest. Uninstall after recovery may leave empty parent directories
+  (`.claude/`, `.agents/`, `.codex/`).
 - If you add your own content to a config file install created (Claude Code
   adds `permissions` to `.claude/settings.local.json` whenever you choose
   "always allow"), uninstall removes only the lens entries and keeps the
@@ -331,8 +335,14 @@ file that install created and that is empty after removal is deleted.
   `blocked` until you move it.
 - A config file that install created and you leave empty is deleted on
   uninstall.
-- A hard crash while writing a config file can leave a `.tmp-*` file that
-  shows in `git status`. Delete it and re-run install.
+- A hard crash while writing a config file can leave a `.tmp-*` file in
+  `projectlens-tmp/` inside the repository's git dir (`.git/`, or for a
+  linked worktree its own dir under `.git/worktrees/`), where git never shows
+  it; it is safe to delete. That directory is not recorded in the manifest
+  and stays after uninstall; it is empty unless a write crashed.
+  Only when the git dir is on another file system than the work tree does
+  the temp file go beside the config file, where `git status` shows it:
+  delete it and re-run install.
 
 ---
 

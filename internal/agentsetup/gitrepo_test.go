@@ -246,20 +246,6 @@ func TestCheckContained(t *testing.T) {
 	}
 }
 
-func TestScrubGitEnv(t *testing.T) {
-	in := []string{
-		"HOME=/h", "GIT_DIR=/a/.git", "GIT_WORK_TREE=/a", "GIT_INDEX_FILE=/a/i", "GIT_COMMON_DIR=/a",
-		"GIT_OBJECT_DIRECTORY=/o", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/o2", "GIT_CONFIG=/c",
-		"GIT_CONFIG_PARAMETERS='x.y'='z'", "GIT_CONFIG_COUNT=1", "GIT_NAMESPACE=n", "GIT_PREFIX=p/",
-		"GIT_IMPLICIT_WORK_TREE=0", "GIT_GRAFT_FILE=/g", "GIT_NO_REPLACE_OBJECTS=1", "GIT_REPLACE_REF_BASE=r",
-		"GIT_SHALLOW_FILE=/s", "GIT_INTERNAL_SUPER_PREFIX=s/", "GIT_AUTHOR_NAME=A", "GIT_DIRX=keep", "PATH=/bin",
-	}
-	want := []string{"HOME=/h", "GIT_AUTHOR_NAME=A", "GIT_DIRX=keep", "PATH=/bin"}
-	if got := ScrubGitEnv(in); !reflect.DeepEqual(got, want) {
-		t.Fatalf("ScrubGitEnv = %v, want %v", got, want)
-	}
-}
-
 // An inherited GIT_DIR (as in a git hook, or exported by hand) must not make lens
 // consult another repository: a file tracked in the target stays manual, and the
 // other repository's exclude file is untouched.
@@ -288,5 +274,84 @@ func TestInstall_IgnoresInheritedGitDir(t *testing.T) {
 	}
 	if p := porcelain(t, root); p != "" {
 		t.Fatalf("porcelain %q", p)
+	}
+}
+
+// A staged write creates its temp file in the stage dir, never beside the
+// destination, so a crash cannot leave a file that git status shows.
+func TestWriteFileStaged_TempGoesToStage(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "config.json")
+	stage := filepath.Join(t.TempDir(), "stage")
+
+	if err := writeFileStaged(stage, dest, []byte("one\n")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dest); string(b) != "one\n" {
+		t.Fatalf("dest = %q", b)
+	}
+	if left, _ := os.ReadDir(stage); len(left) != 0 {
+		t.Fatalf("stage not empty: %v", left)
+	}
+
+	// An unwritable stage fails the write: proof the temp file goes there.
+	skipIfRoot(t)
+	if err := os.Chmod(stage, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(stage, 0o700) })
+	if err := writeFileStaged(stage, dest, []byte("two\n")); err == nil {
+		t.Fatal("write with an unwritable stage succeeded; temp file was not staged")
+	}
+	if b, _ := os.ReadFile(dest); string(b) != "one\n" {
+		t.Fatalf("dest changed to %q", b)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(dest))
+	if len(entries) != 1 {
+		t.Fatalf("dest dir holds %v, want only config.json", entries)
+	}
+}
+
+// Install stages every work tree write in the per-worktree git dir.
+func TestTargetStageDirIsInGitDir(t *testing.T) {
+	tg := mustTarget(t, newRepo(t))
+	if want := filepath.Join(tg.Root, ".git", "projectlens-tmp"); tg.stageDir() != want {
+		t.Fatalf("stageDir = %q, want %q", tg.stageDir(), want)
+	}
+}
+
+// Manifest.Save and config edits stage their temp file: with the stage dir
+// unwritable they fail before anything is written into the work tree.
+func TestStagedWrites_UseGitDir(t *testing.T) {
+	skipIfRoot(t)
+	repo := newRepo(t)
+	tg := mustTarget(t, repo)
+	if err := os.MkdirAll(tg.stageDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(tg.stageDir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(tg.stageDir(), 0o700) })
+
+	m := emptyManifest()
+	m.CreatedPaths = []string{".mcp.json"}
+	if err := os.WriteFile(tg.Abs(".mcp.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Save(tg); err == nil {
+		t.Fatal("Manifest.Save with an unwritable stage succeeded; it did not stage")
+	}
+	if err := WriteMCPJSON(tg.stageDir(), tg.Abs(".mcp.json"), "http://localhost:8484/mcp"); err == nil {
+		t.Fatal("WriteMCPJSON with an unwritable stage succeeded; it did not stage")
+	}
+	if left, _ := filepath.Glob(filepath.Join(repo, ".tmp-*")); len(left) != 0 {
+		t.Fatalf("temp files in work tree: %v", left)
+	}
+}
+
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
 	}
 }

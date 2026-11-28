@@ -499,11 +499,11 @@ func (r *installer) writeItem(c Canon, replaceLink bool) error {
 	case c.Kind == KindSkill:
 		err = r.writeSkill(c, replaceLink)
 	case c.Kind == KindHook:
-		err = WriteHook(abs, c.Hook)
+		err = WriteHook(r.t.stageDir(), abs, c.Hook)
 	case c.Agent == AgentCodex:
-		err = WriteCodexBlock(abs, c.URL)
+		err = WriteCodexBlock(r.t.stageDir(), abs, c.URL)
 	default:
-		err = WriteMCPJSON(abs, c.URL)
+		err = WriteMCPJSON(r.t.stageDir(), abs, c.URL)
 	}
 	if err != nil {
 		return fmt.Errorf("write %s %s: %w", c.Kind, c.ID, err)

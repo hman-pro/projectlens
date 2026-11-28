@@ -139,7 +139,8 @@ func codexStateFromText(path, text string) (CodexState, error) {
 }
 
 // WriteCodexBlock installs the marked block, replacing an existing one in place.
-func WriteCodexBlock(path, url string) error {
+// stage is where the temp file for the write goes (see writeFileStaged).
+func WriteCodexBlock(stage, path, url string) error {
 	text, _, err := readCodexText(path)
 	if err != nil {
 		return err
@@ -174,13 +175,14 @@ func WriteCodexBlock(path, url string) error {
 	if got, _ := entry["url"].(string); got != url {
 		return invalidTOML(path, errors.New("url does not round-trip through the managed block"))
 	}
-	return writeFileAtomic(path, []byte(out))
+	return writeFileStaged(stage, path, []byte(out))
 }
 
 // RemoveCodexBlock removes the marked block and the one blank line written
 // before it. empty reports whether only whitespace remains. The file is left in
 // place.
-func RemoveCodexBlock(path string) (empty bool, err error) {
+// stage is where the temp file for the write goes (see writeFileStaged).
+func RemoveCodexBlock(stage, path string) (empty bool, err error) {
 	text, exists, err := readCodexText(path)
 	if err != nil || !exists {
 		return false, err
@@ -202,7 +204,7 @@ func RemoveCodexBlock(path string) (empty bool, err error) {
 	if _, err := parseTOML(path, out); err != nil {
 		return false, err
 	}
-	if err := writeFileAtomic(path, []byte(out)); err != nil {
+	if err := writeFileStaged(stage, path, []byte(out)); err != nil {
 		return false, err
 	}
 	return strings.TrimSpace(out) == "", nil

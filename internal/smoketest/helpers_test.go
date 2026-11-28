@@ -26,7 +26,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"gopkg.in/yaml.v3"
 
-	"github.com/hman-pro/projectlens/internal/agentsetup"
+	"github.com/hman-pro/projectlens/internal/gitenv"
 	"github.com/hman-pro/projectlens/internal/indexstate"
 )
 
@@ -124,7 +124,7 @@ func subprocEnv(extra ...string) []string {
 		}
 		env = append(env, kv)
 	}
-	env = agentsetup.ScrubGitEnv(env)
+	env = gitenv.ScrubStrict(env)
 	return append(env, extra...)
 }
 

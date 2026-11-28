@@ -370,7 +370,7 @@ func (m *Manifest) Save(t Target) error {
 	if err != nil {
 		return fmt.Errorf("encode manifest: %w", err)
 	}
-	if err := writeFileAtomic(t.Abs(ManifestPath), append(data, '\n')); err != nil {
+	if err := writeFileStaged(t.stageDir(), t.Abs(ManifestPath), append(data, '\n')); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 	return nil

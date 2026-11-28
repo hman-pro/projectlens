@@ -167,9 +167,17 @@ func ResolveTarget(env Env, o ResolveOpts) (Target, error) {
 	return OpenTarget(root)
 }
 
-func (o ResolveOpts) port(env Env) (int, error) {
+// checkPortFlag rejects a --port outside 1-65535; 0 means unset.
+func (o ResolveOpts) checkPortFlag() error {
 	if o.Port < 0 || o.Port > 65535 {
-		return 0, fmt.Errorf("%w: --port %d is not a port number (1-65535)", ErrInvalidFlag, o.Port)
+		return fmt.Errorf("%w: --port %d is not a port number (1-65535)", ErrInvalidFlag, o.Port)
+	}
+	return nil
+}
+
+func (o ResolveOpts) port(env Env) (int, error) {
+	if err := o.checkPortFlag(); err != nil {
+		return 0, err
 	}
 	if o.Port != 0 {
 		return o.Port, nil
@@ -207,8 +215,13 @@ func checkURL(s string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return bad("must start with http:// or https://")
 	}
-	if u.Host == "" {
+	if u.Hostname() == "" {
 		return bad("has no host")
+	}
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
+			return bad("has a port outside 1-65535")
+		}
 	}
 	return nil
 }
@@ -216,6 +229,9 @@ func checkURL(s string) error {
 // ResolveURL decides the MCP URL written into agent config. A bad --url or
 // --port is an ErrInvalidFlag error.
 func ResolveURL(env Env, o ResolveOpts, t Target) (string, error) {
+	if err := o.checkPortFlag(); err != nil {
+		return "", err
+	}
 	if o.URL != "" {
 		if err := checkURL(o.URL); err != nil {
 			return "", err

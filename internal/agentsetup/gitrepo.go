@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
+
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 // ErrEscapesTarget reports a path that could reach outside the target work
@@ -20,38 +23,24 @@ type Target struct {
 	Root           string // absolute, symlinks resolved
 	CommonDir      string // absolute git common dir
 	LinkedWorktree bool   // git-dir differs from git-common-dir
+	GitDir         string // absolute per-worktree git dir; holds stageDir
 }
 
-// isGitLocalEnvVar reports whether name is one of the repository-local
-// variables git lists with `git rev-parse --local-env-vars`. Inherited from the
-// caller (a git hook, or GIT_DIR exported by hand), they would point git at
-// another repository.
-func isGitLocalEnvVar(name string) bool {
-	switch name {
-	case "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_CONFIG", "GIT_CONFIG_COUNT",
-		"GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_GRAFT_FILE", "GIT_IMPLICIT_WORK_TREE",
-		"GIT_INDEX_FILE", "GIT_INTERNAL_SUPER_PREFIX", "GIT_NAMESPACE", "GIT_NO_REPLACE_OBJECTS",
-		"GIT_OBJECT_DIRECTORY", "GIT_PREFIX", "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_WORK_TREE":
-		return true
+// stageDir is where writes into the work tree stage their temp file: inside
+// the git dir, so a crash between create and rename never leaves a file that
+// git status shows. It is per worktree so concurrent runs in linked worktrees
+// do not share it. Empty (a Target not from OpenTarget) stages beside the file.
+func (t Target) stageDir() string {
+	if t.GitDir == "" {
+		return ""
 	}
-	return false
-}
-
-// ScrubGitEnv returns env without the repository-local git variables, so a git
-// command run with it finds the repository from its -C directory alone.
-func ScrubGitEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		if name, _, _ := strings.Cut(kv, "="); !isGitLocalEnvVar(name) {
-			out = append(out, kv)
-		}
-	}
-	return out
+	return filepath.Join(t.GitDir, "projectlens-tmp")
 }
 
 func runGit(dir string, args ...string) (string, error) {
+	// Strict: lens agent has always ignored a caller's command-scope config.
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = ScrubGitEnv(os.Environ())
+	cmd.Env = gitenv.ScrubStrict(os.Environ())
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -114,7 +103,7 @@ func OpenTarget(dir string) (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
-	return Target{Root: root, CommonDir: commonAbs, LinkedWorktree: commonAbs != gitDirAbs}, nil
+	return Target{Root: root, CommonDir: commonAbs, LinkedWorktree: commonAbs != gitDirAbs, GitDir: gitDirAbs}, nil
 }
 
 // IsTracked reports whether rel is a tracked file, or a directory holding one.
@@ -323,12 +312,27 @@ func (t Target) SetExcludeBlock(paths []string) error {
 	return writeFileAtomic(t.excludePath(), []byte(out.String()))
 }
 
+// writeFileAtomic replaces path by renaming a temp file created beside it.
 func writeFileAtomic(path string, data []byte) error {
+	return writeFileStaged("", path, data)
+}
+
+// writeFileStaged replaces path by renaming a temp file created in stage (or
+// beside path when stage is empty). When stage is on another file system the
+// rename fails with EXDEV, and the write falls back to a temp file beside path.
+func writeFileStaged(stage, path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
-	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
+	tmpDir := dir
+	if stage != "" {
+		if err := os.MkdirAll(stage, 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", stage, err)
+		}
+		tmpDir = stage
+	}
+	tmp, err := os.CreateTemp(tmpDir, ".tmp-"+filepath.Base(path)+"-*")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
@@ -349,6 +353,9 @@ func writeFileAtomic(path string, data []byte) error {
 		return fmt.Errorf("close temp file: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
+		if stage != "" && errors.Is(err, syscall.EXDEV) {
+			return writeFileStaged("", path, data)
+		}
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil

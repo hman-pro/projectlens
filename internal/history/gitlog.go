@@ -1,10 +1,12 @@
 package history
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 // Commit represents a parsed git log entry.
@@ -20,7 +22,6 @@ type Commit struct {
 // It excludes merge commits. Window is a git --since value like "12 months".
 func ParseGitLog(repoPath string, window string) ([]Commit, error) {
 	args := []string{
-		"-C", repoPath,
 		"log",
 		"--name-only",
 		"--no-merges",
@@ -30,7 +31,7 @@ func ParseGitLog(repoPath string, window string) ([]Commit, error) {
 		args = append(args, "--since="+window)
 	}
 
-	cmd := exec.Command("git", args...)
+	cmd := gitenv.Command(context.Background(), repoPath, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("history: git log: %w", err)
@@ -43,7 +44,6 @@ func ParseGitLog(repoPath string, window string) ([]Commit, error) {
 // Returns up to maxCommits.
 func ParseGitLogForFile(repoPath string, filePath string, maxCommits int) ([]Commit, error) {
 	args := []string{
-		"-C", repoPath,
 		"log",
 		"--name-only",
 		"--no-merges",
@@ -53,7 +53,7 @@ func ParseGitLogForFile(repoPath string, filePath string, maxCommits int) ([]Com
 		"--", filePath,
 	}
 
-	cmd := exec.Command("git", args...)
+	cmd := gitenv.Command(context.Background(), repoPath, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("history: git log for %s: %w", filePath, err)

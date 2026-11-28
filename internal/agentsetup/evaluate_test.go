@@ -50,11 +50,11 @@ func place(t *testing.T, tg Target, c Canon) {
 			}
 		}
 	case c.Kind == KindHook:
-		err = WriteHook(abs, c.Hook)
+		err = WriteHook("", abs, c.Hook)
 	case c.Agent == AgentCodex:
-		err = WriteCodexBlock(abs, c.URL)
+		err = WriteCodexBlock("", abs, c.URL)
 	default:
-		err = WriteMCPJSON(abs, c.URL)
+		err = WriteMCPJSON("", abs, c.URL)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func editByHand(t *testing.T, tg Target, c Canon) {
 	case c.Kind == KindHook:
 		h := c.Hook
 		h.Command += " # tweaked" // marker kept
-		err = WriteHook(abs, h)
+		err = WriteHook("", abs, h)
 	case c.Agent == AgentCodex:
 		var b []byte
 		if b, err = os.ReadFile(abs); err == nil {
@@ -80,7 +80,7 @@ func editByHand(t *testing.T, tg Target, c Canon) {
 			err = os.WriteFile(abs, []byte(s), 0o644)
 		}
 	default:
-		err = WriteMCPJSON(abs, "http://edited.example/mcp")
+		err = WriteMCPJSON("", abs, "http://edited.example/mcp")
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -462,7 +462,7 @@ func TestEvaluate_HookPlacementChanges(t *testing.T) {
 		tg := mustTarget(t, newRepo(t))
 		h := edit.Hook
 		h.Event = "PostToolUse"
-		if err := WriteHook(tg.Abs(edit.Path), h); err != nil {
+		if err := WriteHook("", tg.Abs(edit.Path), h); err != nil {
 			t.Fatal(err)
 		}
 		check(t, tg, cs, rec, StateModified, "")
@@ -471,7 +471,7 @@ func TestEvaluate_HookPlacementChanges(t *testing.T) {
 		tg := mustTarget(t, newRepo(t))
 		h := edit.Hook
 		h.Matcher = "Write"
-		if err := WriteHook(tg.Abs(edit.Path), h); err != nil {
+		if err := WriteHook("", tg.Abs(edit.Path), h); err != nil {
 			t.Fatal(err)
 		}
 		check(t, tg, cs, rec, StateModified, "")
@@ -584,7 +584,7 @@ func TestEvaluate_TrackedPaths(t *testing.T) {
 			tg := mustTarget(t, root)
 			if tc.url == "" {
 				write(t, tg.Abs(mcp.Path), "{\"mcpServers\": {}}\n")
-			} else if err := WriteMCPJSON(tg.Abs(mcp.Path), tc.url); err != nil {
+			} else if err := WriteMCPJSON("", tg.Abs(mcp.Path), tc.url); err != nil {
 				t.Fatal(err)
 			}
 			commit(t, root, mcp.Path)

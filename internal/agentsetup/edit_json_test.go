@@ -58,7 +58,7 @@ func TestMCPJSON_CreateReadRemove(t *testing.T) {
 		t.Fatalf("missing file: %q %v %v", h, present, err)
 	}
 	const url = "http://localhost:8080/mcp"
-	if err := WriteMCPJSON(p, url); err != nil {
+	if err := WriteMCPJSON("", p, url); err != nil {
 		t.Fatal(err)
 	}
 	h, present, err := ReadMCPJSON(p)
@@ -69,7 +69,7 @@ func TestMCPJSON_CreateReadRemove(t *testing.T) {
 	if !strings.HasSuffix(raw, "\n") || !strings.Contains(raw, "  \"mcpServers\"") {
 		t.Errorf("want 2-space indent and trailing newline, got %q", raw)
 	}
-	empty, err := RemoveMCPJSON(p)
+	empty, err := RemoveMCPJSON("", p)
 	if err != nil || !empty {
 		t.Fatalf("remove: empty=%v err=%v", empty, err)
 	}
@@ -81,7 +81,7 @@ func TestMCPJSON_CreateReadRemove(t *testing.T) {
 func TestMCPJSON_PreservesOtherServers(t *testing.T) {
 	start := `{"mcpServers":{"other":{"command":"x","args":["a"]}},"extra":[1,2]}`
 	p := writeTestFile(t, start)
-	if err := WriteMCPJSON(p, "http://u/mcp"); err != nil {
+	if err := WriteMCPJSON("", p, "http://u/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	got := decodeDoc(t, readTestFile(t, p))
@@ -96,7 +96,7 @@ func TestMCPJSON_PreservesOtherServers(t *testing.T) {
 	if servers["projectlens"] == nil {
 		t.Error("projectlens missing")
 	}
-	empty, err := RemoveMCPJSON(p)
+	empty, err := RemoveMCPJSON("", p)
 	if err != nil || empty {
 		t.Fatalf("remove: empty=%v err=%v", empty, err)
 	}
@@ -133,14 +133,14 @@ func TestMCPJSON_StreamableHTTPAliasIsCurrent(t *testing.T) {
 
 func TestJSON_InvalidIsRefusedUntouched(t *testing.T) {
 	p := writeTestFile(t, "{not json")
-	err := WriteMCPJSON(p, "http://u/mcp")
+	err := WriteMCPJSON("", p, "http://u/mcp")
 	if !errors.Is(err, ErrInvalidJSON) || !strings.Contains(err.Error(), p) {
 		t.Fatalf("WriteMCPJSON err = %v", err)
 	}
 	if got := readTestFile(t, p); got != "{not json" {
 		t.Errorf("file modified: %q", got)
 	}
-	err = WriteHook(p, canonicalHooks(t)[0])
+	err = WriteHook("", p, canonicalHooks(t)[0])
 	if !errors.Is(err, ErrInvalidJSON) || !strings.Contains(err.Error(), p) {
 		t.Fatalf("WriteHook err = %v", err)
 	}
@@ -152,7 +152,7 @@ func TestJSON_InvalidIsRefusedUntouched(t *testing.T) {
 func TestJSON_EmptyFileTreatedAsObject(t *testing.T) {
 	for _, content := range []string{"", "  \n"} {
 		p := writeTestFile(t, content)
-		if err := WriteMCPJSON(p, "http://u/mcp"); err != nil {
+		if err := WriteMCPJSON("", p, "http://u/mcp"); err != nil {
 			t.Fatalf("%q: %v", content, err)
 		}
 	}
@@ -162,7 +162,7 @@ func writeAllHooks(t *testing.T, p string) []Hook {
 	t.Helper()
 	hooks := canonicalHooks(t)
 	for _, h := range hooks {
-		if err := WriteHook(p, h); err != nil {
+		if err := WriteHook("", p, h); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -202,7 +202,7 @@ func TestHooks_PreservesForeignHooksAndKeys(t *testing.T) {
 	p := writeTestFile(t, start)
 	hooks := writeAllHooks(t, p)
 	for _, h := range hooks {
-		if _, err := RemoveHook(p, h.ID); err != nil {
+		if _, err := RemoveHook("", p, h.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -214,14 +214,14 @@ func TestHooks_PreservesForeignHooksAndKeys(t *testing.T) {
 func TestHooks_ReplaceInPlaceNeverDuplicates(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.json")
 	h := canonicalHooks(t)[0]
-	if err := WriteHook(p, h); err != nil {
+	if err := WriteHook("", p, h); err != nil {
 		t.Fatal(err)
 	}
 	edited := strings.Replace(readTestFile(t, p), "echo", "echo EDITED", 1)
 	if err := os.WriteFile(p, []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteHook(p, h); err != nil {
+	if err := WriteHook("", p, h); err != nil {
 		t.Fatal(err)
 	}
 	if n := strings.Count(readTestFile(t, p), "projectlens-hook="+h.ID); n != 1 {
@@ -270,7 +270,7 @@ func TestHooks_WriteRestoresPlacement(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.json")
 	h := canonicalHooks(t)[1]
 	moveHook(t, p, h, "command")
-	if err := WriteHook(p, h); err != nil {
+	if err := WriteHook("", p, h); err != nil {
 		t.Fatal(err)
 	}
 	events := decodeDoc(t, readTestFile(t, p))["hooks"].(map[string]any)
@@ -306,7 +306,7 @@ func TestHooks_DuplicateIDFlagged(t *testing.T) {
 	if err != nil || !got[h.ID].Dup {
 		t.Fatalf("Dup not flagged: %+v %v", got[h.ID], err)
 	}
-	if err := WriteHook(p, h); err != nil {
+	if err := WriteHook("", p, h); err != nil {
 		t.Fatal(err)
 	}
 	if n := strings.Count(readTestFile(t, p), "projectlens-hook="+h.ID); n != 1 {
@@ -324,7 +324,7 @@ func TestHooks_RemoveCleansEmptyContainers(t *testing.T) {
 	var empty bool
 	var err error
 	for _, h := range hooks {
-		if empty, err = RemoveHook(p, h.ID); err != nil {
+		if empty, err = RemoveHook("", p, h.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -340,7 +340,7 @@ func TestHooks_PreexistingEmptyEventPreserved(t *testing.T) {
 	start := `{"hooks":{"Stop":[],"Notification":[{"matcher":"x","hooks":[]}]}}`
 	p := writeTestFile(t, start)
 	h := canonicalHooks(t)[1]
-	if err := WriteHook(p, h); err != nil {
+	if err := WriteHook("", p, h); err != nil {
 		t.Fatal(err)
 	}
 	events := decodeDoc(t, readTestFile(t, p))["hooks"].(map[string]any)
@@ -350,7 +350,7 @@ func TestHooks_PreexistingEmptyEventPreserved(t *testing.T) {
 	if len(events["Notification"].([]any)) != 1 {
 		t.Errorf("empty group changed: %v", events["Notification"])
 	}
-	if _, err := RemoveHook(p, h.ID); err != nil {
+	if _, err := RemoveHook("", p, h.ID); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := decodeDoc(t, readTestFile(t, p)), decodeDoc(t, start); !reflect.DeepEqual(got, want) {
@@ -361,14 +361,14 @@ func TestHooks_PreexistingEmptyEventPreserved(t *testing.T) {
 func TestJSON_NoHTMLEscaping(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.json")
 	h := Hook{ID: "x", Event: "Stop", Type: "command", Command: ": projectlens-hook=x; a && b < c > d"}
-	if err := WriteHook(p, h); err != nil {
+	if err := WriteHook("", p, h); err != nil {
 		t.Fatal(err)
 	}
 	if raw := readTestFile(t, p); !strings.Contains(raw, "a && b < c > d") || strings.Contains(raw, `\u00`) {
 		t.Errorf("escaped: %s", raw)
 	}
 	q := filepath.Join(t.TempDir(), ".mcp.json")
-	if err := WriteMCPJSON(q, "http://u/mcp?a=1&b=2"); err != nil {
+	if err := WriteMCPJSON("", q, "http://u/mcp?a=1&b=2"); err != nil {
 		t.Fatal(err)
 	}
 	if raw := readTestFile(t, q); !strings.Contains(raw, "a=1&b=2") {
@@ -379,12 +379,12 @@ func TestJSON_NoHTMLEscaping(t *testing.T) {
 func TestEdit_PreservesFileModeAndCreates0644(t *testing.T) {
 	p := writeTestFile(t, "{}")
 	os.Chmod(p, 0o600)
-	if err := WriteMCPJSON(p, "http://u/mcp"); err != nil {
+	if err := WriteMCPJSON("", p, "http://u/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	c := writeTestFile(t, "a = 1\n")
 	os.Chmod(c, 0o600)
-	if err := WriteCodexBlock(c, "http://u/mcp"); err != nil {
+	if err := WriteCodexBlock("", c, "http://u/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range []string{p, c} {
@@ -393,7 +393,7 @@ func TestEdit_PreservesFileModeAndCreates0644(t *testing.T) {
 		}
 	}
 	n := filepath.Join(t.TempDir(), "new.json")
-	if err := WriteMCPJSON(n, "http://u/mcp"); err != nil {
+	if err := WriteMCPJSON("", n, "http://u/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ := os.Stat(n); info.Mode().Perm() != 0o644 {

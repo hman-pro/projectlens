@@ -1,11 +1,13 @@
 package history
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 // SymbolChange represents one commit that modified a symbol.
@@ -22,7 +24,6 @@ type SymbolChange struct {
 // symbol's line range or mention the symbol name.
 func GetSymbolEvolution(repoPath string, filePath string, symbolName string, lineStart, lineEnd int, maxCommits int) ([]SymbolChange, error) {
 	args := []string{
-		"-C", repoPath,
 		"log",
 		"--no-merges",
 		fmt.Sprintf("-%d", maxCommits*3), // fetch more than needed, filter later
@@ -31,7 +32,7 @@ func GetSymbolEvolution(repoPath string, filePath string, symbolName string, lin
 		"--", filePath,
 	}
 
-	cmd := exec.Command("git", args...)
+	cmd := gitenv.Command(context.Background(), repoPath, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("history: git log -p for %s: %w", filePath, err)

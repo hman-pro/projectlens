@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/hman-pro/projectlens/internal/datastore"
 	"github.com/hman-pro/projectlens/internal/embed"
 	"github.com/hman-pro/projectlens/internal/embeddings"
+	"github.com/hman-pro/projectlens/internal/gitenv"
 	"github.com/hman-pro/projectlens/internal/history"
 	"github.com/hman-pro/projectlens/internal/indexer"
 	"github.com/hman-pro/projectlens/internal/logger"
@@ -431,7 +431,7 @@ func repoCommitSHA(repoPath string) string {
 	if repoPath == "" {
 		return ""
 	}
-	out, err := exec.Command("git", "-C", repoPath, "rev-parse", "HEAD").Output()
+	out, err := gitenv.Command(context.Background(), repoPath, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return ""
 	}

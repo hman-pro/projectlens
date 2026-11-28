@@ -29,12 +29,13 @@ None.
 
 | Priority | Task | Status | Next Action | Done When |
 |---|---|---|---|---|
-| `P2` | Agent setup follow-ups (structure refactor and small hardening) | Next | Work through the small-hardening items; they are independent. See "Follow-ups" under section 3. | Every item in the section 3 follow-up list is fixed or explicitly dropped, with no change to `lens agent` behavior beyond the listed fixes. |
+| `P2` | `lens agent status <agent>` reports `current` and exits 0 after manifest loss | Next | Decide whether `status <agent>` should print the same recovery notice as plain `status` (and exit non-zero), or stay content-only as documented. | `status <agent>` either flags a lost manifest or the content-only behavior is kept on purpose, with docs matching. |
 
 ## Recently Done
 
 | Priority | Task | Status | Evidence |
 |---|---|---|---|
+| `P2` | Agent setup follow-ups (structure refactor and small hardening) | Done | `internal/gitenv/` (every git call scrubs inherited `GIT_DIR`), `checkURL`/`checkPortFlag` in `internal/agentsetup/resolve.go`, `writeFileStaged` + `Target.stageDir`, manifest-loss limitation in `AGENT_SETUP.md` |
 | `P2` | End-to-end smoke test (`make smoke`: migrate, index fixture repo, call every MCP tool) | Done | `internal/smoketest/`, `testdata/smoke-repo/`, `make smoke`, CI `smoke` job |
 | `P1` | Agent setup UX (`lens agent install/uninstall/status/doctor` for Claude and Codex, personal and git-invisible) | Done | `cmd/lens/agent.go`, `internal/agentsetup/` |
 | `P1` | `lens report` (markdown/json, `--format`, `--out`, all sections) | Done | `cmd/lens/report.go`, `internal/report/` |
@@ -213,14 +214,20 @@ Structure (no behavior change):
 
 Small hardening:
 
-- `--url http://:8484/mcp` (empty host) is accepted, and `--port` is not
-  range-checked when `--url` is also given (`internal/agentsetup/resolve.go`).
-- A hard crash during a config write can leave a `.tmp-*` file visible in
-  `git status`; the exclude block does not cover it.
-- The indexer's git call in `cmd/lens/main.go` still inherits `GIT_DIR`-style
-  variables; `agentsetup.ScrubGitEnv` exists for this.
-- The manifest-loss limitation in `AGENT_SETUP.md` is imprecise for
-  `lens agent status <agent>`.
+- Done: `--url` with an empty host or an out-of-range port is rejected, and
+  `--port` is range-checked even when `--url` is given.
+- Done: config and manifest writes stage their temp file in
+  `<git-dir>/projectlens-tmp/`, so a crash leaves nothing in `git status`
+  (falls back to beside the file only across file systems).
+- Done: every production git call (indexer, history, index state, TUI, agent
+  setup) goes through `internal/gitenv`, which drops inherited `GIT_DIR`-style
+  variables. It was not only `cmd/lens/main.go`: history ingestion had the
+  same leak. Command-scope config (`GIT_CONFIG_COUNT`, `git -c`) still passes
+  through, as git does for submodules, so `safe.directory` set by env in a
+  container keeps working; `lens agent` drops it too, as before.
+- Done: the manifest-loss limitation in `AGENT_SETUP.md` now says what
+  `status <agent>` and `doctor <agent>` each report. The `status <agent>`
+  behavior itself is queued as its own task above.
 
 ## 4. End-to-End Smoke Test
 

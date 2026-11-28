@@ -2,9 +2,10 @@ package indexstate
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/hman-pro/projectlens/internal/gitenv"
 )
 
 // EmbedderProber matches retrieval.Router.ProbeEmbedder.
@@ -85,12 +86,12 @@ func (d *DefaultInspector) GitHeadAndDirty(ctx context.Context) GitState {
 	if d.RepoPath == "" {
 		return GitState{}
 	}
-	headOut, err := exec.CommandContext(ctx, "git", "-C", d.RepoPath, "rev-parse", "HEAD").Output()
+	headOut, err := gitenv.Command(ctx, d.RepoPath, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return GitState{}
 	}
 	head := strings.TrimSpace(string(headOut))
-	statusOut, err := exec.CommandContext(ctx, "git", "-C", d.RepoPath, "status", "--porcelain").Output()
+	statusOut, err := gitenv.Command(ctx, d.RepoPath, "status", "--porcelain").Output()
 	if err != nil {
 		return GitState{Head: head}
 	}
