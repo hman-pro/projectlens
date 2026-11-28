@@ -313,11 +313,15 @@ file that install created and that is empty after removal is deleted.
 ## Limitations
 
 - If `.projectlens/agent-manifest.json` is deleted, the next install
-  recovers ownership from the marked block in `.git/info/exclude`; until
-  then, `status`, `doctor`, and `uninstall` list the paths the block still
-  hides and print the `lens agent install <agent>` command to run. Uninstall
-  after that may leave empty parent directories (`.claude/`, `.agents/`,
-  `.codex/`).
+  recovers ownership from the marked block in `.git/info/exclude`. Until
+  then, `lens agent status`, `lens agent doctor`, and
+  `lens agent uninstall <agent|all>` list the paths the block still hides
+  and print the `lens agent install <agent>` command to run. With an agent
+  named, `doctor <agent>` instead reports each item `unmanaged` with the
+  same command, and `status <agent>` compares file contents only: it reports
+  wiring still on disk as `current` and exits 0, so use `doctor` to spot a
+  lost manifest. Uninstall after recovery may leave empty parent directories
+  (`.claude/`, `.agents/`, `.codex/`).
 - If you add your own content to a config file install created (Claude Code
   adds `permissions` to `.claude/settings.local.json` whenever you choose
   "always allow"), uninstall removes only the lens entries and keeps the
